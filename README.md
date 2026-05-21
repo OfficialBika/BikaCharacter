@@ -5,6 +5,14 @@ A production-ready Telegram character catcher bot built with `python-telegram-bo
 ## Main features
 
 - Group message counter based random character drops
+
+- Scheduled rarity spawn system:
+  - Normal drops: random Common / Uncommon / Rare
+  - Every 20 drops: Legendary
+  - Every 100 drops: Mystical
+  - Every 300 drops: Divine
+  - Every 400 drops: CrossVerse
+  - Every 500 drops: Cataphract 70% / Supreme 30%
 - Per-group `/changetime`
   - Group admins: 100 to 999
   - Owner: 1 to 3000
@@ -88,6 +96,21 @@ Allowed rarities:
 ```text
 Supreme, Cataphract, CrossVerse, Divine, Mystical, Legendary, Rare, Uncommon, Common
 ```
+
+## Rarity spawn schedule
+
+Each group has its own `totalDrops` counter. When that group reaches its changetime and a card spawns, `totalDrops` increases by 1 and the bot chooses rarity by this priority:
+
+```text
+Every 500 drops: Cataphract 70% / Supreme 30%
+Every 400 drops: CrossVerse
+Every 300 drops: Divine
+Every 100 drops: Mystical
+Every 20 drops : Legendary
+Other drops    : random Common / Uncommon / Rare
+```
+
+Higher rules win if a number matches more than one rule. For example, drop 100 is Mystical, drop 300 is Divine, drop 500 is Cataphract/Supreme. If the selected rarity has no cards in the database yet, the bot safely falls back to another available card so the spawn does not fail.
 
 ## Change drop count
 
@@ -241,3 +264,48 @@ If `ADD_TO_GROUP_URL` is empty, the bot uses `https://t.me/<BOT_USERNAME>?startg
 Group admin means the actual Telegram admins of each group. The bot checks the current group with Telegram `get_chat_member()`. You do not need to put group admins in `.env`.
 
 Global owner-only commands such as `/admin`, `/addadder`, `/rmadder`, `/give`, `/transfer`, and `/clmute` are restricted to `OWNER_ID`.
+
+
+### High Rarity Captcha
+Divine, CrossVerse, Cataphract, and Supreme drops require captcha. The first correct `/bika name` user must solve one correct option among five within `CLAIM_CAPTCHA_SECONDS` seconds. Wrong answer or timeout loses that drop.
+
+
+## High-rarity pre-spawn captcha
+
+For Divine, CrossVerse, Cataphract and Supreme scheduled drops, the bot now sends a captcha before showing the character media.
+
+- Correct button within `CLAIM_CAPTCHA_SECONDS` => the character spawns normally.
+- Wrong button => that scheduled drop is lost.
+- Timeout => that scheduled drop is lost.
+- After the character spawns, users catch it normally with `/bika name`.
+
+
+## Render Web Service Webhook Deploy
+
+This version runs in webhook mode by default. Use these Render settings:
+
+```bash
+Build Command: pip install -r requirements.txt
+Start Command: python bot.py
+```
+
+Required webhook env values:
+
+```env
+RUN_MODE=webhook
+WEBHOOK_URL=https://your-render-service.onrender.com
+WEBHOOK_PATH=/webhook
+WEBHOOK_SECRET_TOKEN=change-this-random-secret
+WEBHOOK_DROP_PENDING_UPDATES=false
+PORT=10000
+```
+
+`WEBHOOK_URL` must be your public Render URL without a trailing slash. The bot will set Telegram webhook to `WEBHOOK_URL + WEBHOOK_PATH`.
+
+For local testing without webhook, set:
+
+```env
+RUN_MODE=polling
+```
+
+UptimeRobot can ping `/` every 5 minutes. The health routes are `/` and `/health`.
