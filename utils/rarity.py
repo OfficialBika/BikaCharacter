@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import random
+
 from config import RARITY_EMOJI, RARITY_EXP, RARITY_ORDER
 
 
@@ -17,3 +19,38 @@ def normalize_rarity(raw: str | None) -> str | None:
         if rarity.lower() == text:
             return rarity
     return None
+
+
+DROP_BASE_RARITIES = ("Common", "Uncommon", "Rare")
+
+
+def get_scheduled_drop_rarity(drop_number: int) -> str:
+    """Return the rarity that should spawn for a group drop number.
+
+    Schedule:
+    - Normal drops: random Common / Uncommon / Rare
+    - Every 20 drops: Legendary
+    - Every 100 drops: Mystical
+    - Every 300 drops: Divine
+    - Every 400 drops: CrossVerse
+    - Every 500 drops: Cataphract 70% / Supreme 30%
+
+    Higher milestones take priority when a drop number matches multiple rules.
+    Example: 100 => Mystical, 300 => Divine, 500 => Cataphract/Supreme.
+    """
+    try:
+        n = max(1, int(drop_number or 1))
+    except Exception:
+        n = 1
+
+    if n % 500 == 0:
+        return "Supreme" if random.random() < 0.30 else "Cataphract"
+    if n % 400 == 0:
+        return "CrossVerse"
+    if n % 300 == 0:
+        return "Divine"
+    if n % 100 == 0:
+        return "Mystical"
+    if n % 20 == 0:
+        return "Legendary"
+    return random.choice(DROP_BASE_RARITIES)
