@@ -86,6 +86,7 @@ async def ensure_group(chat: Chat | None) -> Optional[dict]:
                 "approvedBy": 0,
                 "approvedAt": None,
                 "messageCount": 0,
+                "totalDrops": 0,
                 "changeTime": DEFAULT_CHANGETIME,
                 "activeDrop": None,
                 "lastSpeakerId": 0,
@@ -111,18 +112,46 @@ async def get_photo_by_card_id(card_id: str) -> Optional[dict]:
     return await get_db().photos.find_one({"cardId": str(card_id)})
 
 
-async def get_random_photo() -> Optional[dict]:
+async def get_random_photo(query: Optional[dict] = None) -> Optional[dict]:
+    """Return one random photo matching query. Falls back to skip if $sample fails."""
     db = get_db()
-    docs = await db.photos.aggregate([{"$sample": {"size": 1}}]).to_list(1)
+    query = query or {}
+    docs = await db.photos.aggregate([{"$match": query}, {"$sample": {"size": 1}}]).to_list(1)
     if docs:
         return docs[0]
 
-    total = await db.photos.count_documents({})
+    total = await db.photos.count_documents(query)
     if total <= 0:
         return None
     skip = random.randint(0, total - 1)
-    docs = await db.photos.find({}).skip(skip).limit(1).to_list(1)
+    docs = await db.photos.find(query).skip(skip).limit(1).to_list(1)
     return docs[0] if docs else None
+
+
+async def get_random_photo_by_rarity(rarity: str) -> Optional[dict]:
+    return await get_random_photo({"rarity": str(rarity)})
+
+
+async def get_drop_photo_for_rarity(rarity: str) -> Optional[dict]:
+    """Choose a card for the scheduled rarity.
+
+    If the database has no cards for that rarity yet, fall back safely so the
+    group does not lose a spawn. Normal drops fall back within Common/Uncommon/Rare
+    first, then any card. Milestone drops fall back to any card only if the target
+    rarity is empty.
+    """
+    rarity = str(rarity or "Common")
+    photo = await get_random_photo_by_rarity(rarity)
+    if photo:
+        return photo
+
+    if rarity in ("Common", "Uncommon", "Rare"):
+        # Keep normal drops low-rarity when possible.
+        photo = await get_random_photo({"rarity": {"$in": ["Common", "Uncommon", "Rare"]}})
+        if photo:
+            return photo
+
+    return await get_random_photo()
 
 
 def public_card_snapshot(photo_doc: dict, qty: int = 1) -> dict:
