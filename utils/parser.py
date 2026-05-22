@@ -119,10 +119,10 @@ def parse_forward_character(raw_text: str = "") -> Optional[dict]:
         return None
 
     return {
-        "anime": anime,
-        "cardId": card_id,
-        "name": name,
-        "normalizedName": normalized_search_name(name),
-        "rarity": rarity,
-        "_cardIdProvided": True,
+    "anime": anime,
+    "cardId": "",
+    "name": name,
+    "normalizedName": normalized_search_name(name),
+    "rarity": rarity,
+    "_cardIdProvided": False,
     }
