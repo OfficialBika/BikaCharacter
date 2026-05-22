@@ -318,6 +318,94 @@ async def rmadder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
     await update.effective_message.reply_text(f"✅ User ID {target_id} removed from adders.")
 
+async def delete_card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_owner(update.effective_user.id):
+        return
+
+    msg = update.effective_message
+
+    if not context.args:
+        await msg.reply_text("Usage: /delete <card_id>\nExample: /delete 131")
+        return
+
+    card_id = str(context.args[0]).strip()
+    if not card_id:
+        await msg.reply_text("❌ Invalid card ID.")
+        return
+
+    db = get_db()
+    photo = await db.photos.find_one({"cardId": card_id})
+
+    if not photo:
+        await msg.reply_text(f"❌ Card ID {card_id} not found in database.")
+        return
+
+    name = photo.get("name", "Unknown")
+    anime = photo.get("anime", "Unknown")
+    rarity = photo.get("rarity", "Unknown")
+
+    # Try to delete archived media message from Bika Database channel.
+    # If bot has no delete permission, this will fail safely.
+    channel_delete_status = "Skipped"
+    storage_chat_id = photo.get("storageChatId")
+    storage_message_id = photo.get("storageMessageId")
+
+    if storage_chat_id and storage_message_id:
+        try:
+            await context.bot.delete_message(
+                chat_id=storage_chat_id,
+                message_id=int(storage_message_id),
+            )
+            channel_delete_status = "Deleted"
+        except Exception as exc:
+            channel_delete_status = f"Failed: {exc}"
+
+    # Delete card from main photos database.
+    photo_result = await db.photos.delete_one({"cardId": card_id})
+
+    # Remove this card from all users' harem.
+    users_result = await db.users.update_many(
+        {"cards.cardId": card_id},
+        {
+            "$pull": {"cards": {"cardId": card_id}},
+            "$set": {"updatedAt": utcnow()},
+        },
+    )
+
+    # Clear favourite if this card was set as favourite.
+    fav_result = await db.users.update_many(
+        {"favoriteCardId": card_id},
+        {
+            "$set": {
+                "favoriteCardId": "",
+                "updatedAt": utcnow(),
+            }
+        },
+    )
+
+    # Clear active drop if this deleted card is currently spawned.
+    drop_result = await db.groups.update_many(
+        {"activeDrop.cardId": card_id},
+        {
+            "$set": {
+                "activeDrop": None,
+                "updatedAt": utcnow(),
+            }
+        },
+    )
+
+    await msg.reply_html(
+        "🗑 <b>CARD DELETED</b>\n\n"
+        f"ID: <b>{escape_html(card_id)}</b>\n"
+        f"Name: <b>{escape_html(name)}</b>\n"
+        f"Rarity: <b>{escape_html(rarity)}</b>\n"
+        f"Anime: <b>{escape_html(anime)}</b>\n\n"
+        f"Photos DB deleted: <b>{photo_result.deleted_count}</b>\n"
+        f"Removed from users: <b>{users_result.modified_count}</b>\n"
+        f"Favourite cleared: <b>{fav_result.modified_count}</b>\n"
+        f"Active drops cleared: <b>{drop_result.modified_count}</b>\n"
+        f"Bika Database message: <b>{escape_html(channel_delete_status)}</b>"
+    )
 
 async def give_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_owner(update.effective_user.id):
@@ -366,4 +454,5 @@ def register_admin_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("transfer", transfer_cmd))
     app.add_handler(CommandHandler("addadder", addadder_cmd))
     app.add_handler(CommandHandler("rmadder", rmadder_cmd))
+    app.add_handler(CommandHandler("delete", delete_card_cmd))
     app.add_handler(CommandHandler("give", give_cmd))
