@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import signal
+import sys
+import traceback
 
 from aiohttp import web
 from telegram import BotCommand, Update
@@ -115,10 +117,16 @@ async def run_polling(app: Application) -> web.AppRunner:
 
 
 async def main() -> None:
+    print("Starting BIKA Character Bot...", flush=True)
+    print(f"RUN_MODE={RUN_MODE} PORT={PORT} WEBHOOK_URL_SET={bool(WEBHOOK_URL)} WEBHOOK_PATH={WEBHOOK_PATH}", flush=True)
+    print(f"MONGODB_URI_SET={bool(MONGODB_URI)}", flush=True)
+
     if not BOT_TOKEN:
-        raise RuntimeError("Missing BOT_TOKEN in .env")
+        raise RuntimeError("Missing BOT_TOKEN in Render Environment Variables")
     if not MONGODB_URI:
-        raise RuntimeError("Missing MONGODB_URI/MONGO_URI in .env")
+        raise RuntimeError("Missing MONGODB_URI/MONGO_URI in Render Environment Variables")
+    if RUN_MODE.lower() != "polling" and not WEBHOOK_URL:
+        raise RuntimeError("Missing WEBHOOK_URL in Render Environment Variables. Example: https://your-service.onrender.com")
 
     await init_db()
 
@@ -160,4 +168,11 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception:
+        print("FATAL STARTUP ERROR:", flush=True)
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        raise
