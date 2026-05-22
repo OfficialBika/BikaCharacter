@@ -8,8 +8,7 @@ load_dotenv(override=True)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 MONGODB_URI = os.getenv("MONGODB_URI", os.getenv("MONGO_URI", "")).strip()
-DB_NAME = os.getenv("DB_NAME", "bika_character_bot").strip()
-
+DB_NAME = os.getenv("DATABASE_NAME", os.getenv("DB_NAME", "bika_character_bot")).strip()
 OWNER_ID = int(os.getenv("OWNER_ID", "0") or 0)
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "@Official_Bika").strip()
 BOT_USERNAME = os.getenv("BOT_USERNAME", "").replace("@", "").strip()
@@ -41,8 +40,10 @@ NODE_ENV = os.getenv("NODE_ENV", "production").strip()
 # Render / Telegram webhook settings.
 # RUN_MODE=webhook is recommended for Render Web Service. Use RUN_MODE=polling only for local testing.
 RUN_MODE = os.getenv("RUN_MODE", "webhook").strip().lower()
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip().rstrip("/")
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook").strip()
+if not WEBHOOK_PATH.startswith("/"):
+    WEBHOOK_PATH = "/" + WEBHOOK_PATH
 WEBHOOK_SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN", "").strip()
 WEBHOOK_DROP_PENDING_UPDATES = os.getenv("WEBHOOK_DROP_PENDING_UPDATES", "false").strip().lower() in ("1", "true", "yes", "on")
 
@@ -60,7 +61,8 @@ ANTI_SPAM_STREAK = int(os.getenv("ANTI_SPAM_STREAK", "6") or 6)
 BOT_MUTE_SECONDS = int(os.getenv("BOT_MUTE_SECONDS", "600") or 600)
 CLAIM_PREFIX_MIN_LENGTH = int(os.getenv("CLAIM_PREFIX_MIN_LENGTH", "3") or 3)
 CLAIM_CAPTCHA_SECONDS = int(os.getenv("CLAIM_CAPTCHA_SECONDS", "120") or 120)
-
+INLINE_PAGE_SIZE = int(os.getenv("INLINE_PAGE_SIZE", "50") or 50)
+INLINE_CACHE_TIME = int(os.getenv("INLINE_CACHE_TIME", "1") or 1)
 # Daily claim limit uses Myanmar/Yangon date.
 CLAIM_DAILY_LIMIT = int(os.getenv("CLAIM_DAILY_LIMIT", "25") or 25)
 CLAIM_TIMEZONE = os.getenv("CLAIM_TIMEZONE", "Asia/Yangon").strip() or "Asia/Yangon"
