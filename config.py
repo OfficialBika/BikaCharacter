@@ -38,6 +38,14 @@ CARD_DATABASE_CHANNEL_ID = os.getenv("CARD_DATABASE_CHANNEL_ID", os.getenv("BIKA
 PORT = int(os.getenv("PORT", "8080") or 8080)
 NODE_ENV = os.getenv("NODE_ENV", "production").strip()
 
+# Render / Telegram webhook settings.
+# RUN_MODE=webhook is recommended for Render Web Service. Use RUN_MODE=polling only for local testing.
+RUN_MODE = os.getenv("RUN_MODE", "webhook").strip().lower()
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
+WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook").strip()
+WEBHOOK_SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN", "").strip()
+WEBHOOK_DROP_PENDING_UPDATES = os.getenv("WEBHOOK_DROP_PENDING_UPDATES", "false").strip().lower() in ("1", "true", "yes", "on")
+
 DEFAULT_CHANGETIME = int(os.getenv("DEFAULT_CHANGETIME", "100") or 100)
 # Changetime permissions are fixed by bot rules:
 # - Telegram group admins can set only 100-999.
@@ -51,6 +59,7 @@ HAREM_PAGE_SIZE = int(os.getenv("HAREM_PAGE_SIZE", "5") or 5)
 ANTI_SPAM_STREAK = int(os.getenv("ANTI_SPAM_STREAK", "6") or 6)
 BOT_MUTE_SECONDS = int(os.getenv("BOT_MUTE_SECONDS", "600") or 600)
 CLAIM_PREFIX_MIN_LENGTH = int(os.getenv("CLAIM_PREFIX_MIN_LENGTH", "3") or 3)
+CLAIM_CAPTCHA_SECONDS = int(os.getenv("CLAIM_CAPTCHA_SECONDS", "120") or 120)
 
 # Daily claim limit uses Myanmar/Yangon date.
 CLAIM_DAILY_LIMIT = int(os.getenv("CLAIM_DAILY_LIMIT", "25") or 25)
