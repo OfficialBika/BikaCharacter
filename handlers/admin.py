@@ -19,6 +19,7 @@ from utils.db_helpers import add_card_to_user_id, ensure_group, ensure_user, ens
 from utils.permissions import is_global_admin, is_group_admin_or_owner, is_owner
 from utils.rarity import get_rarity_emoji
 from utils.text import escape_html, mention_user, safe_chat_title, uptime_text, utcnow
+from utils.i18n import t
 
 START_TIME = time.time()
 SETTINGS_ID = "config"
@@ -52,14 +53,18 @@ async def changetime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await ensure_group(update.effective_chat)
     user_id = update.effective_user.id
     if not await is_group_admin_or_owner(update, context):
-        await update.message.reply_text("❌ Group admin only.")
+        await update.message.reply_text(t("group_admin_only"))
         return
 
     if not context.args or not context.args[0].isdigit():
         await update.message.reply_text(
-            f"Usage: /changetime <number>\n"
-            f"Group admin: {ADMIN_CHANGETIME_MIN}-{ADMIN_CHANGETIME_MAX}\n"
-            f"Owner: {OWNER_CHANGETIME_MIN}-{OWNER_CHANGETIME_MAX}"
+            t(
+                "changetime_usage",
+                admin_min=ADMIN_CHANGETIME_MIN,
+                admin_max=ADMIN_CHANGETIME_MAX,
+                owner_min=OWNER_CHANGETIME_MIN,
+                owner_max=OWNER_CHANGETIME_MAX,
+            )
         )
         return
 
@@ -70,14 +75,14 @@ async def changetime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         min_v, max_v = ADMIN_CHANGETIME_MIN, ADMIN_CHANGETIME_MAX
 
     if value < min_v or value > max_v:
-        await update.message.reply_text(f"❌ changetime must be between {min_v} and {max_v}.")
+        await update.message.reply_text(t("changetime_range", min_v=min_v, max_v=max_v))
         return
 
     await get_db().groups.update_one(
         {"groupId": update.effective_chat.id},
         {"$set": {"changeTime": value, "messageCount": 0, "updatedAt": utcnow()}},
     )
-    await update.message.reply_text(f"✅ Changetime updated to {value} messages.")
+    await update.message.reply_text(t("changetime_updated", value=value))
 
 
 async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -93,17 +98,15 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         db.bot_settings.find_one({"_id": SETTINGS_ID}),
     )
     adder_count = len((settings or {}).get("adderIds", []))
-    text = (
-        "⚙️ BIKA ADMIN DASHBOARD\n\n"
-        f"👤 Users: {user_count}\n"
-        f"👥 Groups: {group_count}\n"
-        f"🖼 Cards: {photo_count}\n"
-        f"🎁 Transfers: {transfer_count}\n"
-        f"🤐 Active Bot Mutes: {mute_count}\n"
-        f"➕ Adders: {adder_count}\n"
-        f"⏱ Uptime: {uptime_text(int(time.time() - START_TIME))}\n\n"
-        "Use: /admin_users /admin_groups /admin_photos\n"
-        "Owner: /clmute /transfer /addadder /rmadder /give"
+    text = t(
+        "admin_dashboard",
+        users=user_count,
+        groups=group_count,
+        cards=photo_count,
+        transfers=transfer_count,
+        mutes=mute_count,
+        adders=adder_count,
+        uptime=uptime_text(int(time.time() - START_TIME)),
     )
     await update.message.reply_text(text)
 
@@ -113,9 +116,9 @@ async def admin_users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     users = await get_db().users.find({}).sort("updatedAt", -1).limit(20).to_list(20)
     if not users:
-        await update.message.reply_text("No users.")
+        await update.message.reply_text(t("no_users"))
         return
-    lines = ["👤 USER LIST", ""]
+    lines = [t("user_list_header"), ""]
     for u in users:
         total = sum(int(c.get("count", 0)) for c in u.get("cards", []))
         display = " ".join([u.get("firstName", ""), u.get("lastName", "")]).strip() or u.get("username") or u.get("userId")
@@ -128,9 +131,9 @@ async def admin_groups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     groups = await get_db().groups.find({}).sort("updatedAt", -1).limit(20).to_list(20)
     if not groups:
-        await update.message.reply_text("No groups.")
+        await update.message.reply_text(t("no_groups"))
         return
-    lines = ["👥 GROUP LIST", ""]
+    lines = [t("group_list_header"), ""]
     for g in groups:
         lines.append(f"• {g.get('title') or g.get('groupId')} | {g.get('groupId')} | CT: {g.get('changeTime', DEFAULT_CHANGETIME)}")
     await update.message.reply_text("\n".join(lines))
@@ -141,9 +144,9 @@ async def admin_photos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     photos = await get_db().photos.find({}).sort("createdAt", -1).limit(20).to_list(20)
     if not photos:
-        await update.message.reply_text("No cards.")
+        await update.message.reply_text(t("no_cards"))
         return
-    lines = ["🖼 CARD LIST", ""]
+    lines = [t("card_list_header"), ""]
     for p in photos:
         lines.append(f"• {p.get('cardId')} | {p.get('name')} | {p.get('rarity')} | {p.get('anime')}")
     await update.message.reply_text("\n".join(lines))
@@ -159,7 +162,7 @@ async def clmute_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not is_owner(update.effective_user.id):
         return
     if update.effective_chat.type not in ("group", "supergroup"):
-        await update.effective_message.reply_text("❌ Use /clmute in a group.")
+        await update.effective_message.reply_text(t("clmute_group_only"))
         return
 
     db = get_db()
@@ -172,7 +175,7 @@ async def clmute_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             {"$set": {"lastSpeakerId": 0, "lastSpeakerCount": 0, "updatedAt": utcnow()}},
         )
         await update.effective_message.reply_text(
-            f"✅ Bot mute cleared for user ID {target_id}." if result.deleted_count else f"ℹ️ User ID {target_id} is not bot-muted."
+            t("clmute_user_cleared", user_id=target_id) if result.deleted_count else t("clmute_user_not_muted", user_id=target_id)
         )
         return
 
@@ -181,7 +184,7 @@ async def clmute_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         {"groupId": group_id},
         {"$set": {"lastSpeakerId": 0, "lastSpeakerCount": 0, "updatedAt": utcnow()}},
     )
-    await update.effective_message.reply_text(f"✅ Cleared {result.deleted_count} bot mute(s) in this group.")
+    await update.effective_message.reply_text(t("clmute_group_cleared", count=result.deleted_count))
 
 
 async def transfer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -194,12 +197,12 @@ async def transfer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     msg = update.effective_message
     if not context.args:
-        await msg.reply_text("Usage:\n/transfer <old_user_id> <new_user_id>\n/transfer <old_user_id> + reply target user")
+        await msg.reply_text(t("transfer_usage"))
         return
 
     old_id = _int_or_none(context.args[0])
     if not old_id:
-        await msg.reply_text("❌ Invalid old user ID.")
+        await msg.reply_text(t("transfer_invalid_old"))
         return
 
     new_id: Optional[int] = None
@@ -210,16 +213,16 @@ async def transfer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         new_id = int(reply_user.id)
 
     if not new_id:
-        await msg.reply_text("❌ Target user missing. Use /transfer oldid newid or reply user with /transfer oldid")
+        await msg.reply_text(t("transfer_target_missing"))
         return
     if int(old_id) == int(new_id):
-        await msg.reply_text("❌ Old ID and new ID are the same.")
+        await msg.reply_text(t("transfer_same"))
         return
 
     db = get_db()
     source = await db.users.find_one({"userId": int(old_id)})
     if not source or not source.get("cards"):
-        await msg.reply_text("❌ Old user has no harem/cards to transfer.")
+        await msg.reply_text(t("transfer_no_cards"))
         return
 
     if reply_user and int(reply_user.id) == int(new_id):
@@ -276,11 +279,13 @@ async def transfer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         }
     )
     await msg.reply_text(
-        "✅ Harem transferred successfully.\n\n"
-        f"Old ID: {old_id}\n"
-        f"New ID: {new_id}\n"
-        f"Unique cards: {len(source_cards)}\n"
-        f"Total cards: {sum(max(1, int(c.get('count', 1))) for c in source_cards)}"
+        t(
+            "transfer_success",
+            old_id=old_id,
+            new_id=new_id,
+            unique=len(source_cards),
+            total=sum(max(1, int(c.get("count", 1))) for c in source_cards),
+        )
     )
 
 
@@ -289,7 +294,7 @@ async def addadder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     target_id = _target_user_id_from_reply_or_arg(update, context, 0)
     if not target_id:
-        await update.effective_message.reply_text("Usage: /addadder <user_id> or reply user with /addadder")
+        await update.effective_message.reply_text(t("addadder_usage"))
         return
     now = utcnow()
     await get_db().bot_settings.update_one(
@@ -301,7 +306,7 @@ async def addadder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         },
         upsert=True,
     )
-    await update.effective_message.reply_text(f"✅ User ID {target_id} can now add/update cards.")
+    await update.effective_message.reply_text(t("addadder_success", user_id=target_id))
 
 
 async def rmadder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -309,14 +314,14 @@ async def rmadder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     target_id = _target_user_id_from_reply_or_arg(update, context, 0)
     if not target_id:
-        await update.effective_message.reply_text("Usage: /rmadder <user_id> or reply user with /rmadder")
+        await update.effective_message.reply_text(t("rmadder_usage"))
         return
     await get_db().bot_settings.update_one(
         {"_id": SETTINGS_ID},
         {"$pull": {"adderIds": int(target_id)}, "$set": {"updatedAt": utcnow()}},
         upsert=True,
     )
-    await update.effective_message.reply_text(f"✅ User ID {target_id} removed from adders.")
+    await update.effective_message.reply_text(t("rmadder_success", user_id=target_id))
 
 async def delete_card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_owner(update.effective_user.id):
@@ -325,19 +330,19 @@ async def delete_card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     msg = update.effective_message
 
     if not context.args:
-        await msg.reply_text("Usage: /delete <card_id>\nExample: /delete 131")
+        await msg.reply_text(t("delete_usage"))
         return
 
     card_id = str(context.args[0]).strip()
     if not card_id:
-        await msg.reply_text("❌ Invalid card ID.")
+        await msg.reply_text(t("delete_invalid"))
         return
 
     db = get_db()
     photo = await db.photos.find_one({"cardId": card_id})
 
     if not photo:
-        await msg.reply_text(f"❌ Card ID {card_id} not found in database.")
+        await msg.reply_text(t("delete_not_found", card_id=card_id))
         return
 
     name = photo.get("name", "Unknown")
@@ -346,7 +351,7 @@ async def delete_card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     # Try to delete archived media message from Bika Database channel.
     # If bot has no delete permission, this will fail safely.
-    channel_delete_status = "Skipped"
+    channel_delete_status = t("delete_status_skipped")
     storage_chat_id = photo.get("storageChatId")
     storage_message_id = photo.get("storageMessageId")
 
@@ -356,9 +361,9 @@ async def delete_card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 chat_id=storage_chat_id,
                 message_id=int(storage_message_id),
             )
-            channel_delete_status = "Deleted"
+            channel_delete_status = t("delete_status_deleted")
         except Exception as exc:
-            channel_delete_status = f"Failed: {exc}"
+            channel_delete_status = t("delete_status_failed", error=exc)
 
     # Delete card from main photos database.
     photo_result = await db.photos.delete_one({"cardId": card_id})
@@ -395,16 +400,18 @@ async def delete_card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     )
 
     await msg.reply_html(
-        "🗑 <b>CARD DELETED</b>\n\n"
-        f"ID: <b>{escape_html(card_id)}</b>\n"
-        f"Name: <b>{escape_html(name)}</b>\n"
-        f"Rarity: <b>{escape_html(rarity)}</b>\n"
-        f"Anime: <b>{escape_html(anime)}</b>\n\n"
-        f"Photos DB deleted: <b>{photo_result.deleted_count}</b>\n"
-        f"Removed from users: <b>{users_result.modified_count}</b>\n"
-        f"Favourite cleared: <b>{fav_result.modified_count}</b>\n"
-        f"Active drops cleared: <b>{drop_result.modified_count}</b>\n"
-        f"Bika Database message: <b>{escape_html(channel_delete_status)}</b>"
+        t(
+            "delete_success",
+            card_id=escape_html(card_id),
+            name=escape_html(name),
+            rarity=escape_html(rarity),
+            anime=escape_html(anime),
+            photo_deleted=photo_result.deleted_count,
+            users_modified=users_result.modified_count,
+            fav_modified=fav_result.modified_count,
+            drop_modified=drop_result.modified_count,
+            channel_status=escape_html(channel_delete_status),
+        )
     )
 
 async def give_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -412,31 +419,31 @@ async def give_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     msg = update.effective_message
     if not context.args:
-        await msg.reply_text("Usage: /give <card_id> + reply target user")
+        await msg.reply_text(t("give_usage"))
         return
     if not msg.reply_to_message or not msg.reply_to_message.from_user:
-        await msg.reply_text("❌ Reply to the target user's message.\nExample: /give 1001")
+        await msg.reply_text(t("give_reply_target"))
         return
 
     card_id = str(context.args[0]).strip()
     target = msg.reply_to_message.from_user
     if target.is_bot:
-        await msg.reply_text("❌ Cannot give cards to bot accounts.")
+        await msg.reply_text(t("give_bot_account"))
         return
     photo = await get_photo_by_card_id(card_id)
     if not photo:
-        await msg.reply_text(f"❌ Card ID {card_id} not found.")
+        await msg.reply_text(t("give_not_found", card_id=card_id))
         return
 
     await ensure_user(target)
     await add_card_to_user_id(int(target.id), photo, 1)
-    caption = (
-        "🎁 <b>OWNER GIVE</b>\n\n"
-        f"To: {mention_user(target)}\n"
-        f"Card: {get_rarity_emoji(photo.get('rarity'))} <b>{escape_html(photo.get('name'))}</b>\n"
-        f"ID: <b>{escape_html(photo.get('cardId'))}</b>\n"
-        f"Anime: <b>{escape_html(photo.get('anime'))}</b>\n"
-        "Qty: <b>1</b>"
+    caption = t(
+        "give_caption",
+        target=mention_user(target),
+        emoji=get_rarity_emoji(photo.get("rarity")),
+        name=escape_html(photo.get("name")),
+        card_id=escape_html(photo.get("cardId")),
+        anime=escape_html(photo.get("anime")),
     )
     try:
         await msg.reply_photo(photo=photo.get("fileId"), caption=caption, parse_mode="HTML")

@@ -8,6 +8,7 @@ from utils.cooldown import should_ignore_update
 from utils.db_helpers import ensure_user, get_user_doc
 from utils.rarity import get_rarity_emoji
 from utils.text import escape_html, utcnow
+from utils.i18n import t
 
 
 async def fav_with_args(update: Update, context: ContextTypes.DEFAULT_TYPE, args: list[str]) -> None:
@@ -18,28 +19,28 @@ async def fav_with_args(update: Update, context: ContextTypes.DEFAULT_TYPE, args
         fav_id = str(user_doc.get("favoriteCardId", ""))
         card = next((c for c in user_doc.get("cards", []) if str(c.get("cardId")) == fav_id), None)
         if not card:
-            await update.message.reply_text("💖 Favourite is not set.\nUse: /fav <card id>")
+            await update.message.reply_text(t("fav_not_set"))
             return
         await update.message.reply_photo(
             card["fileId"],
-            caption=f"💖 Your favourite character\n{get_rarity_emoji(card.get('rarity'))} {card.get('name')} [{card.get('cardId')}]\nAnime: {card.get('anime')}",
+            caption=t("fav_current_caption", emoji=get_rarity_emoji(card.get("rarity")), name=card.get("name"), card_id=card.get("cardId"), anime=card.get("anime")),
         )
         return
 
     card_id = str(args[0]).strip()
     card = next((c for c in user_doc.get("cards", []) if str(c.get("cardId")) == card_id), None)
     if not card:
-        await update.message.reply_text("This character does not exist in your collection.")
+        await update.message.reply_text(t("fav_missing_collection"))
         return
     keyboard = InlineKeyboardMarkup(
         [[
-            InlineKeyboardButton("🟢 Yes", callback_data=f"fav_yes:{update.effective_user.id}:{card_id}"),
-            InlineKeyboardButton("🔴 No", callback_data=f"fav_no:{update.effective_user.id}"),
+            InlineKeyboardButton(t("fav_button_yes"), callback_data=f"fav_yes:{update.effective_user.id}:{card_id}"),
+            InlineKeyboardButton(t("fav_button_no"), callback_data=f"fav_no:{update.effective_user.id}"),
         ]]
     )
     await update.message.reply_photo(
         card["fileId"],
-        caption=f"DO YOU WANT TO SET THIS CHARACTER AS YOUR FAVOURITE?\n↪ {card.get('name')} ({card.get('anime')})",
+        caption=t("fav_confirm", name=card.get("name"), anime=card.get("anime")),
         reply_markup=keyboard,
     )
 
@@ -58,27 +59,27 @@ async def fav_yes_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     _, user_id_raw, card_id = query.data.split(":", 2)
     user_id = int(user_id_raw)
     if query.from_user.id != user_id:
-        await query.answer("Not your action.", show_alert=True)
+        await query.answer(t("not_your_action"), show_alert=True)
         return
     user_doc = await get_user_doc(user_id)
     card = next((c for c in user_doc.get("cards", []) if str(c.get("cardId")) == str(card_id)), None) if user_doc else None
     if not card:
-        await query.edit_message_caption("This character does not exist in your collection.")
-        await query.answer("Card missing.", show_alert=True)
+        await query.edit_message_caption(t("fav_missing_collection"))
+        await query.answer(t("fav_card_missing"), show_alert=True)
         return
     await get_db().users.update_one({"userId": user_id}, {"$set": {"favoriteCardId": str(card_id), "updatedAt": utcnow()}})
-    await query.edit_message_caption(caption=f"💖 Favourite set to {escape_html(card.get('name'))} [{escape_html(card_id)}]", parse_mode="HTML")
-    await query.answer("Favourite updated.")
+    await query.edit_message_caption(caption=t("fav_set", name=escape_html(card.get("name")), card_id=escape_html(card_id)), parse_mode="HTML")
+    await query.answer(t("fav_updated"))
 
 
 async def fav_no_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     _, user_id_raw = query.data.split(":", 1)
     if query.from_user.id != int(user_id_raw):
-        await query.answer("Not your action.", show_alert=True)
+        await query.answer(t("not_your_action"), show_alert=True)
         return
-    await query.edit_message_caption("❌ Favourite update cancelled.")
-    await query.answer("Cancelled.")
+    await query.edit_message_caption(t("fav_cancelled"))
+    await query.answer(t("cancelled"))
 
 
 def register_fav_handlers(app: Application) -> None:

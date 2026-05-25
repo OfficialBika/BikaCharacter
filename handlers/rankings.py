@@ -8,6 +8,7 @@ from database.mongodb import get_db
 from utils.claim_stats import get_daily_claim_count, yangon_date_key
 from utils.cooldown import should_ignore_update
 from utils.text import escape_html, mention_user_doc
+from utils.i18n import t
 
 
 def _group_link_from_doc(doc: dict) -> str:
@@ -47,12 +48,12 @@ async def topgroup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     ).to_list(10)
 
     if not rows:
-        await update.effective_message.reply_text("No group catch ranking yet.")
+        await update.effective_message.reply_text(t("rank_no_group"))
         return
 
-    lines = ["🏆 <b>TOP GROUP RANKING</b>", "", "<b>/bika catches ranking</b>", ""]
+    lines = [t("rank_group_header"), "", t("rank_group_subtitle"), ""]
     for i, row in enumerate(rows, start=1):
-        lines.append(f"{_rank_emoji(i)} {_group_link_from_doc(row)} — <b>{int(row.get('count', 0))}</b> catches")
+        lines.append(t("rank_group_row", rank=_rank_emoji(i), group=_group_link_from_doc(row), count=int(row.get("count", 0))))
     await update.effective_message.reply_html("\n".join(lines), disable_web_page_preview=True)
 
 
@@ -78,10 +79,10 @@ async def gtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ).to_list(10)
 
     if not rows:
-        await update.effective_message.reply_text("No global harem ranking yet.")
+        await update.effective_message.reply_text(t("rank_no_global"))
         return
 
-    lines = ["🌍 <b>GLOBAL TOP 10 USERS</b>", "", "<b>By total harem characters</b>", ""]
+    lines = [t("rank_global_header"), "", t("rank_global_subtitle"), ""]
     for i, row in enumerate(rows, start=1):
         user_doc = {
             "userId": int(row.get("_id", 0) or 0),
@@ -90,9 +91,13 @@ async def gtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "lastName": row.get("lastName", ""),
         }
         lines.append(
-            f"{_rank_emoji(i)} {mention_user_doc(user_doc)} — "
-            f"<b>{int(row.get('total', 0) or 0)}</b> total | "
-            f"{int(row.get('unique', 0) or 0)} unique"
+            t(
+                "rank_global_row",
+                rank=_rank_emoji(i),
+                user=mention_user_doc(user_doc),
+                total=int(row.get("total", 0) or 0),
+                unique=int(row.get("unique", 0) or 0),
+            )
         )
     await update.effective_message.reply_html("\n".join(lines), disable_web_page_preview=True)
 
@@ -119,10 +124,10 @@ async def todaygtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     ).to_list(10)
 
     if not rows:
-        await update.effective_message.reply_text(f"No catches yet today.\nDate: {today} ({CLAIM_TIMEZONE})")
+        await update.effective_message.reply_text(t("rank_no_today", date=today, timezone=CLAIM_TIMEZONE))
         return
 
-    lines = ["📅 <b>TODAY GLOBAL TOP 10</b>", f"Date: <b>{escape_html(today)}</b> ({escape_html(CLAIM_TIMEZONE)})", "", "<b>By /bika catches today</b>", ""]
+    lines = [t("rank_today_header"), t("rank_today_date", date=escape_html(today), timezone=escape_html(CLAIM_TIMEZONE)), "", t("rank_today_subtitle"), ""]
     for i, row in enumerate(rows, start=1):
         user_doc = {
             "userId": int(row.get("_id", 0) or 0),
@@ -130,7 +135,7 @@ async def todaygtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "firstName": row.get("firstName", ""),
             "lastName": row.get("lastName", ""),
         }
-        lines.append(f"{_rank_emoji(i)} {mention_user_doc(user_doc)} — <b>{int(row.get('count', 0) or 0)}</b> catches")
+        lines.append(t("rank_today_row", rank=_rank_emoji(i), user=mention_user_doc(user_doc), count=int(row.get("count", 0) or 0)))
     await update.effective_message.reply_html("\n".join(lines), disable_web_page_preview=True)
 
 
@@ -143,10 +148,7 @@ async def mylimit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     used = await get_daily_claim_count(update.effective_user.id, today)
     remaining = max(0, CLAIM_DAILY_LIMIT - used)
     await update.effective_message.reply_text(
-        "🎯 Daily Catch Limit\n\n"
-        f"Date: {today} ({CLAIM_TIMEZONE})\n"
-        f"Used: {used}/{CLAIM_DAILY_LIMIT}\n"
-        f"Remaining: {remaining}"
+        t("mylimit", date=today, timezone=CLAIM_TIMEZONE, used=used, limit=CLAIM_DAILY_LIMIT, remaining=remaining)
     )
 
 

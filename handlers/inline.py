@@ -10,6 +10,7 @@ from database.mongodb import get_db
 from utils.parser import normalized_search_name
 from utils.rarity import get_rarity_emoji
 from utils.text import escape_html
+from utils.i18n import t
 
 # Telegram Bot API allows up to 50 inline results per answer.
 # We do not impose a database/result total limit; all matching cards are shown
@@ -20,11 +21,11 @@ INLINE_PAGE_SIZE = 50
 def _inline_caption(photo: dict) -> str:
     return "\n".join(
         [
-            "<b>OwO! Check out this character!</b>",
+            t("card_check_header"),
             "",
             f"<b>{escape_html(photo.get('anime', 'Unknown'))}</b>",
             f"<b>{escape_html(photo.get('cardId', ''))}:</b> {escape_html(photo.get('name', 'Unknown'))}",
-            f"({get_rarity_emoji(photo.get('rarity'))} <b>RARITY:</b> {escape_html(photo.get('rarity', 'Common'))})",
+            t("rarity_line", emoji=get_rarity_emoji(photo.get("rarity")), rarity=escape_html(photo.get("rarity", "Common"))),
         ]
     )
 
@@ -136,7 +137,7 @@ async def inline_character_search(update: Update, context: ContextTypes.DEFAULT_
         seen_ids.add(card_id)
 
         title = f"{photo.get('name', 'Unknown')} [{card_id}]"
-        description = f"{photo.get('anime', 'Unknown')} | {photo.get('rarity', 'Common')} | ID: {card_id}"
+        description = t("inline_description", anime=photo.get("anime", "Unknown"), rarity=photo.get("rarity", "Common"), card_id=card_id)
         results.append(
             InlineQueryResultCachedPhoto(
                 id=_result_id(photo),

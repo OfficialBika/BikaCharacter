@@ -8,6 +8,7 @@ from utils.cooldown import should_ignore_update
 from utils.db_helpers import add_card_to_user_id, ensure_user, remove_card_from_user
 from utils.rarity import get_rarity_emoji
 from utils.text import escape_html, mention_user, utcnow
+from utils.i18n import t
 
 
 async def gift_with_args(update: Update, context: ContextTypes.DEFAULT_TYPE, args: list[str]) -> None:
@@ -17,16 +18,16 @@ async def gift_with_args(update: Update, context: ContextTypes.DEFAULT_TYPE, arg
         return
     msg = update.effective_message
     if not msg.reply_to_message or not msg.reply_to_message.from_user:
-        await msg.reply_text("❌ Reply to the target user's message.\nExample: .gift 1001")
+        await msg.reply_text(t("gift_reply_target"))
         return
     if not args:
-        await msg.reply_text("Usage: .gift <card id> [qty]")
+        await msg.reply_text(t("gift_usage"))
         return
 
     sender = update.effective_user
     receiver = msg.reply_to_message.from_user
     if sender.id == receiver.id:
-        await msg.reply_text("❌ You can't gift to yourself.")
+        await msg.reply_text(t("gift_self"))
         return
 
     card_id = str(args[0]).strip()
@@ -38,26 +39,26 @@ async def gift_with_args(update: Update, context: ContextTypes.DEFAULT_TYPE, arg
     await ensure_user(receiver)
     card = next((c for c in sender_doc.get("cards", []) if str(c.get("cardId")) == card_id), None)
     if not card:
-        await msg.reply_text("❌ Card not found in your inventory.")
+        await msg.reply_text(t("gift_card_not_found_inventory"))
         return
     if int(card.get("count", 0)) < qty:
-        await msg.reply_text("❌ Not enough quantity.")
+        await msg.reply_text(t("gift_not_enough"))
         return
 
-    preview = (
-        "🎁 <b>GIFT PREVIEW</b>\n\n"
-        f"From: {mention_user(sender)}\n"
-        f"To: {mention_user(receiver)}\n"
-        f"Card: {get_rarity_emoji(card.get('rarity'))} {escape_html(card.get('name'))}\n"
-        f"ID: {escape_html(card.get('cardId'))}\n"
-        f"Anime: {escape_html(card.get('anime'))}\n"
-        f"Qty: {qty}\n\n"
-        "Are you sure you want to send this card?"
+    preview = t(
+        "gift_preview",
+        sender=mention_user(sender),
+        receiver=mention_user(receiver),
+        emoji=get_rarity_emoji(card.get("rarity")),
+        name=escape_html(card.get("name")),
+        card_id=escape_html(card.get("cardId")),
+        anime=escape_html(card.get("anime")),
+        qty=qty,
     )
     keyboard = InlineKeyboardMarkup(
         [[
-            InlineKeyboardButton("✅ Confirm", callback_data=f"gift_confirm:{sender.id}:{receiver.id}:{card_id}:{qty}"),
-            InlineKeyboardButton("❌ Cancel", callback_data=f"gift_cancel:{sender.id}"),
+            InlineKeyboardButton(t("gift_button_confirm"), callback_data=f"gift_confirm:{sender.id}:{receiver.id}:{card_id}:{qty}"),
+            InlineKeyboardButton(t("gift_button_cancel"), callback_data=f"gift_cancel:{sender.id}"),
         ]]
     )
     await msg.reply_html(preview, reply_markup=keyboard)
@@ -79,13 +80,13 @@ async def gift_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TY
     receiver_id = int(receiver_raw)
     qty = max(1, int(qty_raw))
     if query.from_user.id != sender_id:
-        await query.answer("Not your gift action.", show_alert=True)
+        await query.answer(t("gift_not_your"), show_alert=True)
         return
 
     removal = await remove_card_from_user(sender_id, card_id, qty)
     if not removal.get("ok"):
         await query.edit_message_text(f"❌ {removal.get('reason')}")
-        await query.answer("Failed.", show_alert=True)
+        await query.answer(t("failed"), show_alert=True)
         return
 
     card = removal["removedCardSnapshot"]
@@ -103,19 +104,19 @@ async def gift_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TY
         }
     )
     await query.edit_message_text(
-        f"✅ Gift sent successfully.\n\nCard: {get_rarity_emoji(card.get('rarity'))} {card.get('name')}\nID: {card.get('cardId')}\nQty: {qty}"
+        t("gift_success", emoji=get_rarity_emoji(card.get("rarity")), name=card.get("name"), card_id=card.get("cardId"), qty=qty)
     )
-    await query.answer("Gift confirmed.")
+    await query.answer(t("gift_confirmed"))
 
 
 async def gift_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     _, sender_raw = query.data.split(":", 1)
     if query.from_user.id != int(sender_raw):
-        await query.answer("Not your cancel action.", show_alert=True)
+        await query.answer(t("gift_not_your_cancel"), show_alert=True)
         return
-    await query.edit_message_text("❌ Gift cancelled.")
-    await query.answer("Cancelled.")
+    await query.edit_message_text(t("gift_cancelled"))
+    await query.answer(t("cancelled"))
 
 
 def register_gift_handlers(app: Application) -> None:

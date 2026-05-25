@@ -18,6 +18,7 @@ from utils.db_helpers import add_card_to_user, ensure_group, ensure_user, get_ph
 from utils.parser import is_character_name_match, normalized_search_name
 from utils.rarity import get_rarity_emoji
 from utils.text import escape_html, mention_user, utcnow
+from utils.i18n import t
 
 # Divine and every rarity above it must be protected with captcha.
 CAPTCHA_RARITIES = set()  # High-rarity captcha now happens before spawn in handlers/drop.py
@@ -104,7 +105,7 @@ async def captcha_timeout_task(bot, chat_id: int, nonce: str, seconds: int) -> N
         return
 
     message_id = int(captcha.get("messageId", 0) or 0)
-    text = "⌛ <b>CAPTCHA TIMEOUT</b>\n\n120 seconds finished. This high-rarity card has been lost."
+    text = t("claim_captcha_timeout")
     try:
         if message_id:
             await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode=ParseMode.HTML)
@@ -119,14 +120,14 @@ async def captcha_timeout_task(bot, chat_id: int, nonce: str, seconds: int) -> N
 
 async def send_claim_success(update_or_query, tg_user, chat, photo_doc: dict) -> None:
     message_target = getattr(update_or_query, "message", None) or getattr(update_or_query, "effective_message", None)
-    text = (
-        "🎉 <b>YOU GOT A NEW CHARACTER!</b>\n\n"
-        f"👤 Claimed by: {mention_user(tg_user)}\n"
-        f"{get_rarity_emoji(photo_doc.get('rarity'))} Name: <b>{escape_html(photo_doc.get('name'))}</b>\n"
-        f"🆔 ID: <b>{escape_html(photo_doc.get('cardId'))}</b>\n"
-        f"🏷 RARITY: <b>{escape_html(photo_doc.get('rarity'))}</b>\n"
-        f"🌴 ANIME: <b>{escape_html(photo_doc.get('anime'))}</b>\n\n"
-        "❄️ CHECK YOUR /harem !"
+    text = t(
+        "claim_success",
+        claimer=mention_user(tg_user),
+        emoji=get_rarity_emoji(photo_doc.get("rarity")),
+        name=escape_html(photo_doc.get("name")),
+        card_id=escape_html(photo_doc.get("cardId")),
+        rarity=escape_html(photo_doc.get("rarity")),
+        anime=escape_html(photo_doc.get("anime")),
     )
     if message_target:
         await message_target.reply_html(text)
@@ -139,10 +140,7 @@ async def start_high_rarity_captcha(update: Update, context: ContextTypes.DEFAUL
     used = await get_daily_claim_count(user.id, date_key)
     if used >= CLAIM_DAILY_LIMIT:
         await update.message.reply_text(
-            f"❌ Daily catch limit reached.\n"
-            f"Myanmar/Yangon date: {date_key}\n"
-            f"Used: {used}/{CLAIM_DAILY_LIMIT}\n"
-            f"Remaining: 0"
+            t("daily_limit", date=date_key, used=used, limit=CLAIM_DAILY_LIMIT, remaining=0)
         )
         return
 
@@ -185,19 +183,21 @@ async def start_high_rarity_captcha(update: Update, context: ContextTypes.DEFAUL
         latest = await get_db().groups.find_one({"groupId": int(chat.id)})
         cap = ((latest or {}).get("activeDrop") or {}).get("captcha") or {}
         if cap.get("status") == "pending":
-            await update.message.reply_text("⏳ Captcha is already active for this drop. Wait for the result.")
+            await update.message.reply_text(t("claim_captcha_active"))
         else:
-            await update.message.reply_text("❌ This character is no longer available.")
+            await update.message.reply_text(t("character_unavailable"))
         return
 
     rarity = str(active.get("rarity", ""))
-    text = (
-        f"🧩 <b>CAPTCHA SOLVE REQUIRED</b>\n\n"
-        f"{get_rarity_emoji(rarity)} <b>{escape_html(rarity)}</b> and above must pass captcha.\n"
-        f"👤 Player: {mention_user(user)}\n"
-        f"🎴 Card: <b>{escape_html(active.get('name'))}</b> [{escape_html(active.get('cardId'))}]\n\n"
-        f"Solve within <b>{CLAIM_CAPTCHA_SECONDS}s</b> or this card will be lost.\n"
-        f"Question: <b>{escape_html(captcha['question'])}</b>"
+    text = t(
+        "claim_captcha_required",
+        emoji=get_rarity_emoji(rarity),
+        rarity=escape_html(rarity),
+        player=mention_user(user),
+        card_name=escape_html(active.get("name")),
+        card_id=escape_html(active.get("cardId")),
+        seconds=CLAIM_CAPTCHA_SECONDS,
+        question=escape_html(captcha["question"]),
     )
     sent = await update.message.reply_html(
         text,
@@ -237,32 +237,18 @@ def caught_by_html(active: dict) -> str:
 
 
 async def reply_already_caught(update: Update, active: dict) -> None:
-    await update.message.reply_html(
-        "❌ <b>CHARACTER ALREADY CAUGHT</b>\n\n"
-        f"Caught by: {caught_by_html(active)}\n\n"
-        "🥤 Wait for new character to spawn."
-    )
+    await update.message.reply_html(t("already_caught", caught_by=caught_by_html(active)))
 
 
 async def reply_wrong_character_name(update: Update, active: dict, guess_raw: str = "") -> None:
     drop_message_id = int(active.get("messageId", 0) or 0)
     drop_link = build_drop_message_link(update.effective_chat, drop_message_id)
+    arrow = f'<a href="{drop_link}">⬆️</a>' if drop_link else "⬆️"
 
     if str(guess_raw or "").strip():
-        first_line = f"❌ CHARACTER NAME {escape_html(str(guess_raw).lower())} IS INCORRECT"
+        text = t("wrong_name", guess=escape_html(str(guess_raw).lower()), arrow=arrow)
     else:
-        first_line = "❌ CHARACTER NAME IS INCORRECT"
-
-    if drop_link:
-        text = (
-            f"{first_line}\n\n"
-            f'<a href="{drop_link}">⬆️</a> CHARACTER is still available.'
-        )
-    else:
-        text = (
-            f"{first_line}\n\n"
-            "⬆️ CHARACTER is still available."
-        )
+        text = t("wrong_name_empty", arrow=arrow)
 
     await update.message.reply_html(text)
 
@@ -279,7 +265,7 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     group = await ensure_group(update.effective_chat)
     active = (group or {}).get("activeDrop")
     if not active or not active.get("cardId"):
-        await update.message.reply_text("❌ No character is available right now.")
+        await update.message.reply_text(t("no_character_available"))
         return
 
     # /bika without a name should not show usage text.
@@ -290,7 +276,7 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     captcha = active.get("captcha") or {}
     if captcha.get("status") == "pending":
-        await update.message.reply_text("⏳ Captcha is already active for this high-rarity drop.")
+        await update.message.reply_text(t("claim_high_captcha_active"))
         return
 
     if not guess_raw:
@@ -312,10 +298,7 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     reservation = await reserve_daily_claim(update.effective_user.id)
     if not reservation.get("ok"):
         await update.message.reply_text(
-            f"❌ Daily catch limit reached.\n"
-            f"Myanmar/Yangon date: {reservation.get('date')}\n"
-            f"Used: {reservation.get('used')}/{CLAIM_DAILY_LIMIT}\n"
-            f"Remaining: 0"
+            t("daily_limit", date=reservation.get("date"), used=reservation.get("used"), limit=CLAIM_DAILY_LIMIT, remaining=0)
         )
         return
 
@@ -347,19 +330,21 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     photo_doc = await get_photo_by_card_id(active.get("cardId"))
     if not photo_doc:
         await release_daily_claim(update.effective_user.id, reservation.get("date"))
-        await update.message.reply_text("❌ Drop data missing.")
+        await update.message.reply_text(t("drop_data_missing"))
         return
 
     await add_card_to_user(update.effective_user, photo_doc, 1)
     await log_claim_event(update.effective_user, update.effective_chat, photo_doc, reservation.get("date"))
     await update.message.reply_html(
-        "🎉 <b>YOU GOT A NEW CHARACTER!</b>\n\n"
-        f"👤 Claimed by: {mention_user(update.effective_user)}\n"
-        f"{get_rarity_emoji(photo_doc.get('rarity'))} Name: <b>{escape_html(photo_doc.get('name'))}</b>\n"
-        f"🆔 ID: <b>{escape_html(photo_doc.get('cardId'))}</b>\n"
-        f"🏷 RARITY: <b>{escape_html(photo_doc.get('rarity'))}</b>\n"
-        f"🌴 ANIME: <b>{escape_html(photo_doc.get('anime'))}</b>\n\n"
-        "❄️ CHECK YOUR /harem !"
+        t(
+            "claim_success",
+            claimer=mention_user(update.effective_user),
+            emoji=get_rarity_emoji(photo_doc.get("rarity")),
+            name=escape_html(photo_doc.get("name")),
+            card_id=escape_html(photo_doc.get("cardId")),
+            rarity=escape_html(photo_doc.get("rarity")),
+            anime=escape_html(photo_doc.get("anime")),
+        )
     )
 
 
@@ -370,7 +355,7 @@ async def captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     parts = query.data.split(":")
     if len(parts) != 5:
-        await query.answer("Invalid captcha.", show_alert=True)
+        await query.answer(t("captcha_invalid"), show_alert=True)
         return
     _, chat_id_raw, user_id_raw, nonce, choice_raw = parts
     chat_id = int(chat_id_raw)
@@ -378,14 +363,14 @@ async def captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     choice_index = int(choice_raw)
 
     if int(query.from_user.id) != owner_user_id:
-        await query.answer("This captcha is not for you.", show_alert=True)
+        await query.answer(t("captcha_not_for_you"), show_alert=True)
         return
 
     latest = await get_db().groups.find_one({"groupId": int(chat_id), "activeDrop.captcha.nonce": str(nonce)})
     active = (latest or {}).get("activeDrop") or {}
     captcha = active.get("captcha") or {}
     if not active or captcha.get("status") != "pending":
-        await query.answer("Captcha already finished.", show_alert=True)
+        await query.answer(t("captcha_finished"), show_alert=True)
         return
 
     expires_at = captcha.get("expiresAt")
@@ -393,12 +378,12 @@ async def captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await mark_captcha_lost(chat_id, nonce, "Captcha Timeout")
         try:
             await query.edit_message_text(
-                "⌛ <b>CAPTCHA TIMEOUT</b>\n\n120 seconds finished. This high-rarity card has been lost.",
+                t("claim_captcha_timeout"),
                 parse_mode=ParseMode.HTML,
             )
         except Exception:
             pass
-        await query.answer("Expired.", show_alert=True)
+        await query.answer(t("captcha_expired"), show_alert=True)
         return
 
     correct_index = int(captcha.get("answerIndex", -1))
@@ -406,12 +391,12 @@ async def captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await mark_captcha_lost(chat_id, nonce, "Captcha Failed")
         try:
             await query.edit_message_text(
-                "❌ <b>WRONG CAPTCHA</b>\n\nThis high-rarity card has been lost.",
+                t("claim_wrong_captcha"),
                 parse_mode=ParseMode.HTML,
             )
         except Exception:
             pass
-        await query.answer("Wrong. Card lost.", show_alert=True)
+        await query.answer(t("claim_wrong_card_lost"), show_alert=True)
         return
 
     reservation = await reserve_daily_claim(query.from_user.id)
@@ -419,12 +404,12 @@ async def captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await mark_captcha_lost(chat_id, nonce, "Daily Limit Reached")
         try:
             await query.edit_message_text(
-                f"❌ <b>DAILY LIMIT REACHED</b>\n\nUsed: {reservation.get('used')}/{CLAIM_DAILY_LIMIT}. This card has been lost.",
+                t("daily_limit_card_lost", used=reservation.get("used"), limit=CLAIM_DAILY_LIMIT),
                 parse_mode=ParseMode.HTML,
             )
         except Exception:
             pass
-        await query.answer("Daily limit reached.", show_alert=True)
+        await query.answer(t("daily_limit_reached_alert"), show_alert=True)
         return
 
     claimer_name = " ".join([query.from_user.first_name or "", query.from_user.last_name or ""]).strip()
@@ -451,13 +436,13 @@ async def captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
     if not updated:
         await release_daily_claim(query.from_user.id, reservation.get("date"))
-        await query.answer("This card is no longer available.", show_alert=True)
+        await query.answer(t("card_no_longer_available"), show_alert=True)
         return
 
     photo_doc = await get_photo_by_card_id(active.get("cardId"))
     if not photo_doc:
         await release_daily_claim(query.from_user.id, reservation.get("date"))
-        await query.answer("Drop data missing.", show_alert=True)
+        await query.answer(t("drop_data_missing"), show_alert=True)
         return
 
     await add_card_to_user(query.from_user, photo_doc, 1)
@@ -465,20 +450,22 @@ async def captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     try:
         await query.edit_message_text(
-            f"✅ <b>CAPTCHA SOLVED</b>\n\n{mention_user(query.from_user)} got the card.",
+            t("claim_captcha_solved", user=mention_user(query.from_user)),
             parse_mode=ParseMode.HTML,
         )
     except Exception:
         pass
-    await query.answer("Captcha solved.")
+    await query.answer(t("captcha_solved_alert"))
     await query.message.reply_html(
-        "🎉 <b>YOU GOT A NEW CHARACTER!</b>\n\n"
-        f"👤 Claimed by: {mention_user(query.from_user)}\n"
-        f"{get_rarity_emoji(photo_doc.get('rarity'))} Name: <b>{escape_html(photo_doc.get('name'))}</b>\n"
-        f"🆔 ID: <b>{escape_html(photo_doc.get('cardId'))}</b>\n"
-        f"🏷 RARITY: <b>{escape_html(photo_doc.get('rarity'))}</b>\n"
-        f"🌴 ANIME: <b>{escape_html(photo_doc.get('anime'))}</b>\n\n"
-        "❄️ CHECK YOUR /harem !"
+        t(
+            "claim_success",
+            claimer=mention_user(query.from_user),
+            emoji=get_rarity_emoji(photo_doc.get("rarity")),
+            name=escape_html(photo_doc.get("name")),
+            card_id=escape_html(photo_doc.get("cardId")),
+            rarity=escape_html(photo_doc.get("rarity")),
+            anime=escape_html(photo_doc.get("anime")),
+        )
     )
 
 

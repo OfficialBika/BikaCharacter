@@ -16,6 +16,7 @@ from utils.cooldown import is_bot_muted, record_message_and_maybe_mute
 from utils.db_helpers import ensure_group, ensure_user, get_drop_photo_for_rarity
 from utils.rarity import get_rarity_emoji, get_scheduled_drop_rarity
 from utils.text import escape_html, safe_chat_title, utcnow
+from utils.i18n import t
 
 # For these rarity milestones, captcha appears BEFORE the card/photo spawns.
 # If solved correctly within CLAIM_CAPTCHA_SECONDS, then the card spawns normally.
@@ -88,8 +89,7 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     just_muted = await record_message_and_maybe_mute(update)
     if just_muted:
         await update.effective_message.reply_text(
-            f"🤐 {user.first_name}, you sent too many messages in a row. "
-            f"Bot will ignore you for {BOT_MUTE_SECONDS // 60} minutes."
+            t("bot_muted", name=user.first_name, minutes=BOT_MUTE_SECONDS // 60)
         )
         return
 
@@ -132,14 +132,13 @@ async def send_pre_spawn_captcha(update: Update, context: ContextTypes.DEFAULT_T
     captcha = make_pre_spawn_captcha()
     expires_at = utcnow() + timedelta(seconds=CLAIM_CAPTCHA_SECONDS)
 
-    text = (
-        "🧩 <b>HIGH RARITY CAPTCHA</b>\n\n"
-        f"{get_rarity_emoji(scheduled_rarity)} <b>{escape_html(scheduled_rarity)}</b> card is trying to spawn in "
-        f"<b>{escape_html(safe_chat_title(chat))}</b>.\n\n"
-        f"Solve this captcha within <b>{CLAIM_CAPTCHA_SECONDS}s</b>.\n"
-        "✅ Correct answer = character will spawn.\n"
-        "❌ Wrong answer or timeout = this drop will be lost.\n\n"
-        f"Question: <b>{escape_html(captcha['question'])}</b>"
+    text = t(
+        "pre_spawn_captcha",
+        emoji=get_rarity_emoji(scheduled_rarity),
+        rarity=escape_html(scheduled_rarity),
+        group_name=escape_html(safe_chat_title(chat)),
+        seconds=CLAIM_CAPTCHA_SECONDS,
+        question=escape_html(captcha["question"]),
     )
 
     sent = await update.effective_message.reply_html(
@@ -227,7 +226,7 @@ async def pre_spawn_timeout_task(bot, chat_id: int, nonce: str, seconds: int) ->
         return
 
     message_id = int(pre_cap.get("messageId", 0) or 0)
-    text = "⌛ <b>CAPTCHA TIMEOUT</b>\n\n120 seconds finished. This scheduled high-rarity spawn has been lost."
+    text = t("pre_spawn_timeout")
     try:
         if message_id:
             await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode=ParseMode.HTML)
@@ -248,7 +247,7 @@ async def pre_spawn_captcha_callback(update: Update, context: ContextTypes.DEFAU
 
     parts = query.data.split(":")
     if len(parts) != 4:
-        await query.answer("Invalid captcha.", show_alert=True)
+        await query.answer(t("captcha_invalid"), show_alert=True)
         return
 
     _, chat_id_raw, nonce, choice_raw = parts
@@ -259,7 +258,7 @@ async def pre_spawn_captcha_callback(update: Update, context: ContextTypes.DEFAU
     active = (latest or {}).get("activeDrop") or {}
     pre_cap = active.get("preSpawnCaptcha") or {}
     if not active or pre_cap.get("status") != "pending":
-        await query.answer("Captcha already finished.", show_alert=True)
+        await query.answer(t("captcha_finished"), show_alert=True)
         return
 
     correct_index = int(pre_cap.get("answerIndex", -1))
@@ -267,12 +266,12 @@ async def pre_spawn_captcha_callback(update: Update, context: ContextTypes.DEFAU
         await mark_pre_spawn_lost(chat_id, nonce, "failed")
         try:
             await query.edit_message_text(
-                "❌ <b>WRONG CAPTCHA</b>\n\nThis scheduled high-rarity spawn has been lost.",
+                t("pre_spawn_wrong"),
                 parse_mode=ParseMode.HTML,
             )
         except Exception:
             pass
-        await query.answer("Wrong. Spawn lost.", show_alert=True)
+        await query.answer(t("pre_spawn_wrong_alert"), show_alert=True)
         await clear_lost_pre_spawn(chat_id, nonce)
         return
 
@@ -299,17 +298,17 @@ async def pre_spawn_captcha_callback(update: Update, context: ContextTypes.DEFAU
         return_document=ReturnDocument.AFTER,
     )
     if not solved:
-        await query.answer("Captcha already finished.", show_alert=True)
+        await query.answer(t("captcha_finished"), show_alert=True)
         return
 
     try:
         await query.edit_message_text(
-            "✅ <b>CAPTCHA SOLVED</b>\n\nHigh-rarity character is spawning now!",
+            t("pre_spawn_solved"),
             parse_mode=ParseMode.HTML,
         )
     except Exception:
         pass
-    await query.answer("Solved.")
+    await query.answer(t("solved"))
 
     # Use the callback chat when available; otherwise send by chat_id only.
     chat = query.message.chat if query.message else None
@@ -324,17 +323,14 @@ async def send_spawn_card(context: ContextTypes.DEFAULT_TYPE, chat_id: int, chat
             {"$set": {"activeDrop": None, "updatedAt": utcnow()}},
         )
         try:
-            await context.bot.send_message(chat_id=chat_id, text="❌ No card found for this scheduled rarity. Spawn lost.")
+            await context.bot.send_message(chat_id=chat_id, text=t("spawn_no_card"))
         except Exception:
             pass
         return
 
     emoji = get_rarity_emoji(photo.get("rarity"))
     group_name = safe_chat_title(chat) if chat else str(chat_id)
-    caption = (
-        f"{emoji} A new Character has spawned in {group_name} .\n\n"
-        "To own this character, send the character name quickly using /bika name ."
-    )
+    caption = t("spawn_caption", emoji=emoji, group_name=group_name)
     try:
         sent = await context.bot.send_photo(chat_id=chat_id, photo=photo["fileId"], caption=caption)
     except Exception as exc:

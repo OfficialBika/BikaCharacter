@@ -7,6 +7,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from config import ADD_TO_GROUP_URL, BOT_USERNAME, SUPPORT_GROUP_URL, UPDATE_CHANNEL_URL
 from utils.db_helpers import ensure_user
 from utils.text import escape_html
+from utils.i18n import t
 
 
 def _add_to_group_url() -> str:
@@ -20,10 +21,10 @@ def _add_to_group_url() -> str:
 def _start_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("➕ ADD ME TO YOUR GROUP", url=_add_to_group_url())],
+            [InlineKeyboardButton(t("start_button_add_group"), url=_add_to_group_url())],
             [
-                InlineKeyboardButton("💬 Support Group", url=SUPPORT_GROUP_URL),
-                InlineKeyboardButton("📢 Update Channel", url=UPDATE_CHANNEL_URL),
+                InlineKeyboardButton(t("start_button_support"), url=SUPPORT_GROUP_URL),
+                InlineKeyboardButton(t("start_button_update"), url=UPDATE_CHANNEL_URL),
             ],
         ]
     )
@@ -39,13 +40,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         mention = "User"
 
-    text = (
-        f"ʜᴇLLO {mention} !\n\n"
-        "ɪ'ᴍ <b>Bika Character Bot</b> .\n\n"
-        "ᴀ ᴄᴜᴛᴇ ᴄʜᴀʀᴀᴄᴛᴇʀ ᴄᴀᴛᴄʜɪɴɢ ᴀᴅᴠᴇɴᴛᴜʀᴇ. "
-        "ᴀᴅᴅ ᴍᴇ ᴛᴏ ᴀ ɢʀᴏᴜᴘ, ᴄᴏʟʟᴇᴄᴛ ꜰᴀꜱᴛ, "
-        "ᴀɴᴅ ʙᴜɪʟᴅ ʏᴏᴜʀ ʜᴀʀᴇᴍ."
-    )
+    text = t("start_message", mention=mention)
 
     await update.effective_message.reply_text(
         text,

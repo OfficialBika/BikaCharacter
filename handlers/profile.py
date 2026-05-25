@@ -11,6 +11,7 @@ from utils.cooldown import should_ignore_update
 from utils.db_helpers import ensure_user, rarity_counts
 from utils.rarity import get_rarity_emoji
 from utils.text import level_from_exp, progress_bar
+from utils.i18n import t
 
 
 def build_profile_text(user_doc: dict, total_photo_count: int) -> str:
@@ -24,20 +25,20 @@ def build_profile_text(user_doc: dict, total_photo_count: int) -> str:
     fav = next((c for c in cards if str(c.get("cardId")) == str(user_doc.get("favoriteCardId", ""))), None)
 
     lines = [
-        "🎗BIKA CATCHER PROFILE🎗",
+        t("profile_header"),
         "",
-        f"👤 USER: {username}",
-        f"🆔 USER ID: {user_doc.get('userId')}",
-        f"⚡ TOTAL CHARACTER: {total_owned} ({unique_owned})",
-        f"🫧 HAREM: {unique_owned}/{total_photo_count} ({harem_percent:.3f}%)",
-        f"ℹ️ EXPERIENCE LEVEL: {level['level']}",
-        f"📈 PROGRESS BAR: {progress_bar(level['percent'])}",
-        f"💖 FAVOURITE: {fav['name']} [{fav['cardId']}]" if fav else "💖 FAVOURITE: Not set",
+        t("profile_user", username=username),
+        t("profile_user_id", user_id=user_doc.get("userId")),
+        t("profile_total_character", total_owned=total_owned, unique_owned=unique_owned),
+        t("profile_harem", unique_owned=unique_owned, total_photo_count=total_photo_count, percent=harem_percent),
+        t("profile_level", level=level["level"]),
+        t("profile_progress", bar=progress_bar(level["percent"])),
+        t("profile_favourite", name=fav["name"], card_id=fav["cardId"]) if fav else t("profile_favourite_not_set"),
         "",
     ]
     for rarity in RARITY_ORDER:
         data = counts.get(rarity, {"unique": 0, "total": 0})
-        lines.append(f"{get_rarity_emoji(rarity)} RARITY {rarity}: {data['unique']} ({data['total']})")
+        lines.append(t("profile_rarity_line", emoji=get_rarity_emoji(rarity), rarity=rarity, unique=data["unique"], total=data["total"]))
     return "\n".join(lines)
 
 

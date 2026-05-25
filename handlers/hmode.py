@@ -7,6 +7,7 @@ from database.mongodb import get_db
 from utils.cooldown import should_ignore_update
 from utils.db_helpers import ensure_user
 from utils.text import utcnow
+from utils.i18n import t
 
 
 async def hmode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -16,13 +17,13 @@ async def hmode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("🦖 DEFAULT", callback_data=f"hmode:{update.effective_user.id}:default"),
-                InlineKeyboardButton("🦕 DETAILED", callback_data=f"hmode:{update.effective_user.id}:detailed"),
+                InlineKeyboardButton(t("hmode_button_default"), callback_data=f"hmode:{update.effective_user.id}:default"),
+                InlineKeyboardButton(t("hmode_button_detailed"), callback_data=f"hmode:{update.effective_user.id}:detailed"),
             ],
-            [InlineKeyboardButton("🔄 RESET", callback_data=f"hmode:{update.effective_user.id}:reset")],
+            [InlineKeyboardButton(t("hmode_button_reset"), callback_data=f"hmode:{update.effective_user.id}:reset")],
         ]
     )
-    await update.message.reply_text("YOU CAN CHANGE YOUR HAREM INTERFACE USING THESE BUTTONS", reply_markup=keyboard)
+    await update.message.reply_text(t("hmode_intro"), reply_markup=keyboard)
 
 
 async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -30,16 +31,16 @@ async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     _, user_id_raw, choice = query.data.split(":", 2)
     user_id = int(user_id_raw)
     if query.from_user.id != user_id:
-        await query.answer("Not your action.", show_alert=True)
+        await query.answer(t("not_your_action"), show_alert=True)
         return
     if choice == "reset":
         choice = "default"
     if choice not in ("default", "detailed"):
-        await query.answer("Invalid mode.", show_alert=True)
+        await query.answer(t("invalid_mode"), show_alert=True)
         return
     await get_db().users.update_one({"userId": user_id}, {"$set": {"haremView": choice, "updatedAt": utcnow()}})
-    await query.edit_message_text(f"✅ Harem view set to {choice.upper()}.")
-    await query.answer("Updated.")
+    await query.edit_message_text(t("hmode_set", mode=choice.upper()))
+    await query.answer(t("updated"))
 
 
 def register_hmode_handlers(app: Application) -> None:

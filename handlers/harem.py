@@ -14,6 +14,7 @@ from utils.db_helpers import ensure_user, get_user_doc
 from utils.permissions import is_global_admin
 from utils.rarity import get_rarity_emoji
 from utils.text import escape_html
+from utils.i18n import t
 
 
 def group_cards_by_anime(cards: list[dict]) -> list[tuple[str, list[dict]]]:
@@ -48,15 +49,15 @@ def build_harem_caption(user_doc: dict, page: int = 1) -> tuple[str, int, int]:
     fav = next((c for c in cards if str(c.get("cardId")) == str(user_doc.get("favoriteCardId", ""))), None)
 
     lines = [
-        f"📘 {escape_html(header_name)}'s RECENT CHARACTERS - PAGE: {page}/{total_pages}",
-        f"🎴 Total Cards: {total_cards} | 📚 Total Series: {len(grouped)} | 🧩 Mode: {escape_html(view.upper())}",
+        t("harem_header", name=escape_html(header_name), page=page, total_pages=total_pages),
+        t("harem_summary", total_cards=total_cards, total_series=len(grouped), mode=escape_html(view.upper())),
     ]
     if fav:
-        lines.append(f"💖 Favourite: {escape_html(fav.get('name'))} [{escape_html(fav.get('cardId'))}]")
+        lines.append(t("harem_favourite", name=escape_html(fav.get("name")), card_id=escape_html(fav.get("cardId"))))
     lines.append("")
 
     if not current:
-        lines.append("No cards yet.")
+        lines.append(t("harem_no_cards"))
     else:
         for anime, anime_cards in current:
             unique_count = len(anime_cards)
@@ -82,9 +83,9 @@ def harem_keyboard(user_id: int, page: int, total_pages: int) -> InlineKeyboardM
     next_page = page + 1 if page < total_pages else 1
     return InlineKeyboardMarkup(
         [[
-            InlineKeyboardButton("🟦 ⬅ Back", callback_data=f"harem:{user_id}:{prev_page}"),
+            InlineKeyboardButton(t("harem_button_back"), callback_data=f"harem:{user_id}:{prev_page}"),
             InlineKeyboardButton(f"💠 {page}/{total_pages}", callback_data="noop"),
-            InlineKeyboardButton("Next ➡ 🟩", callback_data=f"harem:{user_id}:{next_page}"),
+            InlineKeyboardButton(t("harem_button_next"), callback_data=f"harem:{user_id}:{next_page}"),
         ]]
     )
 
@@ -93,9 +94,9 @@ async def send_harem(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
     user_doc = await get_user_doc(user_id)
     if not user_doc or not user_doc.get("cards"):
         if edit and update.callback_query:
-            await update.callback_query.answer("No cards.", show_alert=True)
+            await update.callback_query.answer(t("harem_no_cards_alert"), show_alert=True)
         else:
-            await update.effective_message.reply_text("You don't have any cards yet.")
+            await update.effective_message.reply_text(t("harem_no_cards_user"))
         return
 
     cover = choose_cover(user_doc)
@@ -150,7 +151,7 @@ async def harem_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = int(user_id_raw)
     page = int(page_raw)
     if query.from_user.id != user_id and not is_global_admin(query.from_user.id):
-        await query.answer("Not allowed.", show_alert=True)
+        await query.answer(t("not_allowed"), show_alert=True)
         return
     await send_harem(update, context, user_id, page, edit=True)
 
