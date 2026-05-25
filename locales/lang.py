@@ -1,247 +1,242 @@
 from __future__ import annotations
 
 # Central text templates for BIKA Character Bot.
+# Style rule:
+# - Main bot UI text uses small-caps Unicode.
+# - Text inside <b>...</b> and title/header keys use mathematical bold Unicode.
+# - Telegram commands and {format_placeholders} are intentionally kept normal.
 # Keep HTML tags only in templates that are sent with parse_mode=HTML / reply_html.
-# Dynamic user/card values should be escaped before formatting when they can contain user input.
 
-LANG = {
-    "en": {
-        # Start
-        "start_button_add_group": "➕ ADD ME TO YOUR GROUP",
-        "start_button_support": "💬 Support Group",
-        "start_button_update": "📢 Update Channel",
-        "start_message": (
-            "ʜᴇLLO {mention} !\n\n"
-            "ɪ'ᴍ <b>Bika Character Bot</b> .\n\n"
-            "ᴀ ᴄᴜᴛᴇ ᴄʜᴀʀᴀᴄᴛᴇʀ ᴄᴀᴛᴄʜɪɴɢ ᴀᴅᴠᴇɴᴛᴜʀᴇ. "
-            "ᴀᴅᴅ ᴍᴇ ᴛᴏ ᴀ ɢʀᴏᴜᴘ, ᴄᴏʟʟᴇᴄᴛ ꜰᴀꜱᴛ, "
-            "ᴀɴᴅ ʙᴜɪʟᴅ ʏᴏᴜʀ ʜᴀʀᴇᴍ."
-        ),
-
-        # Common / callbacks
-        "not_your_action": "Not your action.",
-        "not_allowed": "Not allowed.",
-        "invalid_mode": "Invalid mode.",
-        "updated": "Updated.",
-        "cancelled": "Cancelled.",
-        "failed": "Failed.",
-        "unknown": "Unknown",
-
-        # Hmode
-        "hmode_button_default": "🦖 DEFAULT",
-        "hmode_button_detailed": "🦕 DETAILED",
-        "hmode_button_reset": "🔄 RESET",
-        "hmode_intro": "YOU CAN CHANGE YOUR HAREM INTERFACE USING THESE BUTTONS",
-        "hmode_set": "✅ Harem view set to {mode}.",
-
-        # Check / inline
-        "check_usage": "Usage: /check <card id>",
-        "check_not_found": "❌ Character ID {card_id} not found.",
-        "card_check_header": "<b>OwO! Check out this character!</b>",
-        "rarity_line": "({emoji} <b>RARITY:</b> {rarity})",
-        "caught_globally": "🌍 <b>CAUGHT GLOBALLY:</b> {total} TIMES",
-        "top10_catchers": "🏅 <b>TOP 10 CATCHERS OF THIS CHARACTER!</b>",
-        "no_catch_data": "↪ No catch data yet",
-        "inline_description": "{anime} | {rarity} | ID: {card_id}",
-
-        # Harem
-        "harem_header": "📘 {name}'s RECENT CHARACTERS - PAGE: {page}/{total_pages}",
-        "harem_summary": "🎴 Total Cards: {total_cards} | 📚 Total Series: {total_series} | 🧩 Mode: {mode}",
-        "harem_favourite": "💖 Favourite: {name} [{card_id}]",
-        "harem_no_cards": "No cards yet.",
-        "harem_no_cards_user": "You don't have any cards yet.",
-        "harem_no_cards_alert": "No cards.",
-        "harem_button_back": "🟦 ⬅ Back",
-        "harem_button_next": "Next ➡ 🟩",
-
-        # Profile
-        "profile_header": "🎗BIKA CATCHER PROFILE🎗",
-        "profile_user": "👤 USER: {username}",
-        "profile_user_id": "🆔 USER ID: {user_id}",
-        "profile_total_character": "⚡ TOTAL CHARACTER: {total_owned} ({unique_owned})",
-        "profile_harem": "🫧 HAREM: {unique_owned}/{total_photo_count} ({percent:.3f}%)",
-        "profile_level": "ℹ️ EXPERIENCE LEVEL: {level}",
-        "profile_progress": "📈 PROGRESS BAR: {bar}",
-        "profile_favourite": "💖 FAVOURITE: {name} [{card_id}]",
-        "profile_favourite_not_set": "💖 FAVOURITE: Not set",
-        "profile_rarity_line": "{emoji} RARITY {rarity}: {unique} ({total})",
-
-        # Favourite
-        "fav_not_set": "💖 Favourite is not set.\nUse: /fav <card id>",
-        "fav_current_caption": "💖 Your favourite character\n{emoji} {name} [{card_id}]\nAnime: {anime}",
-        "fav_missing_collection": "This character does not exist in your collection.",
-        "fav_confirm": "DO YOU WANT TO SET THIS CHARACTER AS YOUR FAVOURITE?\n↪ {name} ({anime})",
-        "fav_button_yes": "🟢 Yes",
-        "fav_button_no": "🔴 No",
-        "fav_card_missing": "Card missing.",
-        "fav_set": "💖 Favourite set to {name} [{card_id}]",
-        "fav_updated": "Favourite updated.",
-        "fav_cancelled": "❌ Favourite update cancelled.",
-
-        # Gift
-        "gift_reply_target": "❌ Reply to the target user's message.\nExample: .gift 1001",
-        "gift_usage": "Usage: .gift <card id> [qty]",
-        "gift_self": "❌ You can't gift to yourself.",
-        "gift_card_not_found_inventory": "❌ Card not found in your inventory.",
-        "gift_not_enough": "❌ Not enough quantity.",
-        "gift_preview": (
-            "🎁 <b>GIFT PREVIEW</b>\n\n"
-            "From: {sender}\n"
-            "To: {receiver}\n"
-            "Card: {emoji} {name}\n"
-            "ID: {card_id}\n"
-            "Anime: {anime}\n"
-            "Qty: {qty}\n\n"
-            "Are you sure you want to send this card?"
-        ),
-        "gift_button_confirm": "✅ Confirm",
-        "gift_button_cancel": "❌ Cancel",
-        "gift_not_your": "Not your gift action.",
-        "gift_success": "✅ Gift sent successfully.\n\nCard: {emoji} {name}\nID: {card_id}\nQty: {qty}",
-        "gift_confirmed": "Gift confirmed.",
-        "gift_not_your_cancel": "Not your cancel action.",
-        "gift_cancelled": "❌ Gift cancelled.",
-
-        # Rankings
-        "rank_no_group": "No group catch ranking yet.",
-        "rank_group_header": "🏆 <b>TOP GROUP RANKING</b>",
-        "rank_group_subtitle": "<b>/bika catches ranking</b>",
-        "rank_group_row": "{rank} {group} — <b>{count}</b> catches",
-        "rank_no_global": "No global harem ranking yet.",
-        "rank_global_header": "🌍 <b>GLOBAL TOP 10 USERS</b>",
-        "rank_global_subtitle": "<b>By total harem characters</b>",
-        "rank_global_row": "{rank} {user} — <b>{total}</b> total | {unique} unique",
-        "rank_no_today": "No catches yet today.\nDate: {date} ({timezone})",
-        "rank_today_header": "📅 <b>TODAY GLOBAL TOP 10</b>",
-        "rank_today_date": "Date: <b>{date}</b> ({timezone})",
-        "rank_today_subtitle": "<b>By /bika catches today</b>",
-        "rank_today_row": "{rank} {user} — <b>{count}</b> catches",
-        "mylimit": "🎯 Daily Catch Limit\n\nDate: {date} ({timezone})\nUsed: {used}/{limit}\nRemaining: {remaining}",
-
-        # Drop
-        "bot_muted": "🤐 {name}, you sent too many messages in a row. Bot will ignore you for {minutes} minutes.",
-        "pre_spawn_captcha": (
-            "🧩 <b>HIGH RARITY CAPTCHA</b>\n\n"
-            "{emoji} <b>{rarity}</b> card is trying to spawn in <b>{group_name}</b>.\n\n"
-            "Solve this captcha within <b>{seconds}s</b>.\n"
-            "✅ Correct answer = character will spawn.\n"
-            "❌ Wrong answer or timeout = this drop will be lost.\n\n"
-            "Question: <b>{question}</b>"
-        ),
-        "pre_spawn_timeout": "⌛ <b>CAPTCHA TIMEOUT</b>\n\n120 seconds finished. This scheduled high-rarity spawn has been lost.",
-        "captcha_invalid": "Invalid captcha.",
-        "captcha_finished": "Captcha already finished.",
-        "pre_spawn_wrong": "❌ <b>WRONG CAPTCHA</b>\n\nThis scheduled high-rarity spawn has been lost.",
-        "pre_spawn_wrong_alert": "Wrong. Spawn lost.",
-        "pre_spawn_solved": "✅ <b>CAPTCHA SOLVED</b>\n\nHigh-rarity character is spawning now!",
-        "solved": "Solved.",
-        "spawn_no_card": "❌ No card found for this scheduled rarity. Spawn lost.",
-        "spawn_caption": "{emoji} A new Character has spawned in {group_name} .\n\nTo own this character, send the character name quickly using /bika name .",
-
-        # Claim
-        "claim_captcha_timeout": "⌛ <b>CAPTCHA TIMEOUT</b>\n\n120 seconds finished. This high-rarity card has been lost.",
-        "claim_success": (
-            "🎉 <b>YOU GOT A NEW CHARACTER!</b>\n\n"
-            "👤 Claimed by: {claimer}\n"
-            "{emoji} Name: <b>{name}</b>\n"
-            "🆔 ID: <b>{card_id}</b>\n"
-            "🏷 RARITY: <b>{rarity}</b>\n"
-            "🌴 ANIME: <b>{anime}</b>\n\n"
-            "❄️ CHECK YOUR /harem !"
-        ),
-        "daily_limit": "❌ Daily catch limit reached.\nMyanmar/Yangon date: {date}\nUsed: {used}/{limit}\nRemaining: {remaining}",
-        "claim_captcha_active": "⏳ Captcha is already active for this drop. Wait for the result.",
-        "character_unavailable": "❌ This character is no longer available.",
-        "claim_captcha_required": (
-            "🧩 <b>CAPTCHA SOLVE REQUIRED</b>\n\n"
-            "{emoji} <b>{rarity}</b> and above must pass captcha.\n"
-            "👤 Player: {player}\n"
-            "🎴 Card: <b>{card_name}</b> [{card_id}]\n\n"
-            "Solve within <b>{seconds}s</b> or this card will be lost.\n"
-            "Question: <b>{question}</b>"
-        ),
-        "no_character_available": "❌ No character is available right now.",
-        "already_caught": "❌ <b>CHARACTER ALREADY CAUGHT</b>\n\nCaught by: {caught_by}\n\n🥤 Wait for new character to spawn.",
-        "claim_high_captcha_active": "⏳ Captcha is already active for this high-rarity drop.",
-        "wrong_name": "❌ CHARACTER NAME {guess} IS INCORRECT\n\n{arrow} CHARACTER is still available.",
-        "wrong_name_empty": "❌ CHARACTER NAME IS INCORRECT\n\n{arrow} CHARACTER is still available.",
-        "drop_data_missing": "❌ Drop data missing.",
-        "captcha_not_for_you": "This captcha is not for you.",
-        "captcha_expired": "Expired.",
-        "claim_wrong_captcha": "❌ <b>WRONG CAPTCHA</b>\n\nThis high-rarity card has been lost.",
-        "claim_wrong_card_lost": "Wrong. Card lost.",
-        "daily_limit_card_lost": "❌ <b>DAILY LIMIT REACHED</b>\n\nUsed: {used}/{limit}. This card has been lost.",
-        "daily_limit_reached_alert": "Daily limit reached.",
-        "card_no_longer_available": "This card is no longer available.",
-        "claim_captcha_solved": "✅ <b>CAPTCHA SOLVED</b>\n\n{user} got the card.",
-        "captcha_solved_alert": "Captcha solved.",
-
-        # Admin
-        "group_admin_only": "❌ Group admin only.",
-        "changetime_usage": "Usage: /changetime <number>\nGroup admin: {admin_min}-{admin_max}\nOwner: {owner_min}-{owner_max}",
-        "changetime_range": "❌ changetime must be between {min_v} and {max_v}.",
-        "changetime_updated": "✅ Changetime updated to {value} messages.",
-        "admin_dashboard": (
-            "⚙️ BIKA ADMIN DASHBOARD\n\n"
-            "👤 Users: {users}\n"
-            "👥 Groups: {groups}\n"
-            "🖼 Cards: {cards}\n"
-            "🎁 Transfers: {transfers}\n"
-            "🤐 Active Bot Mutes: {mutes}\n"
-            "➕ Adders: {adders}\n"
-            "⏱ Uptime: {uptime}\n\n"
-            "Use: /admin_users /admin_groups /admin_photos\n"
-            "Owner: /clmute /transfer /addadder /rmadder /give"
-        ),
-        "no_users": "No users.",
-        "user_list_header": "👤 USER LIST",
-        "no_groups": "No groups.",
-        "group_list_header": "👥 GROUP LIST",
-        "no_cards": "No cards.",
-        "card_list_header": "🖼 CARD LIST",
-        "clmute_group_only": "❌ Use /clmute in a group.",
-        "clmute_user_cleared": "✅ Bot mute cleared for user ID {user_id}.",
-        "clmute_user_not_muted": "ℹ️ User ID {user_id} is not bot-muted.",
-        "clmute_group_cleared": "✅ Cleared {count} bot mute(s) in this group.",
-        "transfer_usage": "Usage:\n/transfer <old_user_id> <new_user_id>\n/transfer <old_user_id> + reply target user",
-        "transfer_invalid_old": "❌ Invalid old user ID.",
-        "transfer_target_missing": "❌ Target user missing. Use /transfer oldid newid or reply user with /transfer oldid",
-        "transfer_same": "❌ Old ID and new ID are the same.",
-        "transfer_no_cards": "❌ Old user has no harem/cards to transfer.",
-        "transfer_success": "✅ Harem transferred successfully.\n\nOld ID: {old_id}\nNew ID: {new_id}\nUnique cards: {unique}\nTotal cards: {total}",
-        "addadder_usage": "Usage: /addadder <user_id> or reply user with /addadder",
-        "addadder_success": "✅ User ID {user_id} can now add/update cards.",
-        "rmadder_usage": "Usage: /rmadder <user_id> or reply user with /rmadder",
-        "rmadder_success": "✅ User ID {user_id} removed from adders.",
-        "delete_usage": "Usage: /delete <card_id>\nExample: /delete 131",
-        "delete_invalid": "❌ Invalid card ID.",
-        "delete_not_found": "❌ Card ID {card_id} not found in database.",
-        "delete_status_skipped": "Skipped",
-        "delete_status_deleted": "Deleted",
-        "delete_status_failed": "Failed: {error}",
-        "delete_success": (
-            "🗑 <b>CARD DELETED</b>\n\n"
-            "ID: <b>{card_id}</b>\n"
-            "Name: <b>{name}</b>\n"
-            "Rarity: <b>{rarity}</b>\n"
-            "Anime: <b>{anime}</b>\n\n"
-            "Photos DB deleted: <b>{photo_deleted}</b>\n"
-            "Removed from users: <b>{users_modified}</b>\n"
-            "Favourite cleared: <b>{fav_modified}</b>\n"
-            "Active drops cleared: <b>{drop_modified}</b>\n"
-            "Bika Database message: <b>{channel_status}</b>"
-        ),
-        "give_usage": "Usage: /give <card_id> + reply target user",
-        "give_reply_target": "❌ Reply to the target user's message.\nExample: /give 1001",
-        "give_bot_account": "❌ Cannot give cards to bot accounts.",
-        "give_not_found": "❌ Card ID {card_id} not found.",
-        "give_caption": (
-            "🎁 <b>OWNER GIVE</b>\n\n"
-            "To: {target}\n"
-            "Card: {emoji} <b>{name}</b>\n"
-            "ID: <b>{card_id}</b>\n"
-            "Anime: <b>{anime}</b>\n"
-            "Qty: <b>1</b>"
-        ),
-    }
-}
+LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ',
+        'start_button_support': '💬 ꜱᴜᴘᴘᴏʀᴛ ɢʀᴏᴜᴘ',
+        'start_button_update': '📢 ᴜᴘᴅᴀᴛᴇ ᴄʜᴀɴɴᴇʟ',
+        'start_message': 'ʜᴇʟʟᴏ {mention} !\n'
+                         '\n'
+                         "ɪ'ᴍ <b>𝐁𝐢𝐤𝐚 𝐂𝐡𝐚𝐫𝐚𝐜𝐭𝐞𝐫 𝐁𝐨𝐭</b> .\n"
+                         '\n'
+                         'ᴀ ᴄᴜᴛᴇ ᴄʜᴀʀᴀᴄᴛᴇʀ ᴄᴀᴛᴄʜɪɴɢ ᴀᴅᴠᴇɴᴛᴜʀᴇ. ᴀᴅᴅ ᴍᴇ ᴛᴏ ᴀ ɢʀᴏᴜᴘ, ᴄᴏʟʟᴇᴄᴛ ꜰᴀꜱᴛ, ᴀɴᴅ ʙᴜɪʟᴅ ʏᴏᴜʀ ʜᴀʀᴇᴍ.',
+        'not_your_action': 'ɴᴏᴛ ʏᴏᴜʀ ᴀᴄᴛɪᴏɴ.',
+        'not_allowed': 'ɴᴏᴛ ᴀʟʟᴏᴡᴇᴅ.',
+        'invalid_mode': 'ɪɴᴠᴀʟɪᴅ ᴍᴏᴅᴇ.',
+        'updated': 'ᴜᴘᴅᴀᴛᴇᴅ.',
+        'cancelled': 'ᴄᴀɴᴄᴇʟʟᴇᴅ.',
+        'failed': 'ꜰᴀɪʟᴇᴅ.',
+        'unknown': 'ᴜɴᴋɴᴏᴡɴ',
+        'hmode_button_default': '🦖 ᴅᴇꜰᴀᴜʟᴛ',
+        'hmode_button_detailed': '🦕 ᴅᴇᴛᴀɪʟᴇᴅ',
+        'hmode_button_reset': '🔄 ʀᴇꜱᴇᴛ',
+        'hmode_intro': 'ʏᴏᴜ ᴄᴀɴ ᴄʜᴀɴɢᴇ ʏᴏᴜʀ ʜᴀʀᴇᴍ ɪɴᴛᴇʀꜰᴀᴄᴇ ᴜꜱɪɴɢ ᴛʜᴇꜱᴇ ʙᴜᴛᴛᴏɴꜱ',
+        'hmode_set': '✅ ʜᴀʀᴇᴍ ᴠɪᴇᴡ ꜱᴇᴛ ᴛᴏ {mode}.',
+        'check_usage': 'ᴜꜱᴀɢᴇ: /check <card id>',
+        'check_not_found': '❌ ᴄʜᴀʀᴀᴄᴛᴇʀ ɪᴅ {card_id} ɴᴏᴛ ꜰᴏᴜɴᴅ.',
+        'card_check_header': '<b>𝐎𝐰𝐎! 𝐂𝐡𝐞𝐜𝐤 𝐨𝐮𝐭 𝐭𝐡𝐢𝐬 𝐜𝐡𝐚𝐫𝐚𝐜𝐭𝐞𝐫!</b>',
+        'rarity_line': '({emoji} <b>𝐑𝐀𝐑𝐈𝐓𝐘:</b> {rarity})',
+        'caught_globally': '🌍 <b>𝐂𝐀𝐔𝐆𝐇𝐓 𝐆𝐋𝐎𝐁𝐀𝐋𝐋𝐘:</b> {total} ᴛɪᴍᴇꜱ',
+        'top10_catchers': '🏅 <b>𝐓𝐎𝐏 𝟏𝟎 𝐂𝐀𝐓𝐂𝐇𝐄𝐑𝐒 𝐎𝐅 𝐓𝐇𝐈𝐒 𝐂𝐇𝐀𝐑𝐀𝐂𝐓𝐄𝐑!</b>',
+        'no_catch_data': '↪ ɴᴏ ᴄᴀᴛᴄʜ ᴅᴀᴛᴀ ʏᴇᴛ',
+        'inline_description': '{anime} | {rarity} | ɪᴅ: {card_id}',
+        'harem_header': "📘 {name}'ꜱ ʀᴇᴄᴇɴᴛ ᴄʜᴀʀᴀᴄᴛᴇʀꜱ - ᴘᴀɢᴇ: {page}/{total_pages}",
+        'harem_summary': '🎴 ᴛᴏᴛᴀʟ ᴄᴀʀᴅꜱ: {total_cards} | 📚 ᴛᴏᴛᴀʟ ꜱᴇʀɪᴇꜱ: {total_series} | 🧩 ᴍᴏᴅᴇ: {mode}',
+        'harem_favourite': '💖 ꜰᴀᴠᴏᴜʀɪᴛᴇ: {name} [{card_id}]',
+        'harem_no_cards': 'ɴᴏ ᴄᴀʀᴅꜱ ʏᴇᴛ.',
+        'harem_no_cards_user': "ʏᴏᴜ ᴅᴏɴ'ᴛ ʜᴀᴠᴇ ᴀɴʏ ᴄᴀʀᴅꜱ ʏᴇᴛ.",
+        'harem_no_cards_alert': 'ɴᴏ ᴄᴀʀᴅꜱ.',
+        'harem_button_back': '🟦 ⬅ ʙᴀᴄᴋ',
+        'harem_button_next': 'ɴᴇxᴛ ➡ 🟩',
+        'profile_header': '🎗𝐁𝐈𝐊𝐀 𝐂𝐀𝐓𝐂𝐇𝐄𝐑 𝐏𝐑𝐎𝐅𝐈𝐋𝐄🎗',
+        'profile_user': '👤 ᴜꜱᴇʀ: {username}',
+        'profile_user_id': '🆔 ᴜꜱᴇʀ ɪᴅ: {user_id}',
+        'profile_total_character': '⚡ ᴛᴏᴛᴀʟ ᴄʜᴀʀᴀᴄᴛᴇʀ: {total_owned} ({unique_owned})',
+        'profile_harem': '🫧 ʜᴀʀᴇᴍ: {unique_owned}/{total_photo_count} ({percent:.3f}%)',
+        'profile_level': 'ℹ️ ᴇxᴘᴇʀɪᴇɴᴄᴇ ʟᴇᴠᴇʟ: {level}',
+        'profile_progress': '📈 ᴘʀᴏɢʀᴇꜱꜱ ʙᴀʀ: {bar}',
+        'profile_favourite': '💖 ꜰᴀᴠᴏᴜʀɪᴛᴇ: {name} [{card_id}]',
+        'profile_favourite_not_set': '💖 ꜰᴀᴠᴏᴜʀɪᴛᴇ: ɴᴏᴛ ꜱᴇᴛ',
+        'profile_rarity_line': '{emoji} ʀᴀʀɪᴛʏ {rarity}: {unique} ({total})',
+        'fav_not_set': '💖 ꜰᴀᴠᴏᴜʀɪᴛᴇ ɪꜱ ɴᴏᴛ ꜱᴇᴛ.\nᴜꜱᴇ: /fav <card id>',
+        'fav_current_caption': '💖 ʏᴏᴜʀ ꜰᴀᴠᴏᴜʀɪᴛᴇ ᴄʜᴀʀᴀᴄᴛᴇʀ\n{emoji} {name} [{card_id}]\nᴀɴɪᴍᴇ: {anime}',
+        'fav_missing_collection': 'ᴛʜɪꜱ ᴄʜᴀʀᴀᴄᴛᴇʀ ᴅᴏᴇꜱ ɴᴏᴛ ᴇxɪꜱᴛ ɪɴ ʏᴏᴜʀ ᴄᴏʟʟᴇᴄᴛɪᴏɴ.',
+        'fav_confirm': 'ᴅᴏ ʏᴏᴜ ᴡᴀɴᴛ ᴛᴏ ꜱᴇᴛ ᴛʜɪꜱ ᴄʜᴀʀᴀᴄᴛᴇʀ ᴀꜱ ʏᴏᴜʀ ꜰᴀᴠᴏᴜʀɪᴛᴇ?\n↪ {name} ({anime})',
+        'fav_button_yes': '🟢 ʏᴇꜱ',
+        'fav_button_no': '🔴 ɴᴏ',
+        'fav_card_missing': 'ᴄᴀʀᴅ ᴍɪꜱꜱɪɴɢ.',
+        'fav_set': '💖 ꜰᴀᴠᴏᴜʀɪᴛᴇ ꜱᴇᴛ ᴛᴏ {name} [{card_id}]',
+        'fav_updated': 'ꜰᴀᴠᴏᴜʀɪᴛᴇ ᴜᴘᴅᴀᴛᴇᴅ.',
+        'fav_cancelled': '❌ ꜰᴀᴠᴏᴜʀɪᴛᴇ ᴜᴘᴅᴀᴛᴇ ᴄᴀɴᴄᴇʟʟᴇᴅ.',
+        'gift_reply_target': "❌ ʀᴇᴘʟʏ ᴛᴏ ᴛʜᴇ ᴛᴀʀɢᴇᴛ ᴜꜱᴇʀ'ꜱ ᴍᴇꜱꜱᴀɢᴇ.\nᴇxᴀᴍᴘʟᴇ: .ɢɪꜰᴛ 1001",
+        'gift_usage': 'ᴜꜱᴀɢᴇ: .ɢɪꜰᴛ <card id> [ǫᴛʏ]',
+        'gift_self': "❌ ʏᴏᴜ ᴄᴀɴ'ᴛ ɢɪꜰᴛ ᴛᴏ ʏᴏᴜʀꜱᴇʟꜰ.",
+        'gift_card_not_found_inventory': '❌ ᴄᴀʀᴅ ɴᴏᴛ ꜰᴏᴜɴᴅ ɪɴ ʏᴏᴜʀ ɪɴᴠᴇɴᴛᴏʀʏ.',
+        'gift_not_enough': '❌ ɴᴏᴛ ᴇɴᴏᴜɢʜ ǫᴜᴀɴᴛɪᴛʏ.',
+        'gift_preview': '🎁 <b>𝐆𝐈𝐅𝐓 𝐏𝐑𝐄𝐕𝐈𝐄𝐖</b>\n'
+                        '\n'
+                        'ꜰʀᴏᴍ: {sender}\n'
+                        'ᴛᴏ: {receiver}\n'
+                        'ᴄᴀʀᴅ: {emoji} {name}\n'
+                        'ɪᴅ: {card_id}\n'
+                        'ᴀɴɪᴍᴇ: {anime}\n'
+                        'ǫᴛʏ: {qty}\n'
+                        '\n'
+                        'ᴀʀᴇ ʏᴏᴜ ꜱᴜʀᴇ ʏᴏᴜ ᴡᴀɴᴛ ᴛᴏ ꜱᴇɴᴅ ᴛʜɪꜱ ᴄᴀʀᴅ?',
+        'gift_button_confirm': '✅ ᴄᴏɴꜰɪʀᴍ',
+        'gift_button_cancel': '❌ ᴄᴀɴᴄᴇʟ',
+        'gift_not_your': 'ɴᴏᴛ ʏᴏᴜʀ ɢɪꜰᴛ ᴀᴄᴛɪᴏɴ.',
+        'gift_success': '✅ ɢɪꜰᴛ ꜱᴇɴᴛ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ.\n\nᴄᴀʀᴅ: {emoji} {name}\nɪᴅ: {card_id}\nǫᴛʏ: {qty}',
+        'gift_confirmed': 'ɢɪꜰᴛ ᴄᴏɴꜰɪʀᴍᴇᴅ.',
+        'gift_not_your_cancel': 'ɴᴏᴛ ʏᴏᴜʀ ᴄᴀɴᴄᴇʟ ᴀᴄᴛɪᴏɴ.',
+        'gift_cancelled': '❌ ɢɪꜰᴛ ᴄᴀɴᴄᴇʟʟᴇᴅ.',
+        'rank_no_group': 'ɴᴏ ɢʀᴏᴜᴘ ᴄᴀᴛᴄʜ ʀᴀɴᴋɪɴɢ ʏᴇᴛ.',
+        'rank_group_header': '🏆 <b>𝐓𝐎𝐏 𝐆𝐑𝐎𝐔𝐏 𝐑𝐀𝐍𝐊𝐈𝐍𝐆</b>',
+        'rank_group_subtitle': '<b>\ue000𝟎\ue001 𝐜𝐚𝐭𝐜𝐡𝐞𝐬 𝐫𝐚𝐧𝐤𝐢𝐧𝐠</b>',
+        'rank_group_row': '{rank} {group} — <b>\ue000𝟎\ue001</b> ᴄᴀᴛᴄʜᴇꜱ',
+        'rank_no_global': 'ɴᴏ ɢʟᴏʙᴀʟ ʜᴀʀᴇᴍ ʀᴀɴᴋɪɴɢ ʏᴇᴛ.',
+        'rank_global_header': '🌍 <b>𝐆𝐋𝐎𝐁𝐀𝐋 𝐓𝐎𝐏 𝟏𝟎 𝐔𝐒𝐄𝐑𝐒</b>',
+        'rank_global_subtitle': '<b>𝐁𝐲 𝐭𝐨𝐭𝐚𝐥 𝐡𝐚𝐫𝐞𝐦 𝐜𝐡𝐚𝐫𝐚𝐜𝐭𝐞𝐫𝐬</b>',
+        'rank_global_row': '{rank} {user} — <b>\ue000𝟎\ue001</b> ᴛᴏᴛᴀʟ | {unique} ᴜɴɪǫᴜᴇ',
+        'rank_no_today': 'ɴᴏ ᴄᴀᴛᴄʜᴇꜱ ʏᴇᴛ ᴛᴏᴅᴀʏ.\nᴅᴀᴛᴇ: {date} ({timezone})',
+        'rank_today_header': '📅 <b>𝐓𝐎𝐃𝐀𝐘 𝐆𝐋𝐎𝐁𝐀𝐋 𝐓𝐎𝐏 𝟏𝟎</b>',
+        'rank_today_date': 'ᴅᴀᴛᴇ: <b>\ue000𝟎\ue001</b> ({timezone})',
+        'rank_today_subtitle': '<b>𝐁𝐲 \ue000𝟎\ue001 𝐜𝐚𝐭𝐜𝐡𝐞𝐬 𝐭𝐨𝐝𝐚𝐲</b>',
+        'rank_today_row': '{rank} {user} — <b>\ue000𝟎\ue001</b> ᴄᴀᴛᴄʜᴇꜱ',
+        'mylimit': '🎯 ᴅᴀɪʟʏ ᴄᴀᴛᴄʜ ʟɪᴍɪᴛ\n\nᴅᴀᴛᴇ: {date} ({timezone})\nᴜꜱᴇᴅ: {used}/{limit}\nʀᴇᴍᴀɪɴɪɴɢ: {remaining}',
+        'bot_muted': '🤐 {name}, ʏᴏᴜ ꜱᴇɴᴛ ᴛᴏᴏ ᴍᴀɴʏ ᴍᴇꜱꜱᴀɢᴇꜱ ɪɴ ᴀ ʀᴏᴡ. ʙᴏᴛ ᴡɪʟʟ ɪɢɴᴏʀᴇ ʏᴏᴜ ꜰᴏʀ {minutes} ᴍɪɴᴜᴛᴇꜱ.',
+        'pre_spawn_captcha': '🧩 <b>𝐇𝐈𝐆𝐇 𝐑𝐀𝐑𝐈𝐓𝐘 𝐂𝐀𝐏𝐓𝐂𝐇𝐀</b>\n'
+                             '\n'
+                             '{emoji} <b>\ue000𝟎\ue001</b> ᴄᴀʀᴅ ɪꜱ ᴛʀʏɪɴɢ ᴛᴏ ꜱᴘᴀᴡɴ ɪɴ <b>\ue000𝟎\ue001</b>.\n'
+                             '\n'
+                             'ꜱᴏʟᴠᴇ ᴛʜɪꜱ ᴄᴀᴘᴛᴄʜᴀ ᴡɪᴛʜɪɴ <b>\ue000𝟎\ue001𝐬</b>.\n'
+                             '✅ ᴄᴏʀʀᴇᴄᴛ ᴀɴꜱᴡᴇʀ = ᴄʜᴀʀᴀᴄᴛᴇʀ ᴡɪʟʟ ꜱᴘᴀᴡɴ.\n'
+                             '❌ ᴡʀᴏɴɢ ᴀɴꜱᴡᴇʀ ᴏʀ ᴛɪᴍᴇᴏᴜᴛ = ᴛʜɪꜱ ᴅʀᴏᴘ ᴡɪʟʟ ʙᴇ ʟᴏꜱᴛ.\n'
+                             '\n'
+                             'ǫᴜᴇꜱᴛɪᴏɴ: <b>\ue000𝟎\ue001</b>',
+        'pre_spawn_timeout': '⌛ <b>𝐂𝐀𝐏𝐓𝐂𝐇𝐀 𝐓𝐈𝐌𝐄𝐎𝐔𝐓</b>\n'
+                             '\n'
+                             '120 ꜱᴇᴄᴏɴᴅꜱ ꜰɪɴɪꜱʜᴇᴅ. ᴛʜɪꜱ ꜱᴄʜᴇᴅᴜʟᴇᴅ ʜɪɢʜ-ʀᴀʀɪᴛʏ ꜱᴘᴀᴡɴ ʜᴀꜱ ʙᴇᴇɴ ʟᴏꜱᴛ.',
+        'captcha_invalid': 'ɪɴᴠᴀʟɪᴅ ᴄᴀᴘᴛᴄʜᴀ.',
+        'captcha_finished': 'ᴄᴀᴘᴛᴄʜᴀ ᴀʟʀᴇᴀᴅʏ ꜰɪɴɪꜱʜᴇᴅ.',
+        'pre_spawn_wrong': '❌ <b>𝐖𝐑𝐎𝐍𝐆 𝐂𝐀𝐏𝐓𝐂𝐇𝐀</b>\n\nᴛʜɪꜱ ꜱᴄʜᴇᴅᴜʟᴇᴅ ʜɪɢʜ-ʀᴀʀɪᴛʏ ꜱᴘᴀᴡɴ ʜᴀꜱ ʙᴇᴇɴ ʟᴏꜱᴛ.',
+        'pre_spawn_wrong_alert': 'ᴡʀᴏɴɢ. ꜱᴘᴀᴡɴ ʟᴏꜱᴛ.',
+        'pre_spawn_solved': '✅ <b>𝐂𝐀𝐏𝐓𝐂𝐇𝐀 𝐒𝐎𝐋𝐕𝐄𝐃</b>\n\nʜɪɢʜ-ʀᴀʀɪᴛʏ ᴄʜᴀʀᴀᴄᴛᴇʀ ɪꜱ ꜱᴘᴀᴡɴɪɴɢ ɴᴏᴡ!',
+        'solved': 'ꜱᴏʟᴠᴇᴅ.',
+        'spawn_no_card': '❌ ɴᴏ ᴄᴀʀᴅ ꜰᴏᴜɴᴅ ꜰᴏʀ ᴛʜɪꜱ ꜱᴄʜᴇᴅᴜʟᴇᴅ ʀᴀʀɪᴛʏ. ꜱᴘᴀᴡɴ ʟᴏꜱᴛ.',
+        'spawn_caption': '{emoji} ᴀ ɴᴇᴡ ᴄʜᴀʀᴀᴄᴛᴇʀ ʜᴀꜱ ꜱᴘᴀᴡɴᴇᴅ ɪɴ {group_name} .\n'
+                         '\n'
+                         'ᴛᴏ ᴏᴡɴ ᴛʜɪꜱ ᴄʜᴀʀᴀᴄᴛᴇʀ, ꜱᴇɴᴅ ᴛʜᴇ ᴄʜᴀʀᴀᴄᴛᴇʀ ɴᴀᴍᴇ ǫᴜɪᴄᴋʟʏ ᴜꜱɪɴɢ /bika ɴᴀᴍᴇ .',
+        'claim_captcha_timeout': '⌛ <b>𝐂𝐀𝐏𝐓𝐂𝐇𝐀 𝐓𝐈𝐌𝐄𝐎𝐔𝐓</b>\n'
+                                 '\n'
+                                 '120 ꜱᴇᴄᴏɴᴅꜱ ꜰɪɴɪꜱʜᴇᴅ. ᴛʜɪꜱ ʜɪɢʜ-ʀᴀʀɪᴛʏ ᴄᴀʀᴅ ʜᴀꜱ ʙᴇᴇɴ ʟᴏꜱᴛ.',
+        'claim_success': '🎉 <b>𝐘𝐎𝐔 𝐆𝐎𝐓 𝐀 𝐍𝐄𝐖 𝐂𝐇𝐀𝐑𝐀𝐂𝐓𝐄𝐑!</b>\n'
+                         '\n'
+                         '👤 ᴄʟᴀɪᴍᴇᴅ ʙʏ: {claimer}\n'
+                         '{emoji} ɴᴀᴍᴇ: <b>\ue000𝟎\ue001</b>\n'
+                         '🆔 ɪᴅ: <b>\ue000𝟎\ue001</b>\n'
+                         '🏷 ʀᴀʀɪᴛʏ: <b>\ue000𝟎\ue001</b>\n'
+                         '🌴 ᴀɴɪᴍᴇ: <b>\ue000𝟎\ue001</b>\n'
+                         '\n'
+                         '❄️ ᴄʜᴇᴄᴋ ʏᴏᴜʀ /harem !',
+        'daily_limit': '❌ ᴅᴀɪʟʏ ᴄᴀᴛᴄʜ ʟɪᴍɪᴛ ʀᴇᴀᴄʜᴇᴅ.\n'
+                       'ᴍʏᴀɴᴍᴀʀ/Yangon ᴅᴀᴛᴇ: {date}\n'
+                       'ᴜꜱᴇᴅ: {used}/{limit}\n'
+                       'ʀᴇᴍᴀɪɴɪɴɢ: {remaining}',
+        'claim_captcha_active': '⏳ ᴄᴀᴘᴛᴄʜᴀ ɪꜱ ᴀʟʀᴇᴀᴅʏ ᴀᴄᴛɪᴠᴇ ꜰᴏʀ ᴛʜɪꜱ ᴅʀᴏᴘ. ᴡᴀɪᴛ ꜰᴏʀ ᴛʜᴇ ʀᴇꜱᴜʟᴛ.',
+        'character_unavailable': '❌ ᴛʜɪꜱ ᴄʜᴀʀᴀᴄᴛᴇʀ ɪꜱ ɴᴏ ʟᴏɴɢᴇʀ ᴀᴠᴀɪʟᴀʙʟᴇ.',
+        'claim_captcha_required': '🧩 <b>𝐂𝐀𝐏𝐓𝐂𝐇𝐀 𝐒𝐎𝐋𝐕𝐄 𝐑𝐄𝐐𝐔𝐈𝐑𝐄𝐃</b>\n'
+                                  '\n'
+                                  '{emoji} <b>\ue000𝟎\ue001</b> ᴀɴᴅ ᴀʙᴏᴠᴇ ᴍᴜꜱᴛ ᴘᴀꜱꜱ ᴄᴀᴘᴛᴄʜᴀ.\n'
+                                  '👤 ᴘʟᴀʏᴇʀ: {player}\n'
+                                  '🎴 ᴄᴀʀᴅ: <b>\ue000𝟎\ue001</b> [{card_id}]\n'
+                                  '\n'
+                                  'ꜱᴏʟᴠᴇ ᴡɪᴛʜɪɴ <b>\ue000𝟎\ue001𝐬</b> ᴏʀ ᴛʜɪꜱ ᴄᴀʀᴅ ᴡɪʟʟ ʙᴇ ʟᴏꜱᴛ.\n'
+                                  'ǫᴜᴇꜱᴛɪᴏɴ: <b>\ue000𝟎\ue001</b>',
+        'no_character_available': '❌ ɴᴏ ᴄʜᴀʀᴀᴄᴛᴇʀ ɪꜱ ᴀᴠᴀɪʟᴀʙʟᴇ ʀɪɢʜᴛ ɴᴏᴡ.',
+        'already_caught': '❌ <b>𝐂𝐇𝐀𝐑𝐀𝐂𝐓𝐄𝐑 𝐀𝐋𝐑𝐄𝐀𝐃𝐘 𝐂𝐀𝐔𝐆𝐇𝐓</b>\n'
+                          '\n'
+                          'ᴄᴀᴜɢʜᴛ ʙʏ: {caught_by}\n'
+                          '\n'
+                          '🥤 ᴡᴀɪᴛ ꜰᴏʀ ɴᴇᴡ ᴄʜᴀʀᴀᴄᴛᴇʀ ᴛᴏ ꜱᴘᴀᴡɴ.',
+        'claim_high_captcha_active': '⏳ ᴄᴀᴘᴛᴄʜᴀ ɪꜱ ᴀʟʀᴇᴀᴅʏ ᴀᴄᴛɪᴠᴇ ꜰᴏʀ ᴛʜɪꜱ ʜɪɢʜ-ʀᴀʀɪᴛʏ ᴅʀᴏᴘ.',
+        'wrong_name': '❌ ᴄʜᴀʀᴀᴄᴛᴇʀ ɴᴀᴍᴇ {guess} ɪꜱ ɪɴᴄᴏʀʀᴇᴄᴛ\n\n{arrow} ᴄʜᴀʀᴀᴄᴛᴇʀ ɪꜱ ꜱᴛɪʟʟ ᴀᴠᴀɪʟᴀʙʟᴇ.',
+        'wrong_name_empty': '❌ ᴄʜᴀʀᴀᴄᴛᴇʀ ɴᴀᴍᴇ ɪꜱ ɪɴᴄᴏʀʀᴇᴄᴛ\n\n{arrow} ᴄʜᴀʀᴀᴄᴛᴇʀ ɪꜱ ꜱᴛɪʟʟ ᴀᴠᴀɪʟᴀʙʟᴇ.',
+        'drop_data_missing': '❌ ᴅʀᴏᴘ ᴅᴀᴛᴀ ᴍɪꜱꜱɪɴɢ.',
+        'captcha_not_for_you': 'ᴛʜɪꜱ ᴄᴀᴘᴛᴄʜᴀ ɪꜱ ɴᴏᴛ ꜰᴏʀ ʏᴏᴜ.',
+        'captcha_expired': 'ᴇxᴘɪʀᴇᴅ.',
+        'claim_wrong_captcha': '❌ <b>𝐖𝐑𝐎𝐍𝐆 𝐂𝐀𝐏𝐓𝐂𝐇𝐀</b>\n\nᴛʜɪꜱ ʜɪɢʜ-ʀᴀʀɪᴛʏ ᴄᴀʀᴅ ʜᴀꜱ ʙᴇᴇɴ ʟᴏꜱᴛ.',
+        'claim_wrong_card_lost': 'ᴡʀᴏɴɢ. ᴄᴀʀᴅ ʟᴏꜱᴛ.',
+        'daily_limit_card_lost': '❌ <b>𝐃𝐀𝐈𝐋𝐘 𝐋𝐈𝐌𝐈𝐓 𝐑𝐄𝐀𝐂𝐇𝐄𝐃</b>\n\nᴜꜱᴇᴅ: {used}/{limit}. ᴛʜɪꜱ ᴄᴀʀᴅ ʜᴀꜱ ʙᴇᴇɴ ʟᴏꜱᴛ.',
+        'daily_limit_reached_alert': 'ᴅᴀɪʟʏ ʟɪᴍɪᴛ ʀᴇᴀᴄʜᴇᴅ.',
+        'card_no_longer_available': 'ᴛʜɪꜱ ᴄᴀʀᴅ ɪꜱ ɴᴏ ʟᴏɴɢᴇʀ ᴀᴠᴀɪʟᴀʙʟᴇ.',
+        'claim_captcha_solved': '✅ <b>𝐂𝐀𝐏𝐓𝐂𝐇𝐀 𝐒𝐎𝐋𝐕𝐄𝐃</b>\n\n{user} ɢᴏᴛ ᴛʜᴇ ᴄᴀʀᴅ.',
+        'captcha_solved_alert': 'ᴄᴀᴘᴛᴄʜᴀ ꜱᴏʟᴠᴇᴅ.',
+        'group_admin_only': '❌ ɢʀᴏᴜᴘ ᴀᴅᴍɪɴ ᴏɴʟʏ.',
+        'changetime_usage': 'ᴜꜱᴀɢᴇ: /changetime <number>\n'
+                            'ɢʀᴏᴜᴘ ᴀᴅᴍɪɴ: {admin_min}-{admin_max}\n'
+                            'ᴏᴡɴᴇʀ: {owner_min}-{owner_max}',
+        'changetime_range': '❌ ᴄʜᴀɴɢᴇᴛɪᴍᴇ ᴍᴜꜱᴛ ʙᴇ ʙᴇᴛᴡᴇᴇɴ {min_v} ᴀɴᴅ {max_v}.',
+        'changetime_updated': '✅ ᴄʜᴀɴɢᴇᴛɪᴍᴇ ᴜᴘᴅᴀᴛᴇᴅ ᴛᴏ {value} ᴍᴇꜱꜱᴀɢᴇꜱ.',
+        'admin_dashboard': '⚙️ 𝐁𝐈𝐊𝐀 𝐀𝐃𝐌𝐈𝐍 𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃\n'
+                           '\n'
+                           '👤 ᴜꜱᴇʀꜱ: {users}\n'
+                           '👥 ɢʀᴏᴜᴘꜱ: {groups}\n'
+                           '🖼 ᴄᴀʀᴅꜱ: {cards}\n'
+                           '🎁 ᴛʀᴀɴꜱꜰᴇʀꜱ: {transfers}\n'
+                           '🤐 ᴀᴄᴛɪᴠᴇ ʙᴏᴛ ᴍᴜᴛᴇꜱ: {mutes}\n'
+                           '➕ ᴀᴅᴅᴇʀꜱ: {adders}\n'
+                           '⏱ ᴜᴘᴛɪᴍᴇ: {uptime}\n'
+                           '\n'
+                           'ᴜꜱᴇ: /admin_users /admin_groups /admin_photos\n'
+                           'ᴏᴡɴᴇʀ: /clmute /transfer /addadder /rmadder /give',
+        'no_users': 'ɴᴏ ᴜꜱᴇʀꜱ.',
+        'user_list_header': '👤 𝐔𝐒𝐄𝐑 𝐋𝐈𝐒𝐓',
+        'no_groups': 'ɴᴏ ɢʀᴏᴜᴘꜱ.',
+        'group_list_header': '👥 𝐆𝐑𝐎𝐔𝐏 𝐋𝐈𝐒𝐓',
+        'no_cards': 'ɴᴏ ᴄᴀʀᴅꜱ.',
+        'card_list_header': '🖼 𝐂𝐀𝐑𝐃 𝐋𝐈𝐒𝐓',
+        'clmute_group_only': '❌ ᴜꜱᴇ /clmute ɪɴ ᴀ ɢʀᴏᴜᴘ.',
+        'clmute_user_cleared': '✅ ʙᴏᴛ ᴍᴜᴛᴇ ᴄʟᴇᴀʀᴇᴅ ꜰᴏʀ ᴜꜱᴇʀ ɪᴅ {user_id}.',
+        'clmute_user_not_muted': 'ℹ️ ᴜꜱᴇʀ ɪᴅ {user_id} ɪꜱ ɴᴏᴛ ʙᴏᴛ-ᴍᴜᴛᴇᴅ.',
+        'clmute_group_cleared': '✅ ᴄʟᴇᴀʀᴇᴅ {count} ʙᴏᴛ ᴍᴜᴛᴇ(ꜱ) ɪɴ ᴛʜɪꜱ ɢʀᴏᴜᴘ.',
+        'transfer_usage': 'ᴜꜱᴀɢᴇ:\n/transfer <old_user_id> <new_user_id>\n/transfer <old_user_id> + ʀᴇᴘʟʏ ᴛᴀʀɢᴇᴛ ᴜꜱᴇʀ',
+        'transfer_invalid_old': '❌ ɪɴᴠᴀʟɪᴅ ᴏʟᴅ ᴜꜱᴇʀ ɪᴅ.',
+        'transfer_target_missing': '❌ ᴛᴀʀɢᴇᴛ ᴜꜱᴇʀ ᴍɪꜱꜱɪɴɢ. ᴜꜱᴇ /transfer ᴏʟᴅɪᴅ ɴᴇᴡɪᴅ ᴏʀ ʀᴇᴘʟʏ ᴜꜱᴇʀ ᴡɪᴛʜ /transfer '
+                                   'ᴏʟᴅɪᴅ',
+        'transfer_same': '❌ ᴏʟᴅ ɪᴅ ᴀɴᴅ ɴᴇᴡ ɪᴅ ᴀʀᴇ ᴛʜᴇ ꜱᴀᴍᴇ.',
+        'transfer_no_cards': '❌ ᴏʟᴅ ᴜꜱᴇʀ ʜᴀꜱ ɴᴏ ʜᴀʀᴇᴍ/cards ᴛᴏ ᴛʀᴀɴꜱꜰᴇʀ.',
+        'transfer_success': '✅ ʜᴀʀᴇᴍ ᴛʀᴀɴꜱꜰᴇʀʀᴇᴅ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ.\n'
+                            '\n'
+                            'ᴏʟᴅ ɪᴅ: {old_id}\n'
+                            'ɴᴇᴡ ɪᴅ: {new_id}\n'
+                            'ᴜɴɪǫᴜᴇ ᴄᴀʀᴅꜱ: {unique}\n'
+                            'ᴛᴏᴛᴀʟ ᴄᴀʀᴅꜱ: {total}',
+        'addadder_usage': 'ᴜꜱᴀɢᴇ: /addadder <user_id> ᴏʀ ʀᴇᴘʟʏ ᴜꜱᴇʀ ᴡɪᴛʜ /addadder',
+        'addadder_success': '✅ ᴜꜱᴇʀ ɪᴅ {user_id} ᴄᴀɴ ɴᴏᴡ ᴀᴅᴅ/update ᴄᴀʀᴅꜱ.',
+        'rmadder_usage': 'ᴜꜱᴀɢᴇ: /rmadder <user_id> ᴏʀ ʀᴇᴘʟʏ ᴜꜱᴇʀ ᴡɪᴛʜ /rmadder',
+        'rmadder_success': '✅ ᴜꜱᴇʀ ɪᴅ {user_id} ʀᴇᴍᴏᴠᴇᴅ ꜰʀᴏᴍ ᴀᴅᴅᴇʀꜱ.',
+        'delete_usage': 'ᴜꜱᴀɢᴇ: /delete <card_id>\nᴇxᴀᴍᴘʟᴇ: /delete 131',
+        'delete_invalid': '❌ ɪɴᴠᴀʟɪᴅ ᴄᴀʀᴅ ɪᴅ.',
+        'delete_not_found': '❌ ᴄᴀʀᴅ ɪᴅ {card_id} ɴᴏᴛ ꜰᴏᴜɴᴅ ɪɴ ᴅᴀᴛᴀʙᴀꜱᴇ.',
+        'delete_status_skipped': 'ꜱᴋɪᴘᴘᴇᴅ',
+        'delete_status_deleted': 'ᴅᴇʟᴇᴛᴇᴅ',
+        'delete_status_failed': 'ꜰᴀɪʟᴇᴅ: {error}',
+        'delete_success': '🗑 <b>𝐂𝐀𝐑𝐃 𝐃𝐄𝐋𝐄𝐓𝐄𝐃</b>\n'
+                          '\n'
+                          'ɪᴅ: <b>\ue000𝟎\ue001</b>\n'
+                          'ɴᴀᴍᴇ: <b>\ue000𝟎\ue001</b>\n'
+                          'ʀᴀʀɪᴛʏ: <b>\ue000𝟎\ue001</b>\n'
+                          'ᴀɴɪᴍᴇ: <b>\ue000𝟎\ue001</b>\n'
+                          '\n'
+                          'ᴘʜᴏᴛᴏꜱ ᴅʙ ᴅᴇʟᴇᴛᴇᴅ: <b>\ue000𝟎\ue001</b>\n'
+                          'ʀᴇᴍᴏᴠᴇᴅ ꜰʀᴏᴍ ᴜꜱᴇʀꜱ: <b>\ue000𝟎\ue001</b>\n'
+                          'ꜰᴀᴠᴏᴜʀɪᴛᴇ ᴄʟᴇᴀʀᴇᴅ: <b>\ue000𝟎\ue001</b>\n'
+                          'ᴀᴄᴛɪᴠᴇ ᴅʀᴏᴘꜱ ᴄʟᴇᴀʀᴇᴅ: <b>\ue000𝟎\ue001</b>\n'
+                          'ʙɪᴋᴀ ᴅᴀᴛᴀʙᴀꜱᴇ ᴍᴇꜱꜱᴀɢᴇ: <b>\ue000𝟎\ue001</b>',
+        'give_usage': 'ᴜꜱᴀɢᴇ: /give <card_id> + ʀᴇᴘʟʏ ᴛᴀʀɢᴇᴛ ᴜꜱᴇʀ',
+        'give_reply_target': "❌ ʀᴇᴘʟʏ ᴛᴏ ᴛʜᴇ ᴛᴀʀɢᴇᴛ ᴜꜱᴇʀ'ꜱ ᴍᴇꜱꜱᴀɢᴇ.\nᴇxᴀᴍᴘʟᴇ: /give 1001",
+        'give_bot_account': '❌ ᴄᴀɴɴᴏᴛ ɢɪᴠᴇ ᴄᴀʀᴅꜱ ᴛᴏ ʙᴏᴛ ᴀᴄᴄᴏᴜɴᴛꜱ.',
+        'give_not_found': '❌ ᴄᴀʀᴅ ɪᴅ {card_id} ɴᴏᴛ ꜰᴏᴜɴᴅ.',
+        'give_caption': '🎁 <b>𝐎𝐖𝐍𝐄𝐑 𝐆𝐈𝐕𝐄</b>\n'
+                        '\n'
+                        'ᴛᴏ: {target}\n'
+                        'ᴄᴀʀᴅ: {emoji} <b>\ue000𝟎\ue001</b>\n'
+                        'ɪᴅ: <b>\ue000𝟎\ue001</b>\n'
+                        'ᴀɴɪᴍᴇ: <b>\ue000𝟎\ue001</b>\n'
+                        'ǫᴛʏ: <b>𝟏</b>'}}
