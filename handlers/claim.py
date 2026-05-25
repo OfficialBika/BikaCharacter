@@ -15,7 +15,7 @@ from database.mongodb import get_db
 from utils.cooldown import should_ignore_update
 from utils.claim_stats import get_daily_claim_count, log_claim_event, release_daily_claim, reserve_daily_claim, yangon_date_key
 from utils.db_helpers import add_card_to_user, ensure_group, ensure_user, get_photo_by_card_id
-from utils.parser import normalized_search_name
+from utils.parser import is_character_name_match, normalized_search_name
 from utils.rarity import get_rarity_emoji
 from utils.text import escape_html, mention_user, utcnow
 
@@ -210,15 +210,70 @@ async def start_high_rarity_captcha(update: Update, context: ContextTypes.DEFAUL
     context.application.create_task(captcha_timeout_task(context.bot, int(chat.id), captcha["nonce"], CLAIM_CAPTCHA_SECONDS))
 
 
+def build_drop_message_link(chat, message_id: int) -> str:
+    """Build a Telegram link to the last spawned card message."""
+    if not chat or not message_id:
+        return ""
+
+    username = getattr(chat, "username", "") or ""
+    if username:
+        return f"https://t.me/{username}/{message_id}"
+
+    chat_id_str = str(getattr(chat, "id", ""))
+    # Private supergroup/channel style: -1001234567890 -> https://t.me/c/1234567890/45
+    if chat_id_str.startswith("-100"):
+        return f"https://t.me/c/{chat_id_str[4:]}/{message_id}"
+
+    return ""
+
+
+def caught_by_html(active: dict) -> str:
+    """Return clickable catcher mention from activeDrop data."""
+    user_id = int(active.get("claimedByUserId", 0) or 0)
+    name = escape_html(active.get("claimedByName") or "Someone")
+    if user_id:
+        return f'<a href="tg://user?id={user_id}">{name}</a>'
+    return name
+
+
+async def reply_already_caught(update: Update, active: dict) -> None:
+    await update.message.reply_html(
+        "❌ <b>CHARACTER ALREADY CAUGHT</b>\n\n"
+        f"Caught by: {caught_by_html(active)}\n\n"
+        "🥤 Wait for new character to spawn."
+    )
+
+
+async def reply_wrong_character_name(update: Update, active: dict, guess_raw: str = "") -> None:
+    drop_message_id = int(active.get("messageId", 0) or 0)
+    drop_link = build_drop_message_link(update.effective_chat, drop_message_id)
+
+    if str(guess_raw or "").strip():
+        first_line = f"❌ CHARACTER NAME {escape_html(str(guess_raw).lower())} IS INCORRECT"
+    else:
+        first_line = "❌ CHARACTER NAME IS INCORRECT"
+
+    if drop_link:
+        text = (
+            f"{first_line}\n\n"
+            f'<a href="{drop_link}">⬆️</a> CHARACTER is still available.'
+        )
+    else:
+        text = (
+            f"{first_line}\n\n"
+            "⬆️ CHARACTER is still available."
+        )
+
+    await update.message.reply_html(text)
+
+
 async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_chat.type not in ("group", "supergroup"):
         return
     if await should_ignore_update(update):
         return
+
     guess_raw = " ".join(context.args).strip()
-    if not guess_raw:
-        await update.message.reply_text("Usage: /bika <character name>")
-        return
 
     await ensure_user(update.effective_user)
     group = await ensure_group(update.effective_chat)
@@ -227,11 +282,10 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("❌ No character is available right now.")
         return
 
+    # /bika without a name should not show usage text.
+    # If the card is already caught, show catcher. If not caught, show wrong-name + last drop link.
     if active.get("isClaimed"):
-        caught_by = active.get("claimedByName") or "Someone"
-        await update.message.reply_html(
-            f"❌ <b>CHARACTER ALREADY CAUGHT</b>\n\nCaught by: {escape_html(caught_by)}\n🥤 Wait for new character to spawn."
-        )
+        await reply_already_caught(update, active)
         return
 
     captcha = active.get("captcha") or {}
@@ -239,11 +293,18 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("⏳ Captcha is already active for this high-rarity drop.")
         return
 
-    guess = normalized_search_name(guess_raw)
-    target = str(active.get("normalizedName", ""))
-    is_match = len(guess) >= CLAIM_PREFIX_MIN_LENGTH and (guess == target or target.startswith(guess))
+    if not guess_raw:
+        await reply_wrong_character_name(update, active, guess_raw)
+        return
+
+    target = str(active.get("normalizedName") or active.get("name") or "")
+    is_match = is_character_name_match(
+        guess_text=guess_raw,
+        target_name=target,
+        min_length=CLAIM_PREFIX_MIN_LENGTH,
+    )
     if not is_match:
-        await update.message.reply_text(f"❌ CHARACTER NAME {guess_raw.lower()} IS INCORRECT\n\n⬆️ CHARACTER is still available.")
+        await reply_wrong_character_name(update, active, guess_raw)
         return
 
     # High-rarity captcha is solved before the card spawns, so /bika claims no longer trigger captcha here.
@@ -279,10 +340,8 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not updated or int(updated.get("activeDrop", {}).get("claimedByUserId", 0)) != int(update.effective_user.id):
         await release_daily_claim(update.effective_user.id, reservation.get("date"))
         latest = await get_db().groups.find_one({"groupId": int(update.effective_chat.id)})
-        caught = latest.get("activeDrop", {}).get("claimedByName", "Someone") if latest else "Someone"
-        await update.message.reply_html(
-            f"❌ <b>CHARACTER ALREADY CAUGHT</b>\n\nCaught by: {escape_html(caught)}\n🥤 Wait for new character to spawn."
-        )
+        latest_active = (latest or {}).get("activeDrop") or {}
+        await reply_already_caught(update, latest_active)
         return
 
     photo_doc = await get_photo_by_card_id(active.get("cardId"))
