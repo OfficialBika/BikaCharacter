@@ -38,7 +38,7 @@ async def check_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         lines.append(t("no_catch_data"))
     else:
         for catcher in stats["topCatchers"]:
-            lines.append(f"↪ {mention_user_doc(catcher)} x{catcher.get('count', 0)}")
+            lines.append(f"➳ {mention_user_doc(catcher)} x{catcher.get('count', 0)}")
 
     await update.message.reply_photo(photo["fileId"], caption="\n".join(lines), parse_mode="HTML")
 
