@@ -3,9 +3,9 @@ from __future__ import annotations
 # Central text templates for BIKA Character Bot.
 # Style rule:
 # - Main bot UI text uses small-caps Unicode.
-# - Text inside <b>...</b> and title/header keys use mathematical bold Unicode.
+# - Titles / headers use mathematical bold Unicode.
 # - Telegram commands and {format_placeholders} are intentionally kept normal.
-# Keep HTML tags only in templates that are sent with parse_mode=HTML / reply_html.
+# Keep HTML tags only in templates sent with HTML parse mode.
 
 LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ',
         'start_button_support': '💬 ꜱᴜᴘᴘᴏʀᴛ ɢʀᴏᴜᴘ',
@@ -41,8 +41,8 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'harem_no_cards': 'ɴᴏ ᴄᴀʀᴅꜱ ʏᴇᴛ.',
         'harem_no_cards_user': "ʏᴏᴜ ᴅᴏɴ'ᴛ ʜᴀᴠᴇ ᴀɴʏ ᴄᴀʀᴅꜱ ʏᴇᴛ.",
         'harem_no_cards_alert': 'ɴᴏ ᴄᴀʀᴅꜱ.',
-        'harem_button_back': '◀ ʙᴀᴄᴋ',
-        'harem_button_next': 'ɴᴇxᴛ ▶',
+        'harem_button_back': '🟦 ⬅ ʙᴀᴄᴋ',
+        'harem_button_next': 'ɴᴇxᴛ ➡ 🟩',
         'profile_header': '🎗𝐁𝐈𝐊𝐀 𝐂𝐀𝐓𝐂𝐇𝐄𝐑 𝐏𝐑𝐎𝐅𝐈𝐋𝐄🎗',
         'profile_user': '👤 ᴜꜱᴇʀ: {username}',
         'profile_user_id': '🆔 ᴜꜱᴇʀ ɪᴅ: {user_id}',
@@ -50,17 +50,17 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'profile_harem': '🫧 ʜᴀʀᴇᴍ: {unique_owned}/{total_photo_count} ({percent:.3f}%)',
         'profile_level': 'ℹ️ ᴇxᴘᴇʀɪᴇɴᴄᴇ ʟᴇᴠᴇʟ: {level}',
         'profile_progress': '📈 ᴘʀᴏɢʀᴇꜱꜱ ʙᴀʀ: {bar}',
-        'profile_favourite': '🤍 ꜰᴀᴠᴏᴜʀɪᴛᴇ: {name} [{card_id}]',
-        'profile_favourite_not_set': '🤍 ꜰᴀᴠᴏᴜʀɪᴛᴇ: ɴᴏᴛ ꜱᴇᴛ',
+        'profile_favourite': '💖 ꜰᴀᴠᴏᴜʀɪᴛᴇ: {name} [{card_id}]',
+        'profile_favourite_not_set': '💖 ꜰᴀᴠᴏᴜʀɪᴛᴇ: ɴᴏᴛ ꜱᴇᴛ',
         'profile_rarity_line': '{emoji} ʀᴀʀɪᴛʏ {rarity}: {unique} ({total})',
-        'fav_not_set': '🤍 ꜰᴀᴠᴏᴜʀɪᴛᴇ ɪꜱ ɴᴏᴛ ꜱᴇᴛ.\nᴜꜱᴇ: /fav <card id>',
-        'fav_current_caption': '🤍 ʏᴏᴜʀ ꜰᴀᴠᴏᴜʀɪᴛᴇ ᴄʜᴀʀᴀᴄᴛᴇʀ\n{emoji} {name} [{card_id}]\nᴀɴɪᴍᴇ: {anime}',
+        'fav_not_set': '💖 ꜰᴀᴠᴏᴜʀɪᴛᴇ ɪꜱ ɴᴏᴛ ꜱᴇᴛ.\nᴜꜱᴇ: /fav <card id>',
+        'fav_current_caption': '💖 ʏᴏᴜʀ ꜰᴀᴠᴏᴜʀɪᴛᴇ ᴄʜᴀʀᴀᴄᴛᴇʀ\n{emoji} {name} [{card_id}]\nᴀɴɪᴍᴇ: {anime}',
         'fav_missing_collection': 'ᴛʜɪꜱ ᴄʜᴀʀᴀᴄᴛᴇʀ ᴅᴏᴇꜱ ɴᴏᴛ ᴇxɪꜱᴛ ɪɴ ʏᴏᴜʀ ᴄᴏʟʟᴇᴄᴛɪᴏɴ.',
         'fav_confirm': 'ᴅᴏ ʏᴏᴜ ᴡᴀɴᴛ ᴛᴏ ꜱᴇᴛ ᴛʜɪꜱ ᴄʜᴀʀᴀᴄᴛᴇʀ ᴀꜱ ʏᴏᴜʀ ꜰᴀᴠᴏᴜʀɪᴛᴇ?\n↪ {name} ({anime})',
-        'fav_button_yes': '✅ ʏᴇꜱ',
-        'fav_button_no': '🚫 ɴᴏ',
+        'fav_button_yes': '🟢 ʏᴇꜱ',
+        'fav_button_no': '🔴 ɴᴏ',
         'fav_card_missing': 'ᴄᴀʀᴅ ᴍɪꜱꜱɪɴɢ.',
-        'fav_set': '🤍 ꜰᴀᴠᴏᴜʀɪᴛᴇ ꜱᴇᴛ ᴛᴏ {name} [{card_id}]',
+        'fav_set': '💖 ꜰᴀᴠᴏᴜʀɪᴛᴇ ꜱᴇᴛ ᴛᴏ {name} [{card_id}]',
         'fav_updated': 'ꜰᴀᴠᴏᴜʀɪᴛᴇ ᴜᴘᴅᴀᴛᴇᴅ.',
         'fav_cancelled': '❌ ꜰᴀᴠᴏᴜʀɪᴛᴇ ᴜᴘᴅᴀᴛᴇ ᴄᴀɴᴄᴇʟʟᴇᴅ.',
         'gift_reply_target': "❌ ʀᴇᴘʟʏ ᴛᴏ ᴛʜᴇ ᴛᴀʀɢᴇᴛ ᴜꜱᴇʀ'ꜱ ᴍᴇꜱꜱᴀɢᴇ.\nᴇxᴀᴍᴘʟᴇ: .ɢɪꜰᴛ 1001",
@@ -87,28 +87,28 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'gift_cancelled': '❌ ɢɪꜰᴛ ᴄᴀɴᴄᴇʟʟᴇᴅ.',
         'rank_no_group': 'ɴᴏ ɢʀᴏᴜᴘ ᴄᴀᴛᴄʜ ʀᴀɴᴋɪɴɢ ʏᴇᴛ.',
         'rank_group_header': '🏆 <b>𝐓𝐎𝐏 𝐆𝐑𝐎𝐔𝐏 𝐑𝐀𝐍𝐊𝐈𝐍𝐆</b>',
-        'rank_group_subtitle': '<b>\ue000𝟎\ue001 𝐜𝐚𝐭𝐜𝐡𝐞𝐬 𝐫𝐚𝐧𝐤𝐢𝐧𝐠</b>',
-        'rank_group_row': '{rank} {group} — <b>\ue000𝟎\ue001</b> ᴄᴀᴛᴄʜᴇꜱ',
+        'rank_group_subtitle': '<b>𝐁𝐲 /bika 𝐜𝐚𝐭𝐜𝐡𝐞𝐬 𝐫𝐚𝐧𝐤𝐢𝐧𝐠</b>',
+        'rank_group_row': '{rank} {group} — <b>{count}</b> ᴄᴀᴛᴄʜᴇꜱ',
         'rank_no_global': 'ɴᴏ ɢʟᴏʙᴀʟ ʜᴀʀᴇᴍ ʀᴀɴᴋɪɴɢ ʏᴇᴛ.',
         'rank_global_header': '🌍 <b>𝐆𝐋𝐎𝐁𝐀𝐋 𝐓𝐎𝐏 𝟏𝟎 𝐔𝐒𝐄𝐑𝐒</b>',
         'rank_global_subtitle': '<b>𝐁𝐲 𝐭𝐨𝐭𝐚𝐥 𝐡𝐚𝐫𝐞𝐦 𝐜𝐡𝐚𝐫𝐚𝐜𝐭𝐞𝐫𝐬</b>',
-        'rank_global_row': '{rank} {user} — <b>\ue000𝟎\ue001</b> ᴛᴏᴛᴀʟ | {unique} ᴜɴɪǫᴜᴇ',
+        'rank_global_row': '{rank} {user} — <b>{total}</b> ᴛᴏᴛᴀʟ | {unique} ᴜɴɪǫᴜᴇ',
         'rank_no_today': 'ɴᴏ ᴄᴀᴛᴄʜᴇꜱ ʏᴇᴛ ᴛᴏᴅᴀʏ.\nᴅᴀᴛᴇ: {date} ({timezone})',
         'rank_today_header': '📅 <b>𝐓𝐎𝐃𝐀𝐘 𝐆𝐋𝐎𝐁𝐀𝐋 𝐓𝐎𝐏 𝟏𝟎</b>',
-        'rank_today_date': 'ᴅᴀᴛᴇ: <b>\ue000𝟎\ue001</b> ({timezone})',
-        'rank_today_subtitle': '<b>𝐁𝐲 \ue000𝟎\ue001 𝐜𝐚𝐭𝐜𝐡𝐞𝐬 𝐭𝐨𝐝𝐚𝐲</b>',
-        'rank_today_row': '{rank} {user} — <b>\ue000𝟎\ue001</b> ᴄᴀᴛᴄʜᴇꜱ',
+        'rank_today_date': 'ᴅᴀᴛᴇ: <b>{date}</b> ({timezone})',
+        'rank_today_subtitle': '<b>𝐁𝐲 /bika 𝐜𝐚𝐭𝐜𝐡𝐞𝐬 𝐭𝐨𝐝𝐚𝐲</b>',
+        'rank_today_row': '{rank} {user} — <b>{count}</b> ᴄᴀᴛᴄʜᴇꜱ',
         'mylimit': '🎯 ᴅᴀɪʟʏ ᴄᴀᴛᴄʜ ʟɪᴍɪᴛ\n\nᴅᴀᴛᴇ: {date} ({timezone})\nᴜꜱᴇᴅ: {used}/{limit}\nʀᴇᴍᴀɪɴɪɴɢ: {remaining}',
         'bot_muted': '🤐 {name}, ʏᴏᴜ ꜱᴇɴᴛ ᴛᴏᴏ ᴍᴀɴʏ ᴍᴇꜱꜱᴀɢᴇꜱ ɪɴ ᴀ ʀᴏᴡ. ʙᴏᴛ ᴡɪʟʟ ɪɢɴᴏʀᴇ ʏᴏᴜ ꜰᴏʀ {minutes} ᴍɪɴᴜᴛᴇꜱ.',
         'pre_spawn_captcha': '🧩 <b>𝐇𝐈𝐆𝐇 𝐑𝐀𝐑𝐈𝐓𝐘 𝐂𝐀𝐏𝐓𝐂𝐇𝐀</b>\n'
                              '\n'
-                             '{emoji} <b>\ue000𝟎\ue001</b> ᴄᴀʀᴅ ɪꜱ ᴛʀʏɪɴɢ ᴛᴏ ꜱᴘᴀᴡɴ ɪɴ <b>\ue000𝟎\ue001</b>.\n'
+                             '{emoji} <b>{rarity}</b> ᴄᴀʀᴅ ɪꜱ ᴛʀʏɪɴɢ ᴛᴏ ꜱᴘᴀᴡɴ ɪɴ <b>{group_name}</b>.\n'
                              '\n'
-                             'ꜱᴏʟᴠᴇ ᴛʜɪꜱ ᴄᴀᴘᴛᴄʜᴀ ᴡɪᴛʜɪɴ <b>\ue000𝟎\ue001𝐬</b>.\n'
+                             'ꜱᴏʟᴠᴇ ᴛʜɪꜱ ᴄᴀᴘᴛᴄʜᴀ ᴡɪᴛʜɪɴ <b>{seconds}𝐬</b>.\n'
                              '✅ ᴄᴏʀʀᴇᴄᴛ ᴀɴꜱᴡᴇʀ = ᴄʜᴀʀᴀᴄᴛᴇʀ ᴡɪʟʟ ꜱᴘᴀᴡɴ.\n'
                              '❌ ᴡʀᴏɴɢ ᴀɴꜱᴡᴇʀ ᴏʀ ᴛɪᴍᴇᴏᴜᴛ = ᴛʜɪꜱ ᴅʀᴏᴘ ᴡɪʟʟ ʙᴇ ʟᴏꜱᴛ.\n'
                              '\n'
-                             'ǫᴜᴇꜱᴛɪᴏɴ: <b>\ue000𝟎\ue001</b>',
+                             'ǫᴜᴇꜱᴛɪᴏɴ: <b>{question}</b>',
         'pre_spawn_timeout': '⌛ <b>𝐂𝐀𝐏𝐓𝐂𝐇𝐀 𝐓𝐈𝐌𝐄𝐎𝐔𝐓</b>\n'
                              '\n'
                              '120 ꜱᴇᴄᴏɴᴅꜱ ꜰɪɴɪꜱʜᴇᴅ. ᴛʜɪꜱ ꜱᴄʜᴇᴅᴜʟᴇᴅ ʜɪɢʜ-ʀᴀʀɪᴛʏ ꜱᴘᴀᴡɴ ʜᴀꜱ ʙᴇᴇɴ ʟᴏꜱᴛ.',
@@ -128,10 +128,10 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'claim_success': '🎉 <b>𝐘𝐎𝐔 𝐆𝐎𝐓 𝐀 𝐍𝐄𝐖 𝐂𝐇𝐀𝐑𝐀𝐂𝐓𝐄𝐑!</b>\n'
                          '\n'
                          '👤 ᴄʟᴀɪᴍᴇᴅ ʙʏ: {claimer}\n'
-                         '{emoji} ɴᴀᴍᴇ: <b>\ue000𝟎\ue001</b>\n'
-                         '🆔 ɪᴅ: <b>\ue000𝟎\ue001</b>\n'
-                         '🏷 ʀᴀʀɪᴛʏ: <b>\ue000𝟎\ue001</b>\n'
-                         '🌴 ᴀɴɪᴍᴇ: <b>\ue000𝟎\ue001</b>\n'
+                         '{emoji} ɴᴀᴍᴇ: <b>{name}</b>\n'
+                         '🆔 ɪᴅ: <b>{card_id}</b>\n'
+                         '🏷 ʀᴀʀɪᴛʏ: <b>{rarity}</b>\n'
+                         '🌴 ᴀɴɪᴍᴇ: <b>{anime}</b>\n'
                          '\n'
                          '❄️ ᴄʜᴇᴄᴋ ʏᴏᴜʀ /harem !',
         'daily_limit': '❌ ᴅᴀɪʟʏ ᴄᴀᴛᴄʜ ʟɪᴍɪᴛ ʀᴇᴀᴄʜᴇᴅ.\n'
@@ -142,12 +142,12 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'character_unavailable': '❌ ᴛʜɪꜱ ᴄʜᴀʀᴀᴄᴛᴇʀ ɪꜱ ɴᴏ ʟᴏɴɢᴇʀ ᴀᴠᴀɪʟᴀʙʟᴇ.',
         'claim_captcha_required': '🧩 <b>𝐂𝐀𝐏𝐓𝐂𝐇𝐀 𝐒𝐎𝐋𝐕𝐄 𝐑𝐄𝐐𝐔𝐈𝐑𝐄𝐃</b>\n'
                                   '\n'
-                                  '{emoji} <b>\ue000𝟎\ue001</b> ᴀɴᴅ ᴀʙᴏᴠᴇ ᴍᴜꜱᴛ ᴘᴀꜱꜱ ᴄᴀᴘᴛᴄʜᴀ.\n'
+                                  '{emoji} <b>{rarity}</b> ᴀɴᴅ ᴀʙᴏᴠᴇ ᴍᴜꜱᴛ ᴘᴀꜱꜱ ᴄᴀᴘᴛᴄʜᴀ.\n'
                                   '👤 ᴘʟᴀʏᴇʀ: {player}\n'
-                                  '🎴 ᴄᴀʀᴅ: <b>\ue000𝟎\ue001</b> [{card_id}]\n'
+                                  '🎴 ᴄᴀʀᴅ: <b>{card_name}</b> [{card_id}]\n'
                                   '\n'
-                                  'ꜱᴏʟᴠᴇ ᴡɪᴛʜɪɴ <b>\ue000𝟎\ue001𝐬</b> ᴏʀ ᴛʜɪꜱ ᴄᴀʀᴅ ᴡɪʟʟ ʙᴇ ʟᴏꜱᴛ.\n'
-                                  'ǫᴜᴇꜱᴛɪᴏɴ: <b>\ue000𝟎\ue001</b>',
+                                  'ꜱᴏʟᴠᴇ ᴡɪᴛʜɪɴ <b>{seconds}𝐬</b> ᴏʀ ᴛʜɪꜱ ᴄᴀʀᴅ ᴡɪʟʟ ʙᴇ ʟᴏꜱᴛ.\n'
+                                  'ǫᴜᴇꜱᴛɪᴏɴ: <b>{question}</b>',
         'no_character_available': '❌ ɴᴏ ᴄʜᴀʀᴀᴄᴛᴇʀ ɪꜱ ᴀᴠᴀɪʟᴀʙʟᴇ ʀɪɢʜᴛ ɴᴏᴡ.',
         'already_caught': '❌ <b>𝐂𝐇𝐀𝐑𝐀𝐂𝐓𝐄𝐑 𝐀𝐋𝐑𝐄𝐀𝐃𝐘 𝐂𝐀𝐔𝐆𝐇𝐓</b>\n'
                           '\n'
@@ -217,19 +217,18 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'delete_status_skipped': 'ꜱᴋɪᴘᴘᴇᴅ',
         'delete_status_deleted': 'ᴅᴇʟᴇᴛᴇᴅ',
         'delete_status_failed': 'ꜰᴀɪʟᴇᴅ: {error}',
-         'delete_success': '🗑 <b>𝐂𝐀𝐑𝐃 𝐃𝐄𝐋𝐄𝐓𝐄𝐃</b>\n'
-                           '\n'
-                           'ɪᴅ: <b>{card_id}</b>\n'
-                           'ɴᴀᴍᴇ: <b>{name}</b>\n'
-                           'ʀᴀʀɪᴛʏ: <b>{rarity}</b>\n'
-                           'ᴀɴɪᴍᴇ: <b>{anime}</b>\n'
-                           '\n'
-                           'ᴘʜᴏᴛᴏꜱ ᴅʙ ᴅᴇʟᴇᴛᴇᴅ: <b>{photo_deleted}</b>\n'
-                           'ʀᴇᴍᴏᴠᴇᴅ ꜰʀᴏᴍ ᴜꜱᴇʀꜱ: <b>{users_modified}</b>\n'
-                           'ꜰᴀᴠᴏᴜʀɪᴛᴇ ᴄʟᴇᴀʀᴇᴅ: <b>{fav_modified}</b>\n'
-                           'ᴀᴄᴛɪᴠᴇ ᴅʀᴏᴘꜱ ᴄʟᴇᴀʀᴇᴅ: <b>{drop_modified}</b>\n'
-                           'ʙɪᴋᴀ ᴅᴀᴛᴀʙᴀꜱᴇ ᴍᴇꜱꜱᴀɢᴇ: <b>{channel_status}</b>',
-               
+        'delete_success': '🗑 <b>𝐂𝐀𝐑𝐃 𝐃𝐄𝐋𝐄𝐓𝐄𝐃</b>\n'
+                          '\n'
+                          'ɪᴅ: <b>{card_id}</b>\n'
+                          'ɴᴀᴍᴇ: <b>{name}</b>\n'
+                          'ʀᴀʀɪᴛʏ: <b>{rarity}</b>\n'
+                          'ᴀɴɪᴍᴇ: <b>{anime}</b>\n'
+                          '\n'
+                          'ᴘʜᴏᴛᴏꜱ ᴅʙ ᴅᴇʟᴇᴛᴇᴅ: <b>{photo_deleted}</b>\n'
+                          'ʀᴇᴍᴏᴠᴇᴅ ꜰʀᴏᴍ ᴜꜱᴇʀꜱ: <b>{users_modified}</b>\n'
+                          'ꜰᴀᴠᴏᴜʀɪᴛᴇ ᴄʟᴇᴀʀᴇᴅ: <b>{fav_modified}</b>\n'
+                          'ᴀᴄᴛɪᴠᴇ ᴅʀᴏᴘꜱ ᴄʟᴇᴀʀᴇᴅ: <b>{drop_modified}</b>\n'
+                          'ʙɪᴋᴀ ᴅᴀᴛᴀʙᴀꜱᴇ ᴍᴇꜱꜱᴀɢᴇ: <b>{channel_status}</b>',
         'give_usage': 'ᴜꜱᴀɢᴇ: /give <card_id> + ʀᴇᴘʟʏ ᴛᴀʀɢᴇᴛ ᴜꜱᴇʀ',
         'give_reply_target': "❌ ʀᴇᴘʟʏ ᴛᴏ ᴛʜᴇ ᴛᴀʀɢᴇᴛ ᴜꜱᴇʀ'ꜱ ᴍᴇꜱꜱᴀɢᴇ.\nᴇxᴀᴍᴘʟᴇ: /give 1001",
         'give_bot_account': '❌ ᴄᴀɴɴᴏᴛ ɢɪᴠᴇ ᴄᴀʀᴅꜱ ᴛᴏ ʙᴏᴛ ᴀᴄᴄᴏᴜɴᴛꜱ.',
@@ -240,4 +239,5 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
                         'ᴄᴀʀᴅ: {emoji} <b>{name}</b>\n'
                         'ɪᴅ: <b>{card_id}</b>\n'
                         'ᴀɴɪᴍᴇ: <b>{anime}</b>\n'
-                        'ǫᴛʏ: <b>1</b>'}}
+                        'ǫᴛʏ: <b>1</b>',
+        'harem_inline_button': '💠 ʜᴀʀᴇᴍ'}}
