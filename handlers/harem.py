@@ -109,7 +109,7 @@ def build_harem_caption(user_doc: dict, page: int = 1) -> tuple[str, int, int, l
             unique_count = len(anime_cards)
             total_count = sum(int(c.get("count", 0)) for c in anime_cards)
             lines.append(f"⚜️ <b>{escape_html(anime)}</b> ({unique_count}/{total_count})")
-            lines.append("────────────────────")
+            lines.append("─────────────")
             for card in sorted(anime_cards, key=_card_id_sort_value):
                 emoji = get_rarity_emoji(card.get("rarity"))
                 suffix = f" (x{int(card.get('count', 1))})"
