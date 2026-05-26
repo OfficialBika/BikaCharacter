@@ -20,6 +20,7 @@ from utils.permissions import is_global_admin, is_group_admin_or_owner, is_owner
 from utils.rarity import get_rarity_emoji
 from utils.text import escape_html, mention_user, safe_chat_title, uptime_text, utcnow
 from utils.i18n import t
+from utils.cooldown import add_free_user, remove_free_user, is_free_user
 
 START_TIME = time.time()
 SETTINGS_ID = "config"
@@ -323,6 +324,79 @@ async def rmadder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
     await update.effective_message.reply_text(t("rmadder_success", user_id=target_id))
 
+
+async def free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only: exempt a user from bot anti-spam mute in the current group.
+
+    Usage:
+      /free <user_id>
+      /free  (reply to target user)
+    """
+    if not is_owner(update.effective_user.id):
+        return
+
+    msg = update.effective_message
+    if update.effective_chat.type not in ("group", "supergroup"):
+        await msg.reply_text("❌ ᴜꜱᴇ /free ɪɴ ᴀ ɢʀᴏᴜᴘ.")
+        return
+
+    target_id = _target_user_id_from_reply_or_arg(update, context, 0)
+    if not target_id:
+        await msg.reply_text(
+            "ᴜꜱᴀɢᴇ: /free <user_id>\n"
+            "ᴏʀ ʀᴇᴘʟʏ ᴛᴀʀɢᴇᴛ ᴜꜱᴇʀ ᴡɪᴛʜ /free"
+        )
+        return
+
+    group_id = int(update.effective_chat.id)
+    already_free = await is_free_user(group_id, int(target_id))
+
+    await add_free_user(
+        group_id=group_id,
+        user_id=int(target_id),
+        by_owner_id=int(update.effective_user.id),
+    )
+
+    if already_free:
+        await msg.reply_text(
+            f"ℹ️ ᴜꜱᴇʀ ɪᴅ {target_id} ɪꜱ ᴀʟʀᴇᴀᴅʏ ꜰʀᴇᴇ ɪɴ ᴛʜɪꜱ ɢʀᴏᴜᴘ."
+        )
+    else:
+        await msg.reply_text(
+            f"✅ ᴜꜱᴇʀ ɪᴅ {target_id} ɪꜱ ɴᴏᴡ ꜰʀᴇᴇ.\n"
+            "ʙᴏᴛ ᴡɪʟʟ ɴᴏᴛ 10 ᴍɪɴꜱ ᴍᴜᴛᴇ ᴛʜɪꜱ ᴜꜱᴇʀ ɪɴ ᴛʜɪꜱ ɢʀᴏᴜᴘ."
+        )
+
+
+async def rmfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only: remove a user from the bot anti-spam free list.
+
+    Usage:
+      /rmfree <user_id>
+      /rmfree  (reply to target user)
+    """
+    if not is_owner(update.effective_user.id):
+        return
+
+    msg = update.effective_message
+    if update.effective_chat.type not in ("group", "supergroup"):
+        await msg.reply_text("❌ ᴜꜱᴇ /rmfree ɪɴ ᴀ ɢʀᴏᴜᴘ.")
+        return
+
+    target_id = _target_user_id_from_reply_or_arg(update, context, 0)
+    if not target_id:
+        await msg.reply_text(
+            "ᴜꜱᴀɢᴇ: /rmfree <user_id>\n"
+            "ᴏʀ ʀᴇᴘʟʏ ᴛᴀʀɢᴇᴛ ᴜꜱᴇʀ ᴡɪᴛʜ /rmfree"
+        )
+        return
+
+    removed = await remove_free_user(update.effective_chat.id, int(target_id))
+    if removed:
+        await msg.reply_text(f"✅ ᴜꜱᴇʀ ɪᴅ {target_id} ʀᴇᴍᴏᴠᴇᴅ ꜰʀᴏᴍ ꜰʀᴇᴇ ʟɪꜱᴛ.")
+    else:
+        await msg.reply_text(f"ℹ️ ᴜꜱᴇʀ ɪᴅ {target_id} ɪꜱ ɴᴏᴛ ɪɴ ꜰʀᴇᴇ ʟɪꜱᴛ.")
+
 async def delete_card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_owner(update.effective_user.id):
         return
@@ -463,3 +537,5 @@ def register_admin_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("rmadder", rmadder_cmd))
     app.add_handler(CommandHandler("delete", delete_card_cmd))
     app.add_handler(CommandHandler("give", give_cmd))
+    app.add_handler(CommandHandler("free", free_cmd))
+    app.add_handler(CommandHandler("rmfree", rmfree_cmd))
