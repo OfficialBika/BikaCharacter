@@ -14,12 +14,14 @@ from handlers.photo_add import register_photo_add_handlers
 from handlers.profile import register_profile_handlers
 from handlers.rankings import register_ranking_handlers
 from handlers.start import register_start_handlers
+from handlers.checkgp import register_checkgp_handlers
 
 
 def register_handlers(app: Application) -> None:
     # Bot group join/leave events.
     register_group_event_handlers(app)
-
+    register_checkgp_handlers(app)
+    
     # Specific command handlers first.
     register_start_handlers(app)
     register_admin_handlers(app)
