@@ -24,13 +24,58 @@ from utils.i18n import t
 PRE_SPAWN_CAPTCHA_RARITIES = {"Divine", "CrossVerse", "Cataphract", "Supreme"}
 
 
+def is_command_message(msg) -> bool:
+    """Return True for any bot command message/caption.
+
+    Examples excluded from drop counter:
+      /start
+      /bika Yelan
+      /bika@BikaCharacterBot Yelan
+      /harem
+      /check 1
+      any other /command
+    """
+    text = (getattr(msg, "text", None) or "").strip()
+    caption = (getattr(msg, "caption", None) or "").strip()
+
+    if text.startswith("/") or caption.startswith("/"):
+        return True
+
+    entities = list(getattr(msg, "entities", None) or [])
+    caption_entities = list(getattr(msg, "caption_entities", None) or [])
+
+    for entity in entities + caption_entities:
+        if getattr(entity, "type", "") == "bot_command" and int(getattr(entity, "offset", 0) or 0) == 0:
+            return True
+
+    return False
+
+
 def is_countable_message(update: Update) -> bool:
     msg = update.effective_message
     if not msg or not update.effective_user or update.effective_user.is_bot:
         return False
+
     if update.effective_chat.type not in ("group", "supergroup"):
         return False
-    return bool(msg.text or msg.caption)
+
+    # Do not count any command message.
+    if is_command_message(msg):
+        return False
+
+    # Count real group activity.
+    return bool(
+        msg.text
+        or msg.caption
+        or msg.sticker
+        or msg.photo
+        or msg.animation      # GIF
+        or msg.voice
+        or msg.video
+        or msg.video_note
+        or msg.document
+        or msg.audio
+    )
 
 
 def needs_pre_spawn_captcha(rarity: str | None) -> bool:
@@ -360,4 +405,4 @@ async def send_spawn_card(context: ContextTypes.DEFAULT_TYPE, chat_id: int, chat
 
 def register_drop_handlers(app: Application) -> None:
     app.add_handler(CallbackQueryHandler(pre_spawn_captcha_callback, pattern=r"^precap:-?\d+:[0-9a-f]+:\d+$"))
-    app.add_handler(MessageHandler(filters.ChatType.GROUPS & (filters.TEXT | filters.CAPTION), drop_listener))
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS, drop_listener))
