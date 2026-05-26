@@ -22,11 +22,11 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'cancelled': 'ᴄᴀɴᴄᴇʟʟᴇᴅ.',
         'failed': 'ꜰᴀɪʟᴇᴅ.',
         'unknown': 'ᴜɴᴋɴᴏᴡɴ',
-        'hmode_button_default': '🦖 ᴅᴇꜰᴀᴜʟᴛ',
-        'hmode_button_detailed': '🦕 ᴅᴇᴛᴀɪʟᴇᴅ',
-        'hmode_button_reset': '🔄 ʀᴇꜱᴇᴛ',
-        'hmode_intro': 'ʏᴏᴜ ᴄᴀɴ ᴄʜᴀɴɢᴇ ʏᴏᴜʀ ʜᴀʀᴇᴍ ɪɴᴛᴇʀꜰᴀᴄᴇ ᴜꜱɪɴɢ ᴛʜᴇꜱᴇ ʙᴜᴛᴛᴏɴꜱ',
-        'hmode_set': '✅ ʜᴀʀᴇᴍ ᴠɪᴇᴡ ꜱᴇᴛ ᴛᴏ {mode}.',
+        'hmode_button_default': '📘 𝐒𝐎𝐑𝐓 𝐁𝐘 𝐀𝐍𝐈𝐌𝐄',
+        'hmode_button_detailed': '💮 𝐒𝐎𝐑𝐓 𝐁𝐘 𝐑𝐀𝐑𝐈𝐓𝐘',
+        'hmode_button_reset': '🚮 𝐂𝐋𝐎𝐒𝐄',
+        'hmode_intro': '❄️ <b>𝐂𝐚𝐧 𝐂𝐡𝐨𝐨𝐬𝐞 𝐇𝐨𝐰 𝐓𝐨 𝐒𝐨𝐫𝐭 𝐘𝐨𝐮𝐫 𝐇𝐚𝐫𝐞𝐦:</b>',
+        'hmode_set': '✅ ʜᴀʀᴇᴍ ꜱᴏʀᴛ ᴍᴏᴅᴇ ꜱᴇᴛ ᴛᴏ {mode}.',
         'check_usage': 'ᴜꜱᴀɢᴇ: /check <card id>',
         'check_not_found': '❌ ᴄʜᴀʀᴀᴄᴛᴇʀ ɪᴅ {card_id} ɴᴏᴛ ꜰᴏᴜɴᴅ.',
         'card_check_header': '<b>𝐎𝐰𝐎! 𝐂𝐡𝐞𝐜𝐤 𝐨𝐮𝐭 𝐭𝐡𝐢𝐬 𝐜𝐡𝐚𝐫𝐚𝐜𝐭𝐞𝐫!</b>',
@@ -240,4 +240,17 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
                         'ɪᴅ: <b>{card_id}</b>\n'
                         'ᴀɴɪᴍᴇ: <b>{anime}</b>\n'
                         'ǫᴛʏ: <b>1</b>',
-        'harem_inline_button': '💠 ʜᴀʀᴇᴍ'}}
+        'harem_inline_button': '⛩ 𝐂𝐇𝐀𝐑𝐀𝐂𝐓𝐄𝐑𝐒',
+        'hmode_choose_sort': '❄️ <b>𝐂𝐚𝐧 𝐂𝐡𝐨𝐨𝐬𝐞 𝐇𝐨𝐰 𝐓𝐨 𝐒𝐨𝐫𝐭 𝐘𝐨𝐮𝐫 𝐇𝐚𝐫𝐞𝐦:</b>',
+        'hmode_sort_by_rarity': '💮 𝐒𝐎𝐑𝐓 𝐁𝐘 𝐑𝐀𝐑𝐈𝐓𝐘',
+        'hmode_sort_by_anime': '📘 𝐒𝐎𝐑𝐓 𝐁𝐘 𝐀𝐍𝐈𝐌𝐄',
+        'hmode_close': '🚮 𝐂𝐋𝐎𝐒𝐄',
+        'hmode_back': '⬅️ 𝐁𝐀𝐂𝐊',
+        'hmode_choose_rarity': '❄️ <b>𝐂𝐇𝐎𝐎𝐒𝐄 𝐘𝐎𝐔𝐑 𝐏𝐑𝐄𝐅𝐅𝐄𝐑𝐄𝐃 𝐑𝐀𝐑𝐈𝐓𝐘</b>',
+        'hmode_rarity_button': '{emoji} 𝐑𝐀𝐑𝐈𝐓𝐘: {rarity}',
+        'hmode_set_anime': '✅ ʜᴀʀᴇᴍ ꜱᴏʀᴛ ᴍᴏᴅᴇ ꜱᴇᴛ ᴛᴏ <b>𝐀𝐍𝐈𝐌𝐄</b>.\n\nᴜꜱᴇ /harem ᴛᴏ ᴠɪᴇᴡ ʏᴏᴜʀ ᴄᴀʀᴅꜱ.',
+        'hmode_set_rarity': '✅ ʜᴀʀᴇᴍ ꜱᴏʀᴛ ᴍᴏᴅᴇ ꜱᴇᴛ ᴛᴏ {emoji} <b>{rarity}</b>.\n\nᴜꜱᴇ /harem ᴛᴏ ᴠɪᴇᴡ ᴏɴʟʏ ᴛʜɪꜱ ʀᴀʀɪᴛʏ.',
+        'harem_summary_anime': '🎴 ᴛᴏᴛᴀʟ ᴄᴀʀᴅꜱ: {total_cards} | 📚 ᴛᴏᴛᴀʟ ꜱᴇʀɪᴇꜱ: {total_series} | 📘 ᴍᴏᴅᴇ: 𝐀𝐍𝐈𝐌𝐄',
+        'harem_summary_rarity': '{emoji} ʀᴀʀɪᴛʏ: <b>{rarity}</b> | 🎴 ꜱʜᴏᴡɪɴɢ: {shown_cards}/{total_cards} | 📚 ꜱᴇʀɪᴇꜱ: '
+                                '{total_series}',
+        'harem_no_rarity_cards': '❌ ʏᴏᴜ ᴅᴏ ɴᴏᴛ ʜᴀᴠᴇ {emoji} <b>{rarity}</b> ᴄᴀʀᴅꜱ ʏᴇᴛ.'}}
