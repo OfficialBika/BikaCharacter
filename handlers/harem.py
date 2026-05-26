@@ -82,11 +82,19 @@ def harem_keyboard(user_id: int, page: int, total_pages: int) -> InlineKeyboardM
     prev_page = page - 1 if page > 1 else total_pages
     next_page = page + 1 if page < total_pages else 1
     return InlineKeyboardMarkup(
-        [[
-            InlineKeyboardButton(t("harem_button_back"), callback_data=f"harem:{user_id}:{prev_page}"),
-            InlineKeyboardButton(f"💠 {page}/{total_pages}", callback_data="noop"),
-            InlineKeyboardButton(t("harem_button_next"), callback_data=f"harem:{user_id}:{next_page}"),
-        ]]
+        [
+            [
+                InlineKeyboardButton(t("harem_button_back"), callback_data=f"harem:{user_id}:{prev_page}"),
+                InlineKeyboardButton(f"💠 {page}/{total_pages}", callback_data="noop"),
+                InlineKeyboardButton(t("harem_button_next"), callback_data=f"harem:{user_id}:{next_page}"),
+            ],
+            [
+                InlineKeyboardButton(
+                    t("harem_inline_button"),
+                    switch_inline_query_current_chat=f"harem:{user_id}",
+                )
+            ],
+        ]
     )
 
 
