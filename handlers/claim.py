@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 import secrets
 from datetime import datetime, timezone, timedelta
 
 from pymongo import ReturnDocument
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram.ext import Application, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
-from config import CLAIM_CAPTCHA_SECONDS, CLAIM_DAILY_LIMIT, CLAIM_PREFIX_MIN_LENGTH
+from config import BOT_USERNAME, CLAIM_CAPTCHA_SECONDS, CLAIM_DAILY_LIMIT, CLAIM_PREFIX_MIN_LENGTH
 from database.mongodb import get_db
 from utils.cooldown import should_ignore_update
 from utils.claim_stats import get_daily_claim_count, log_claim_event, release_daily_claim, reserve_daily_claim, yangon_date_key
@@ -240,17 +241,68 @@ async def reply_already_caught(update: Update, active: dict) -> None:
     await update.message.reply_html(t("already_caught", caught_by=caught_by_html(active)))
 
 
+def extract_bika_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str | None:
+    """
+    Support both:
+      /bika name
+      /bika@BikaCharacterBot name
+
+    Return None only when the command is for another bot or is not a /bika command.
+    """
+    msg = update.effective_message
+    text = (msg.text or "").strip() if msg else ""
+
+    # CommandHandler fills context.args, but MessageHandler usually does not.
+    if context.args:
+        return " ".join(context.args).strip()
+
+    match = re.match(
+        r"^/bika(?:@([A-Za-z0-9_]{5,32}))?(?:\s+(.+))?$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    mentioned_bot = (match.group(1) or "").strip().lower()
+    guess = (match.group(2) or "").strip()
+
+    allowed_bot_names = {
+        str(BOT_USERNAME or "").replace("@", "").strip().lower(),
+        "bikacharacterbot",
+    }
+    allowed_bot_names.discard("")
+
+    if mentioned_bot and allowed_bot_names and mentioned_bot not in allowed_bot_names:
+        return None
+
+    return guess
+
+
 async def reply_wrong_character_name(update: Update, active: dict, guess_raw: str = "") -> None:
     drop_message_id = int(active.get("messageId", 0) or 0)
     drop_link = build_drop_message_link(update.effective_chat, drop_message_id)
-    arrow = f'<a href="{drop_link}">⬆️</a>' if drop_link else "⬆️"
+
+    arrow = (
+        f'<a href="{drop_link}">🔺ᴄʜᴀʀᴀᴄᴛᴇʀ</a>'
+        if drop_link
+        else "🔺ᴄʜᴀʀᴀᴄᴛᴇʀ"
+    )
 
     if str(guess_raw or "").strip():
         text = t("wrong_name", guess=escape_html(str(guess_raw).lower()), arrow=arrow)
     else:
         text = t("wrong_name_empty", arrow=arrow)
 
-    await update.message.reply_html(text)
+    # Backward compatibility:
+    # Some lang.py versions use "{arrow} ᴄʜᴀʀᴀᴄᴛᴇʀ ...".
+    # Since arrow now already includes "🔺ᴄʜᴀʀᴀᴄᴛᴇʀ", remove the duplicated word if present.
+    text = text.replace(f"{arrow} ᴄʜᴀʀᴀᴄᴛᴇʀ", arrow, 1)
+
+    await update.message.reply_html(
+        text,
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
 
 
 async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -259,7 +311,9 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if await should_ignore_update(update):
         return
 
-    guess_raw = " ".join(context.args).strip()
+    guess_raw = extract_bika_guess(update, context)
+    if guess_raw is None:
+        return
 
     await ensure_user(update.effective_user)
     group = await ensure_group(update.effective_chat)
@@ -470,5 +524,10 @@ async def captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 def register_claim_handlers(app: Application) -> None:
-    app.add_handler(CommandHandler("bika", bika_claim_cmd))
+    app.add_handler(
+        MessageHandler(
+            filters.Regex(r"^/bika(?:@[A-Za-z0-9_]{5,32})?(?:\s|$)"),
+            bika_claim_cmd,
+        )
+    )
     app.add_handler(CallbackQueryHandler(captcha_callback, pattern=r"^cap:-?\d+:\d+:[0-9a-f]+:\d+$"))
