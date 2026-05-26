@@ -17,6 +17,13 @@ from utils.text import escape_html
 from utils.i18n import t
 
 
+def _card_id_sort_value(card: dict) -> tuple[int, int | str]:
+    card_id = str(card.get("cardId", ""))
+    if card_id.isdigit():
+        return (0, int(card_id))
+    return (1, card_id)
+
+
 def group_cards_by_anime(cards: list[dict]) -> list[tuple[str, list[dict]]]:
     grouped = defaultdict(list)
     for card in cards:
@@ -24,10 +31,25 @@ def group_cards_by_anime(cards: list[dict]) -> list[tuple[str, list[dict]]]:
     return sorted(grouped.items(), key=lambda item: item[0].lower())
 
 
-def choose_cover(user_doc: dict) -> dict | None:
+def get_harem_cards_for_view(user_doc: dict) -> tuple[list[dict], str, str]:
     cards = list(user_doc.get("cards", []))
+    sort_mode = str(user_doc.get("haremSort") or user_doc.get("haremView") or "anime").lower()
+    rarity = str(user_doc.get("haremRarity") or "").strip()
+
+    if sort_mode == "rarity" and rarity:
+        filtered = [card for card in cards if str(card.get("rarity", "")).lower() == rarity.lower()]
+        return filtered, "rarity", rarity
+
+    return cards, "anime", ""
+
+
+def choose_cover(user_doc: dict, view_cards: list[dict] | None = None) -> dict | None:
+    cards = list(view_cards if view_cards is not None else user_doc.get("cards", []))
+    if not cards:
+        cards = list(user_doc.get("cards", []))
     if not cards:
         return None
+
     fav_id = str(user_doc.get("favoriteCardId", ""))
     if fav_id:
         fav = next((c for c in cards if str(c.get("cardId")) == fav_id), None)
@@ -36,46 +58,64 @@ def choose_cover(user_doc: dict) -> dict | None:
     return random.choice(cards)
 
 
-def build_harem_caption(user_doc: dict, page: int = 1) -> tuple[str, int, int]:
-    cards = list(user_doc.get("cards", []))
-    grouped = group_cards_by_anime(cards)
+def build_harem_caption(user_doc: dict, page: int = 1) -> tuple[str, int, int, list[dict]]:
+    all_cards = list(user_doc.get("cards", []))
+    view_cards, sort_mode, selected_rarity = get_harem_cards_for_view(user_doc)
+    grouped = group_cards_by_anime(view_cards)
     total_pages = max(1, math.ceil(len(grouped) / HAREM_PAGE_SIZE))
     page = max(1, min(page, total_pages))
     current = grouped[(page - 1) * HAREM_PAGE_SIZE : page * HAREM_PAGE_SIZE]
-    view = user_doc.get("haremView", "default")
 
     header_name = " ".join([user_doc.get("firstName", ""), user_doc.get("lastName", "")]).strip() or user_doc.get("username") or f"User {user_doc.get('userId')}"
-    total_cards = sum(int(c.get("count", 0)) for c in cards)
-    fav = next((c for c in cards if str(c.get("cardId")) == str(user_doc.get("favoriteCardId", ""))), None)
+    total_cards = sum(int(c.get("count", 0)) for c in all_cards)
+    shown_total = sum(int(c.get("count", 0)) for c in view_cards)
+    fav = next((c for c in all_cards if str(c.get("cardId")) == str(user_doc.get("favoriteCardId", ""))), None)
 
     lines = [
         t("harem_header", name=escape_html(header_name), page=page, total_pages=total_pages),
-        t("harem_summary", total_cards=total_cards, total_series=len(grouped), mode=escape_html(view.upper())),
     ]
+
+    if sort_mode == "rarity" and selected_rarity:
+        lines.append(
+            t(
+                "harem_summary_rarity",
+                emoji=get_rarity_emoji(selected_rarity),
+                rarity=escape_html(selected_rarity),
+                shown_cards=shown_total,
+                total_cards=total_cards,
+                total_series=len(grouped),
+            )
+        )
+    else:
+        lines.append(
+            t(
+                "harem_summary_anime",
+                total_cards=total_cards,
+                total_series=len(grouped),
+            )
+        )
+
     if fav:
         lines.append(t("harem_favourite", name=escape_html(fav.get("name")), card_id=escape_html(fav.get("cardId"))))
     lines.append("")
 
     if not current:
-        lines.append(t("harem_no_cards"))
+        if sort_mode == "rarity" and selected_rarity:
+            lines.append(t("harem_no_rarity_cards", emoji=get_rarity_emoji(selected_rarity), rarity=escape_html(selected_rarity)))
+        else:
+            lines.append(t("harem_no_cards"))
     else:
         for anime, anime_cards in current:
             unique_count = len(anime_cards)
             total_count = sum(int(c.get("count", 0)) for c in anime_cards)
             lines.append(f"⚜️ <b>{escape_html(anime)}</b> ({unique_count}/{total_count})")
-            lines.append("────────────")
-            for card in sorted(anime_cards, key=lambda c: str(c.get("cardId", ""))):
+            lines.append("────────────────────")
+            for card in sorted(anime_cards, key=_card_id_sort_value):
                 emoji = get_rarity_emoji(card.get("rarity"))
-                suffix = f" × {int(card.get('count', 1))}" if int(card.get("count", 1)) > 1 else ""
-                if view == "detailed":
-                    lines.append(
-                        f"🍀 {escape_html(card.get('cardId'))} | {emoji} {escape_html(card.get('rarity'))} | "
-                        f"{escape_html(card.get('name'))}{suffix}"
-                    )
-                else:
-                    lines.append(f"🍀 {escape_html(card.get('cardId'))} | {emoji} | {escape_html(card.get('name'))}{suffix}")
+                suffix = f" (x{int(card.get('count', 1))})"
+                lines.append(f"🍀 <b>{escape_html(card.get('cardId'))}</b> | {emoji} | {escape_html(card.get('name'))}{suffix}")
             lines.append("")
-    return "\n".join(lines).strip(), page, total_pages
+    return "\n".join(lines).strip(), page, total_pages, view_cards
 
 
 def harem_keyboard(user_id: int, page: int, total_pages: int) -> InlineKeyboardMarkup:
@@ -107,9 +147,16 @@ async def send_harem(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
             await update.effective_message.reply_text(t("harem_no_cards_user"))
         return
 
-    cover = choose_cover(user_doc)
-    caption, safe_page, total_pages = build_harem_caption(user_doc, page)
+    caption, safe_page, total_pages, view_cards = build_harem_caption(user_doc, page)
+    cover = choose_cover(user_doc, view_cards)
     keyboard = harem_keyboard(user_id, safe_page, total_pages)
+
+    if not cover:
+        if edit and update.callback_query:
+            await update.callback_query.answer(t("harem_no_cards_alert"), show_alert=True)
+        else:
+            await update.effective_message.reply_text(t("harem_no_cards_user"))
+        return
 
     if edit and update.callback_query:
         query = update.callback_query
