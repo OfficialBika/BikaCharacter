@@ -25,21 +25,30 @@ PRE_SPAWN_CAPTCHA_RARITIES = {"Divine", "CrossVerse", "Cataphract", "Supreme"}
 
 
 def is_command_message(msg) -> bool:
-    """Return True for any bot command message/caption.
+    """Return True for bot commands that must not be counted.
 
-    Examples excluded from drop counter:
+    Excluded from drop counter:
       /start
       /bika Yelan
       /bika@BikaCharacterBot Yelan
       /harem
       /check 1
-      any other /command
+      .gift 1001
+      .harem
     """
     text = (getattr(msg, "text", None) or "").strip()
     caption = (getattr(msg, "caption", None) or "").strip()
+    content = text or caption
 
-    if text.startswith("/") or caption.startswith("/"):
+    # Slash commands.
+    if content.startswith("/"):
         return True
+
+    # Dot commands used by this bot, e.g. .gift / .harem.
+    if content.startswith("."):
+        first_word = content.split(maxsplit=1)[0].lower()
+        if first_word in {".gift", ".harem", ".fav", ".check", ".bika", ".profile"}:
+            return True
 
     entities = list(getattr(msg, "entities", None) or [])
     caption_entities = list(getattr(msg, "caption_entities", None) or [])
@@ -63,7 +72,18 @@ def is_countable_message(update: Update) -> bool:
     if is_command_message(msg):
         return False
 
-    # Count real group activity.
+    # Forward detection:
+    # PTB v20+ uses forward_origin. Older compatibility fields are included
+    # so forwarded media/text from other bots/channels still counts.
+    is_forward = bool(
+        getattr(msg, "forward_origin", None)
+        or getattr(msg, "forward_date", None)
+        or getattr(msg, "forward_from", None)
+        or getattr(msg, "forward_from_chat", None)
+        or getattr(msg, "forward_sender_name", None)
+    )
+
+    # Count real group activity, including media-only forwarded messages.
     return bool(
         msg.text
         or msg.caption
@@ -75,6 +95,12 @@ def is_countable_message(update: Update) -> bool:
         or msg.video_note
         or msg.document
         or msg.audio
+        or msg.poll
+        or msg.dice
+        or msg.contact
+        or msg.location
+        or msg.venue
+        or is_forward
     )
 
 
@@ -405,4 +431,13 @@ async def send_spawn_card(context: ContextTypes.DEFAULT_TYPE, chat_id: int, chat
 
 def register_drop_handlers(app: Application) -> None:
     app.add_handler(CallbackQueryHandler(pre_spawn_captcha_callback, pattern=r"^precap:-?\d+:[0-9a-f]+:\d+$"))
-    app.add_handler(MessageHandler(filters.ChatType.GROUPS, drop_listener))
+
+    # Listen to every normal group message so forwarded photo/video/gif/sticker
+    # without captions can also reach drop_listener().
+    # Service/status updates are ignored, and commands are excluded in is_countable_message().
+    app.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL,
+            drop_listener,
+        )
+    )
