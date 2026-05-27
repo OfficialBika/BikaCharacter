@@ -24,84 +24,38 @@ from utils.i18n import t
 PRE_SPAWN_CAPTCHA_RARITIES = {"Divine", "CrossVerse", "Cataphract", "Supreme"}
 
 
-def is_command_message(msg) -> bool:
-    """Return True for bot commands that must not be counted.
-
-    Excluded from drop counter:
-      /start
-      /bika Yelan
-      /bika@BikaCharacterBot Yelan
-      /harem
-      /check 1
-      .gift 1001
-      .harem
-    """
-    text = (getattr(msg, "text", None) or "").strip()
-    caption = (getattr(msg, "caption", None) or "").strip()
-    content = text or caption
-
-    # Slash commands.
-    if content.startswith("/"):
-        return True
-
-    # Dot commands used by this bot, e.g. .gift / .harem.
-    if content.startswith("."):
-        first_word = content.split(maxsplit=1)[0].lower()
-        if first_word in {".gift", ".harem", ".fav", ".check", ".bika", ".profile"}:
-            return True
-
-    entities = list(getattr(msg, "entities", None) or [])
-    caption_entities = list(getattr(msg, "caption_entities", None) or [])
-
-    for entity in entities + caption_entities:
-        if getattr(entity, "type", "") == "bot_command" and int(getattr(entity, "offset", 0) or 0) == 0:
-            return True
-
-    return False
-
-
 def is_countable_message(update: Update) -> bool:
+    """Count every real group message as activity.
+
+    Counted:
+      - text / emoji
+      - commands such as /bika, /harem, .gift
+      - stickers
+      - photo / video / GIF / voice / audio / document
+      - media with or without captions
+      - forwarded messages and forwarded media
+
+    Not counted:
+      - service/status updates like member joined, pinned message, etc.
+      - messages sent by bots
+      - non-group chats
+    """
     msg = update.effective_message
-    if not msg or not update.effective_user or update.effective_user.is_bot:
+    chat = update.effective_chat
+
+    if not msg or not chat:
         return False
 
-    if update.effective_chat.type not in ("group", "supergroup"):
+    if chat.type not in ("group", "supergroup"):
         return False
 
-    # Do not count any command message.
-    if is_command_message(msg):
+    # Avoid bot messages causing loops / fake activity.
+    if update.effective_user and update.effective_user.is_bot:
         return False
 
-    # Forward detection:
-    # PTB v20+ uses forward_origin. Older compatibility fields are included
-    # so forwarded media/text from other bots/channels still counts.
-    is_forward = bool(
-        getattr(msg, "forward_origin", None)
-        or getattr(msg, "forward_date", None)
-        or getattr(msg, "forward_from", None)
-        or getattr(msg, "forward_from_chat", None)
-        or getattr(msg, "forward_sender_name", None)
-    )
-
-    # Count real group activity, including media-only forwarded messages.
-    return bool(
-        msg.text
-        or msg.caption
-        or msg.sticker
-        or msg.photo
-        or msg.animation      # GIF
-        or msg.voice
-        or msg.video
-        or msg.video_note
-        or msg.document
-        or msg.audio
-        or msg.poll
-        or msg.dice
-        or msg.contact
-        or msg.location
-        or msg.venue
-        or is_forward
-    )
+    # MessageHandler already excludes service/status updates, so every remaining
+    # group message is counted.
+    return True
 
 
 def needs_pre_spawn_captcha(rarity: str | None) -> bool:
@@ -142,7 +96,7 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     chat = update.effective_chat
     user = update.effective_user
-    await ensure_user(user)
+
     group = await ensure_group(chat)
     if not group:
         return
@@ -154,15 +108,21 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # until it is solved, failed, or timed out.
         return
 
-    if await is_bot_muted(chat.id, user.id):
-        return
+    # If Telegram gives us a real user, apply bot-mute / 6-message streak logic.
+    # Forwarded media still has the forwarding user as effective_user and will be counted.
+    # Rare sender-chat/no-user messages are counted, but mute logic is skipped safely.
+    if user:
+        await ensure_user(user)
 
-    just_muted = await record_message_and_maybe_mute(update)
-    if just_muted:
-        await update.effective_message.reply_text(
-            t("bot_muted", name=user.first_name, minutes=BOT_MUTE_SECONDS // 60)
-        )
-        return
+        if await is_bot_muted(chat.id, user.id):
+            return
+
+        just_muted = await record_message_and_maybe_mute(update)
+        if just_muted:
+            await update.effective_message.reply_text(
+                t("bot_muted", name=user.first_name, minutes=BOT_MUTE_SECONDS // 60)
+            )
+            return
 
     db = get_db()
     updated = await db.groups.find_one_and_update(
@@ -432,12 +392,10 @@ async def send_spawn_card(context: ContextTypes.DEFAULT_TYPE, chat_id: int, chat
 def register_drop_handlers(app: Application) -> None:
     app.add_handler(CallbackQueryHandler(pre_spawn_captcha_callback, pattern=r"^precap:-?\d+:[0-9a-f]+:\d+$"))
 
-    # Listen to every normal group message so forwarded photo/video/gif/sticker
-    # without captions can also reach drop_listener().
-    # Service/status updates are ignored, and commands are excluded in is_countable_message().
+    # Register in group=1 so this counter still runs after command handlers
+    # such as /bika, /harem, /check, .gift handlers in group=0.
+    # It catches every normal group message type; is_countable_message() filters only bots/non-groups.
     app.add_handler(
-        MessageHandler(
-            filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL,
-            drop_listener,
-        )
+        MessageHandler(filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL, drop_listener),
+        group=1,
     )
