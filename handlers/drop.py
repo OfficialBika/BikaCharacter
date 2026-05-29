@@ -102,85 +102,81 @@ def make_pre_spawn_captcha() -> dict:
 
 
 def render_pre_spawn_captcha_image(code: str) -> InputFile:
-    """Render a 4-digit captcha image similar to the sample.
-
-    Requires Pillow. Add `Pillow>=10.0.0` to requirements.txt.
-    """
+    """Render a simple 4-segment captcha image."""
     try:
         from PIL import Image, ImageDraw, ImageFont
     except Exception as exc:
-        raise RuntimeError("Pillow is required for image captcha. Add Pillow>=10.0.0 to requirements.txt") from exc
+        raise RuntimeError("Pillow is required for image captcha. Install with: pip install Pillow") from exc
 
     width, height = 980, 320
     image = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(image)
 
-    # Light background noise dots.
-    for _ in range(230):
+    # Background noise dots.
+    for _ in range(220):
         x = random.randint(0, width - 1)
         y = random.randint(0, height - 1)
-        gray = random.randint(155, 225)
+        gray = random.randint(160, 225)
         draw.ellipse((x, y, x + 2, y + 2), fill=(gray, gray, gray))
 
+    # Try repo font first, fallback to Render system fonts.
     font = None
+    try:
+        font = ImageFont.truetype(str(CAPTCHA_FONT_PATH), 36)
+    except Exception:
+        for font_path in (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+        ):
+            try:
+                font = ImageFont.truetype(font_path, 36)
+                break
+            except Exception:
+                pass
 
-try:
-    font = ImageFont.truetype(str(CAPTCHA_FONT_PATH), 36)
-except Exception:
-    for font_path in (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
-    ):
-        try:
-            font = ImageFont.truetype(font_path, 36)
-            break
-        except Exception:
-            pass
-
-if font is None:
-    font = ImageFont.load_default()
+    if font is None:
+        font = ImageFont.load_default()
 
     segment_colors = [
-        (150, 20, 50),    # red
-        (180, 135, 40),   # gold
-        (105, 160, 25),   # green
-        (40, 175, 175),   # cyan
+        (150, 20, 50),
+        (180, 135, 40),
+        (100, 155, 20),
+        (40, 180, 175),
     ]
 
     xs = [120, 350, 590, 830]
-    for idx, digit in enumerate(str(code)[:4]):
+    for idx, digit in enumerate(code):
         color = segment_colors[idx % len(segment_colors)]
         x = xs[idx]
         line_type = random.choice(["vertical", "slant_down", "slant_up", "flat"])
 
         if line_type == "vertical":
-            x1, y1 = x, random.randint(35, 65)
-            x2, y2 = x + random.randint(-20, 20), random.randint(220, 280)
+            x1, y1 = x, random.randint(35, 60)
+            x2, y2 = x + random.randint(-18, 18), random.randint(220, 275)
         elif line_type == "slant_down":
-            x1, y1 = x - 75, random.randint(55, 115)
-            x2, y2 = x + 75, random.randint(200, 265)
+            x1, y1 = x - 70, random.randint(55, 110)
+            x2, y2 = x + 70, random.randint(200, 260)
         elif line_type == "slant_up":
-            x1, y1 = x - 75, random.randint(185, 255)
-            x2, y2 = x + 75, random.randint(55, 120)
+            x1, y1 = x - 70, random.randint(180, 250)
+            x2, y2 = x + 70, random.randint(55, 115)
         else:
-            x1, y1 = x - 85, random.randint(200, 260)
-            x2, y2 = x + 85, y1 + random.randint(-12, 12)
+            x1, y1 = x - 80, random.randint(200, 255)
+            x2, y2 = x + 80, y1 + random.randint(-10, 10)
 
-        steps = 18
         points = []
+        steps = 18
         for s in range(steps + 1):
             tval = s / steps
             px = int(x1 + (x2 - x1) * tval + random.randint(-2, 2))
             py = int(y1 + (y2 - y1) * tval + random.randint(-2, 2))
             points.append((px, py))
+
         draw.line(points, fill=color, width=5)
 
-        # Digit label near each line segment.
-        label_x = min(max(int((x1 + x2) / 2) + random.randint(-26, 26), 25), width - 60)
-        label_y = min(max(int((y1 + y2) / 2) + random.randint(-20, 20), 20), height - 58)
-        draw.text((label_x + 2, label_y + 2), digit, fill=(215, 215, 215), font=font)
+        label_x = min(max(int((x1 + x2) / 2) + random.randint(-25, 25), 25), width - 60)
+        label_y = min(max(int((y1 + y2) / 2) + random.randint(-18, 18), 20), height - 55)
         draw.text((label_x, label_y), digit, fill=(90, 90, 90), font=font)
 
     bio = io.BytesIO()
