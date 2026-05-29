@@ -5,6 +5,7 @@ import io
 import random
 import secrets
 from datetime import timedelta
+from pathlib import Path
 
 from pymongo import ReturnDocument
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
@@ -120,18 +121,24 @@ def render_pre_spawn_captcha_image(code: str) -> InputFile:
         draw.ellipse((x, y, x + 2, y + 2), fill=(gray, gray, gray))
 
     font = None
+
+try:
+    font = ImageFont.truetype(str(CAPTCHA_FONT_PATH), 36)
+except Exception:
     for font_path in (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
     ):
         try:
-            font = ImageFont.truetype(font_path, 38)
+            font = ImageFont.truetype(font_path, 36)
             break
         except Exception:
             pass
-    if font is None:
-        font = ImageFont.load_default()
+
+if font is None:
+    font = ImageFont.load_default()
 
     segment_colors = [
         (150, 20, 50),    # red
@@ -196,7 +203,6 @@ def pre_spawn_caption(scheduled_rarity: str, group_name: str, seconds: int) -> s
     emoji = get_rarity_emoji(scheduled_rarity)
     return (
         f"🧩 <b>𝐇𝐈𝐆𝐇 𝐑𝐀𝐑𝐈𝐓𝐘 𝐂𝐀𝐏𝐓𝐂𝐇𝐀</b>\n\n"
-        f"{emoji} <b>{escape_html(scheduled_rarity)}</b> ᴄᴀʀᴅ ɪꜱ ᴛʀʏɪɴɢ ᴛᴏ ꜱᴘᴀᴡɴ ɪɴ <b>{escape_html(group_name)}</b>.\n\n"
         f"🔢 ᴛᴀᴘ ᴛʜᴇ <b>4-ᴅɪɢɪᴛ ᴄᴏᴅᴇ</b> ꜱʜᴏᴡɴ ɪɴ ᴛʜᴇ ɪᴍᴀɢᴇ.\n"
         f"⏳ ᴛɪᴍᴇ: <b>{int(seconds)}𝐬</b>\n\n"
         f"✅ ᴄᴏʀʀᴇᴄᴛ = ᴄʜᴀʀᴀᴄᴛᴇʀ ᴡɪʟʟ ꜱᴘᴀᴡɴ.\n"
