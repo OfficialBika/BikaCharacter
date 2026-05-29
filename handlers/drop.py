@@ -21,6 +21,8 @@ from utils.permissions import is_owner
 from utils.text import escape_html, safe_chat_title, utcnow
 from utils.i18n import t
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+CAPTCHA_FONT_PATH = BASE_DIR / "assets" / "fonts" / "DejaVuSans.ttf"
 # For these rarity milestones, captcha appears BEFORE the card/photo spawns.
 # If solved correctly within CLAIM_CAPTCHA_SECONDS, then the card spawns normally.
 # If a wrong button is pressed or timeout happens, that scheduled drop is lost.
