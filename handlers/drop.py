@@ -108,7 +108,7 @@ def render_pre_spawn_captcha_image(code: str) -> InputFile:
     except Exception as exc:
         raise RuntimeError("Pillow is required for image captcha. Install with: pip install Pillow") from exc
 
-    width, height = 980, 320
+    width, height = 1536, 768
     image = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(image)
 
@@ -146,7 +146,7 @@ def render_pre_spawn_captcha_image(code: str) -> InputFile:
         (40, 180, 175),
     ]
 
-    xs = [120, 350, 590, 830]
+    xs = [220, 560, 980, 1320]
     for idx, digit in enumerate(code):
         color = segment_colors[idx % len(segment_colors)]
         x = xs[idx]
