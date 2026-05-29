@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import random
 import secrets
 from datetime import timedelta
 
 from pymongo import ReturnDocument
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from config import BOT_MUTE_SECONDS, CLAIM_CAPTCHA_SECONDS, DEFAULT_CHANGETIME
 from database.mongodb import get_db
 from utils.cooldown import is_bot_muted, record_message_and_maybe_mute
-from utils.db_helpers import ensure_group, ensure_user, get_drop_photo_for_rarity
+from utils.db_helpers import ensure_group, ensure_user, get_drop_photo_for_rarity, get_photo_by_card_id
 from utils.rarity import get_rarity_emoji, get_scheduled_drop_rarity
+from utils.permissions import is_owner
 from utils.text import escape_html, safe_chat_title, utcnow
 from utils.i18n import t
 
@@ -62,32 +64,144 @@ def needs_pre_spawn_captcha(rarity: str | None) -> bool:
     return str(rarity or "") in PRE_SPAWN_CAPTCHA_RARITIES
 
 
+def _random_4digit_code() -> str:
+    return "".join(str(random.randint(0, 9)) for _ in range(4))
+
+
 def make_pre_spawn_captcha() -> dict:
-    """Create a captcha with one correct answer and four wrong answers."""
-    a = random.randint(3, 19)
-    b = random.randint(2, 17)
-    correct = a + b
-    wrongs: set[int] = set()
-    while len(wrongs) < 4:
-        value = correct + random.choice([-10, -8, -6, -4, -3, -2, 2, 3, 4, 5, 7, 9, 11])
-        if value > 0 and value != correct:
-            wrongs.add(value)
-    options = list(wrongs) + [correct]
+    """Create a 4-digit image captcha with 1 correct button + 3 wrong buttons."""
+    correct_code = _random_4digit_code()
+    wrong_codes: set[str] = set()
+
+    while len(wrong_codes) < 3:
+        candidate = list(correct_code)
+        # Make wrong options visually close but not identical.
+        changes = random.randint(1, 2)
+        positions = random.sample(range(4), changes)
+        for pos in positions:
+            new_digit = str(random.randint(0, 9))
+            while new_digit == candidate[pos]:
+                new_digit = str(random.randint(0, 9))
+            candidate[pos] = new_digit
+        wrong = "".join(candidate)
+        if wrong != correct_code:
+            wrong_codes.add(wrong)
+
+    options = list(wrong_codes) + [correct_code]
     random.shuffle(options)
+
     return {
-        "question": f"{a} + {b} = ?",
-        "answerIndex": options.index(correct),
+        "code": correct_code,
+        "answerIndex": options.index(correct_code),
         "options": options,
         "nonce": secrets.token_hex(4),
     }
 
 
-def pre_spawn_keyboard(chat_id: int, nonce: str, options: list[int]) -> InlineKeyboardMarkup:
+def render_pre_spawn_captcha_image(code: str) -> InputFile:
+    """Render a 4-digit captcha image similar to the sample.
+
+    Requires Pillow. Add `Pillow>=10.0.0` to requirements.txt.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except Exception as exc:
+        raise RuntimeError("Pillow is required for image captcha. Add Pillow>=10.0.0 to requirements.txt") from exc
+
+    width, height = 980, 320
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+
+    # Light background noise dots.
+    for _ in range(230):
+        x = random.randint(0, width - 1)
+        y = random.randint(0, height - 1)
+        gray = random.randint(155, 225)
+        draw.ellipse((x, y, x + 2, y + 2), fill=(gray, gray, gray))
+
+    font = None
+    for font_path in (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    ):
+        try:
+            font = ImageFont.truetype(font_path, 38)
+            break
+        except Exception:
+            pass
+    if font is None:
+        font = ImageFont.load_default()
+
+    segment_colors = [
+        (150, 20, 50),    # red
+        (180, 135, 40),   # gold
+        (105, 160, 25),   # green
+        (40, 175, 175),   # cyan
+    ]
+
+    xs = [120, 350, 590, 830]
+    for idx, digit in enumerate(str(code)[:4]):
+        color = segment_colors[idx % len(segment_colors)]
+        x = xs[idx]
+        line_type = random.choice(["vertical", "slant_down", "slant_up", "flat"])
+
+        if line_type == "vertical":
+            x1, y1 = x, random.randint(35, 65)
+            x2, y2 = x + random.randint(-20, 20), random.randint(220, 280)
+        elif line_type == "slant_down":
+            x1, y1 = x - 75, random.randint(55, 115)
+            x2, y2 = x + 75, random.randint(200, 265)
+        elif line_type == "slant_up":
+            x1, y1 = x - 75, random.randint(185, 255)
+            x2, y2 = x + 75, random.randint(55, 120)
+        else:
+            x1, y1 = x - 85, random.randint(200, 260)
+            x2, y2 = x + 85, y1 + random.randint(-12, 12)
+
+        steps = 18
+        points = []
+        for s in range(steps + 1):
+            tval = s / steps
+            px = int(x1 + (x2 - x1) * tval + random.randint(-2, 2))
+            py = int(y1 + (y2 - y1) * tval + random.randint(-2, 2))
+            points.append((px, py))
+        draw.line(points, fill=color, width=5)
+
+        # Digit label near each line segment.
+        label_x = min(max(int((x1 + x2) / 2) + random.randint(-26, 26), 25), width - 60)
+        label_y = min(max(int((y1 + y2) / 2) + random.randint(-20, 20), 20), height - 58)
+        draw.text((label_x + 2, label_y + 2), digit, fill=(215, 215, 215), font=font)
+        draw.text((label_x, label_y), digit, fill=(90, 90, 90), font=font)
+
+    bio = io.BytesIO()
+    bio.name = "bika_captcha.png"
+    image.save(bio, format="PNG")
+    bio.seek(0)
+    return InputFile(bio, filename="bika_captcha.png")
+
+
+def pre_spawn_keyboard(chat_id: int, nonce: str, options: list[str]) -> InlineKeyboardMarkup:
     buttons = [
         InlineKeyboardButton(str(value), callback_data=f"precap:{chat_id}:{nonce}:{idx}")
-        for idx, value in enumerate(options)
+        for idx, value in enumerate(options[:4])
     ]
-    return InlineKeyboardMarkup([buttons[:3], buttons[3:]])
+    return InlineKeyboardMarkup([
+        buttons[:2],
+        buttons[2:],
+    ])
+
+
+def pre_spawn_caption(scheduled_rarity: str, group_name: str, seconds: int) -> str:
+    emoji = get_rarity_emoji(scheduled_rarity)
+    return (
+        f"🧩 <b>𝐇𝐈𝐆𝐇 𝐑𝐀𝐑𝐈𝐓𝐘 𝐂𝐀𝐏𝐓𝐂𝐇𝐀</b>\n\n"
+        f"{emoji} <b>{escape_html(scheduled_rarity)}</b> ᴄᴀʀᴅ ɪꜱ ᴛʀʏɪɴɢ ᴛᴏ ꜱᴘᴀᴡɴ ɪɴ <b>{escape_html(group_name)}</b>.\n\n"
+        f"🔢 ᴛᴀᴘ ᴛʜᴇ <b>4-ᴅɪɢɪᴛ ᴄᴏᴅᴇ</b> ꜱʜᴏᴡɴ ɪɴ ᴛʜᴇ ɪᴍᴀɢᴇ.\n"
+        f"⏳ ᴛɪᴍᴇ: <b>{int(seconds)}𝐬</b>\n\n"
+        f"✅ ᴄᴏʀʀᴇᴄᴛ = ᴄʜᴀʀᴀᴄᴛᴇʀ ᴡɪʟʟ ꜱᴘᴀᴡɴ.\n"
+        f"❌ ᴡʀᴏɴɢ / ᴛɪᴍᴇᴏᴜᴛ = ᴛʜɪꜱ ᴅʀᴏᴘ ᴡɪʟʟ ʙᴇ ʟᴏꜱᴛ."
+    )
 
 
 async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -163,17 +277,20 @@ async def send_pre_spawn_captcha(update: Update, context: ContextTypes.DEFAULT_T
     captcha = make_pre_spawn_captcha()
     expires_at = utcnow() + timedelta(seconds=CLAIM_CAPTCHA_SECONDS)
 
-    text = t(
-        "pre_spawn_captcha",
-        emoji=get_rarity_emoji(scheduled_rarity),
-        rarity=escape_html(scheduled_rarity),
-        group_name=escape_html(safe_chat_title(chat)),
-        seconds=CLAIM_CAPTCHA_SECONDS,
-        question=escape_html(captcha["question"]),
-    )
+    try:
+        captcha_photo = render_pre_spawn_captcha_image(captcha["code"])
+    except Exception as exc:
+        await update.effective_message.reply_text(f"❌ Failed to generate captcha image: {exc}")
+        await get_db().groups.update_one(
+            {"groupId": int(chat.id)},
+            {"$set": {"activeDrop": None, "updatedAt": utcnow()}},
+        )
+        return
 
-    sent = await update.effective_message.reply_html(
-        text,
+    sent = await update.effective_message.reply_photo(
+        photo=captcha_photo,
+        caption=pre_spawn_caption(scheduled_rarity, safe_chat_title(chat), CLAIM_CAPTCHA_SECONDS),
+        parse_mode=ParseMode.HTML,
         reply_markup=pre_spawn_keyboard(int(chat.id), captcha["nonce"], captcha["options"]),
     )
 
@@ -198,7 +315,7 @@ async def send_pre_spawn_captcha(update: Update, context: ContextTypes.DEFAULT_T
                     "preSpawnCaptcha": {
                         "status": "pending",
                         "nonce": captcha["nonce"],
-                        "question": captcha["question"],
+                        "code": captcha["code"],
                         "answerIndex": int(captcha["answerIndex"]),
                         "options": captcha["options"],
                         "createdAt": utcnow(),
@@ -213,6 +330,78 @@ async def send_pre_spawn_captcha(update: Update, context: ContextTypes.DEFAULT_T
     )
     context.application.create_task(
         pre_spawn_timeout_task(context.bot, int(chat.id), captcha["nonce"], int(CLAIM_CAPTCHA_SECONDS))
+    )
+
+
+async def send_manual_pre_spawn_captcha(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    chat,
+    photo: dict,
+    drop_number: int = 0,
+) -> None:
+    """Send the normal pre-spawn captcha for a specific owner-forced card."""
+    scheduled_rarity = str(photo.get("rarity", "Common"))
+    captcha = make_pre_spawn_captcha()
+    expires_at = utcnow() + timedelta(seconds=CLAIM_CAPTCHA_SECONDS)
+
+    try:
+        captcha_photo = render_pre_spawn_captcha_image(captcha["code"])
+    except Exception as exc:
+        await context.bot.send_message(chat_id=int(chat_id), text=f"❌ Failed to generate captcha image: {exc}")
+        await get_db().groups.update_one(
+            {"groupId": int(chat_id)},
+            {"$set": {"activeDrop": None, "updatedAt": utcnow()}},
+            upsert=True,
+        )
+        return
+
+    sent = await context.bot.send_photo(
+        chat_id=int(chat_id),
+        photo=captcha_photo,
+        caption=pre_spawn_caption(scheduled_rarity, safe_chat_title(chat) if chat else str(chat_id), CLAIM_CAPTCHA_SECONDS),
+        parse_mode=ParseMode.HTML,
+        reply_markup=pre_spawn_keyboard(int(chat_id), captcha["nonce"], captcha["options"]),
+    )
+
+    await get_db().groups.update_one(
+        {"groupId": int(chat_id)},
+        {
+            "$set": {
+                "activeDrop": {
+                    "cardId": str(photo.get("cardId", "")),
+                    "name": str(photo.get("name", "")),
+                    "normalizedName": str(photo.get("normalizedName", "")),
+                    "rarity": scheduled_rarity,
+                    "anime": str(photo.get("anime", "")),
+                    "fileId": str(photo.get("fileId", "")),
+                    "messageId": 0,
+                    "dropNumber": int(drop_number),
+                    "scheduledRarity": scheduled_rarity,
+                    "manualDrop": True,
+                    "isClaimed": False,
+                    "claimedByUserId": 0,
+                    "claimedByName": "",
+                    "droppedAt": None,
+                    "preSpawnCaptcha": {
+                        "status": "pending",
+                        "nonce": captcha["nonce"],
+                        "code": captcha["code"],
+                        "answerIndex": int(captcha["answerIndex"]),
+                        "options": captcha["options"],
+                        "createdAt": utcnow(),
+                        "expiresAt": expires_at,
+                        "seconds": int(CLAIM_CAPTCHA_SECONDS),
+                        "messageId": int(sent.message_id),
+                    },
+                },
+                "updatedAt": utcnow(),
+            }
+        },
+        upsert=True,
+    )
+    context.application.create_task(
+        pre_spawn_timeout_task(context.bot, int(chat_id), captcha["nonce"], int(CLAIM_CAPTCHA_SECONDS))
     )
 
 
@@ -244,6 +433,33 @@ async def clear_lost_pre_spawn(chat_id: int, nonce: str) -> None:
         )
 
 
+async def _edit_pre_spawn_result(bot, chat_id: int, message_id: int, text: str, parse_mode: str | None = ParseMode.HTML) -> None:
+    if not message_id:
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+        return
+    try:
+        await bot.edit_message_caption(
+            chat_id=chat_id,
+            message_id=message_id,
+            caption=text,
+            parse_mode=parse_mode,
+            reply_markup=None,
+        )
+        return
+    except Exception:
+        pass
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            parse_mode=parse_mode,
+            reply_markup=None,
+        )
+    except Exception:
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+
+
 async def pre_spawn_timeout_task(bot, chat_id: int, nonce: str, seconds: int) -> None:
     await asyncio.sleep(max(1, int(seconds)))
     latest = await get_db().groups.find_one({"groupId": int(chat_id), "activeDrop.preSpawnCaptcha.nonce": str(nonce)})
@@ -259,15 +475,9 @@ async def pre_spawn_timeout_task(bot, chat_id: int, nonce: str, seconds: int) ->
     message_id = int(pre_cap.get("messageId", 0) or 0)
     text = t("pre_spawn_timeout")
     try:
-        if message_id:
-            await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode=ParseMode.HTML)
-        else:
-            await bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
+        await _edit_pre_spawn_result(bot, chat_id, message_id, text, ParseMode.HTML)
     except Exception:
-        try:
-            await bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
-        except Exception:
-            pass
+        pass
     await clear_lost_pre_spawn(chat_id, nonce)
 
 
@@ -296,12 +506,20 @@ async def pre_spawn_captcha_callback(update: Update, context: ContextTypes.DEFAU
     if choice_index != correct_index:
         await mark_pre_spawn_lost(chat_id, nonce, "failed")
         try:
-            await query.edit_message_text(
-                t("pre_spawn_wrong"),
+            await query.edit_message_caption(
+                caption=t("pre_spawn_wrong"),
                 parse_mode=ParseMode.HTML,
+                reply_markup=None,
             )
         except Exception:
-            pass
+            try:
+                await query.edit_message_text(
+                    t("pre_spawn_wrong"),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=None,
+                )
+            except Exception:
+                pass
         await query.answer(t("pre_spawn_wrong_alert"), show_alert=True)
         await clear_lost_pre_spawn(chat_id, nonce)
         return
@@ -333,21 +551,46 @@ async def pre_spawn_captcha_callback(update: Update, context: ContextTypes.DEFAU
         return
 
     try:
-        await query.edit_message_text(
-            t("pre_spawn_solved"),
+        await query.edit_message_caption(
+            caption=t("pre_spawn_solved"),
             parse_mode=ParseMode.HTML,
+            reply_markup=None,
         )
     except Exception:
-        pass
+        try:
+            await query.edit_message_text(
+                t("pre_spawn_solved"),
+                parse_mode=ParseMode.HTML,
+                reply_markup=None,
+            )
+        except Exception:
+            pass
     await query.answer(t("solved"))
 
     # Use the callback chat when available; otherwise send by chat_id only.
     chat = query.message.chat if query.message else None
-    await send_spawn_card(context, int(chat_id), chat, scheduled_rarity, drop_number)
+    forced_photo = None
+    if active.get("manualDrop") and active.get("cardId"):
+        forced_photo = {
+            "cardId": str(active.get("cardId", "")),
+            "name": str(active.get("name", "")),
+            "normalizedName": str(active.get("normalizedName", "")),
+            "rarity": str(active.get("rarity", scheduled_rarity)),
+            "anime": str(active.get("anime", "")),
+            "fileId": str(active.get("fileId", "")),
+        }
+    await send_spawn_card(context, int(chat_id), chat, scheduled_rarity, drop_number, forced_photo=forced_photo)
 
 
-async def send_spawn_card(context: ContextTypes.DEFAULT_TYPE, chat_id: int, chat, scheduled_rarity: str, drop_number: int) -> None:
-    photo = await get_drop_photo_for_rarity(scheduled_rarity)
+async def send_spawn_card(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    chat,
+    scheduled_rarity: str,
+    drop_number: int,
+    forced_photo: dict | None = None,
+) -> None:
+    photo = forced_photo or await get_drop_photo_for_rarity(scheduled_rarity)
     if not photo:
         await get_db().groups.update_one(
             {"groupId": int(chat_id)},
@@ -389,7 +632,66 @@ async def send_spawn_card(context: ContextTypes.DEFAULT_TYPE, chat_id: int, chat
     )
 
 
+async def owner_drop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only manual drop: /drop <card_id> <chat_id>."""
+    if not update.effective_user or not is_owner(update.effective_user.id):
+        return
+
+    msg = update.effective_message
+    if len(context.args) < 2:
+        await msg.reply_text("Usage: /drop <card_id> <chat_id>\nExample: /drop 131 -1001234567890")
+        return
+
+    card_id = str(context.args[0]).strip()
+    chat_id_raw = str(context.args[1]).strip()
+
+    try:
+        target_chat_id = int(chat_id_raw)
+    except ValueError:
+        await msg.reply_text("❌ Invalid chat_id. Example: -1001234567890")
+        return
+
+    photo = await get_photo_by_card_id(card_id)
+    if not photo:
+        await msg.reply_text(f"❌ Card ID {card_id} not found.")
+        return
+
+    try:
+        target_chat = await context.bot.get_chat(target_chat_id)
+    except Exception as exc:
+        await msg.reply_text(f"❌ Cannot access target chat: {exc}")
+        return
+
+    if target_chat.type not in ("group", "supergroup"):
+        await msg.reply_text("❌ Target chat must be a group or supergroup.")
+        return
+
+    group = await ensure_group(target_chat)
+    active = (group or {}).get("activeDrop") or {}
+    pre_cap = active.get("preSpawnCaptcha") or {}
+    if pre_cap.get("status") == "pending":
+        await msg.reply_text("❌ Target group already has a pending captcha.")
+        return
+    if active and active.get("cardId") and not active.get("isClaimed"):
+        await msg.reply_text("❌ Target group already has an active unclaimed drop.")
+        return
+
+    rarity = str(photo.get("rarity", "Common"))
+    if needs_pre_spawn_captcha(rarity):
+        await send_manual_pre_spawn_captcha(context, target_chat_id, target_chat, photo, drop_number=0)
+        await msg.reply_text(
+            f"✅ Manual drop captcha sent.\nCard ID: {card_id}\nRarity: {rarity}\nChat ID: {target_chat_id}"
+        )
+        return
+
+    await send_spawn_card(context, target_chat_id, target_chat, rarity, drop_number=0, forced_photo=photo)
+    await msg.reply_text(
+        f"✅ Manual drop spawned.\nCard ID: {card_id}\nRarity: {rarity}\nChat ID: {target_chat_id}"
+    )
+
+
 def register_drop_handlers(app: Application) -> None:
+    app.add_handler(CommandHandler("drop", owner_drop_cmd))
     app.add_handler(CallbackQueryHandler(pre_spawn_captcha_callback, pattern=r"^precap:-?\d+:[0-9a-f]+:\d+$"))
 
     # Register in group=1 so this counter still runs after command handlers
