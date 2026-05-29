@@ -102,87 +102,181 @@ def make_pre_spawn_captcha() -> dict:
 
 
 def render_pre_spawn_captcha_image(code: str) -> InputFile:
-    """Render a simple 4-segment captcha image."""
+    """Render a 4-digit noisy captcha image."""
     try:
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw, ImageFont, ImageFilter
     except Exception as exc:
         raise RuntimeError("Pillow is required for image captcha. Install with: pip install Pillow") from exc
 
-    width, height = 1536, 768
-    image = Image.new("RGB", (width, height), "white")
+    def load_captcha_font(size: int):
+        font = None
+
+        try:
+            font = ImageFont.truetype(str(CAPTCHA_FONT_PATH), size)
+        except Exception:
+            for font_path in (
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+                "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+            ):
+                try:
+                    font = ImageFont.truetype(font_path, size)
+                    break
+                except Exception:
+                    pass
+
+        if font is None:
+            font = ImageFont.load_default()
+
+        return font
+
+    def draw_rotated_digit(base_img, digit: str, center_pos: tuple[float, float], font, angle: int) -> None:
+        digit_layer = Image.new("RGBA", (180, 180), (255, 255, 255, 0))
+        digit_draw = ImageDraw.Draw(digit_layer)
+
+        bbox = digit_draw.textbbox((0, 0), digit, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+
+        x = (180 - text_w) // 2
+        y = (180 - text_h) // 2
+
+        # Shadow + main digit. ဒါကြောင့် နည်းနည်းရူပ်ပြီးလည်း ဖတ်လို့ရမယ်။
+        digit_draw.text((x + 2, y + 2), digit, font=font, fill=(180, 180, 180, 130))
+        digit_draw.text((x, y), digit, font=font, fill=(70, 70, 70, 235))
+
+        digit_layer = digit_layer.rotate(
+            angle,
+            expand=True,
+            resample=Image.Resampling.BICUBIC,
+        )
+
+        px = int(center_pos[0] - digit_layer.width / 2)
+        py = int(center_pos[1] - digit_layer.height / 2)
+
+        base_img.paste(digit_layer, (px, py), digit_layer)
+
+    width, height = 1280, 640
+    image = Image.new("RGB", (width, height), (248, 248, 248))
     draw = ImageDraw.Draw(image)
 
-    # Background noise dots.
-    for _ in range(220):
+    font = load_captcha_font(58)
+
+    # Background noise dots
+    for _ in range(650):
         x = random.randint(0, width - 1)
         y = random.randint(0, height - 1)
-        gray = random.randint(160, 225)
-        draw.ellipse((x, y, x + 2, y + 2), fill=(gray, gray, gray))
+        shade = random.randint(145, 225)
+        if random.random() < 0.75:
+            draw.point((x, y), fill=(shade, shade, shade))
+        else:
+            draw.ellipse((x, y, x + 2, y + 2), fill=(shade, shade, shade))
 
-    # Try repo font first, fallback to Render system fonts.
-    font = None
-    try:
-        font = ImageFont.truetype(str(CAPTCHA_FONT_PATH), 36)
-    except Exception:
-        for font_path in (
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
-        ):
-            try:
-                font = ImageFont.truetype(font_path, 36)
-                break
-            except Exception:
-                pass
-
-    if font is None:
-        font = ImageFont.load_default()
-
-    segment_colors = [
-        (150, 20, 50),
-        (180, 135, 40),
-        (100, 155, 20),
-        (40, 180, 175),
+    line_colors = [
+        (145, 20, 60),
+        (175, 130, 25),
+        (90, 150, 35),
+        (35, 175, 170),
+        (80, 80, 80),
+        (170, 60, 135),
     ]
 
-    xs = [220, 560, 980, 1320]
-    for idx, digit in enumerate(code):
-        color = segment_colors[idx % len(segment_colors)]
-        x = xs[idx]
-        line_type = random.choice(["vertical", "slant_down", "slant_up", "flat"])
+    xs = [180, 460, 820, 1100]
+
+    for idx, digit in enumerate(str(code)[:4]):
+        cx = xs[idx]
+
+        # အရင်လိုအပေါ်မတက်စေဘဲ image အလယ်ပိုင်းနားမှာထားမယ်
+        cy = random.randint(220, 390)
+
+        line_type = random.choice(["vertical", "horizontal", "diag_up", "diag_down"])
 
         if line_type == "vertical":
-            x1, y1 = x, random.randint(35, 60)
-            x2, y2 = x + random.randint(-18, 18), random.randint(220, 275)
-        elif line_type == "slant_down":
-            x1, y1 = x - 70, random.randint(55, 110)
-            x2, y2 = x + 70, random.randint(200, 260)
-        elif line_type == "slant_up":
-            x1, y1 = x - 70, random.randint(180, 250)
-            x2, y2 = x + 70, random.randint(55, 115)
-        else:
-            x1, y1 = x - 80, random.randint(200, 255)
-            x2, y2 = x + 80, y1 + random.randint(-10, 10)
+            x1 = cx + random.randint(-28, 28)
+            y1 = cy - random.randint(95, 145)
+            x2 = x1 + random.randint(-14, 14)
+            y2 = cy + random.randint(95, 145)
+            text_angle = random.randint(-14, 14)
 
+        elif line_type == "horizontal":
+            x1 = cx - random.randint(105, 155)
+            y1 = cy + random.randint(-24, 24)
+            x2 = cx + random.randint(105, 155)
+            y2 = y1 + random.randint(-15, 15)
+            text_angle = random.randint(-10, 10)
+
+        elif line_type == "diag_up":
+            x1 = cx - random.randint(80, 125)
+            y1 = cy + random.randint(70, 115)
+            x2 = cx + random.randint(80, 125)
+            y2 = cy - random.randint(70, 115)
+            text_angle = random.randint(-38, -15)
+
+        else:
+            x1 = cx - random.randint(80, 125)
+            y1 = cy - random.randint(70, 115)
+            x2 = cx + random.randint(80, 125)
+            y2 = cy + random.randint(70, 115)
+            text_angle = random.randint(15, 38)
+
+        color = random.choice(line_colors)
+
+        # Jagged line
         points = []
-        steps = 18
+        steps = 26
         for s in range(steps + 1):
-            tval = s / steps
-            px = int(x1 + (x2 - x1) * tval + random.randint(-2, 2))
-            py = int(y1 + (y2 - y1) * tval + random.randint(-2, 2))
+            ratio = s / steps
+            px = int(x1 + (x2 - x1) * ratio + random.randint(-3, 3))
+            py = int(y1 + (y2 - y1) * ratio + random.randint(-3, 3))
             points.append((px, py))
 
-        draw.line(points, fill=color, width=5)
+        draw.line(points, fill=color, width=random.randint(4, 6))
 
-        label_x = min(max(int((x1 + x2) / 2) + random.randint(-25, 25), 25), width - 60)
-        label_y = min(max(int((y1 + y2) / 2) + random.randint(-18, 18), 20), height - 55)
-        draw.text((label_x, label_y), digit, fill=(90, 90, 90), font=font)
+        # Line center နားမှာ digit ထားမယ်
+        mx = (x1 + x2) / 2
+        my = (y1 + y2) / 2
+
+        digit_x = mx + random.randint(-12, 12)
+        digit_y = my + random.randint(-12, 12)
+
+        draw_rotated_digit(
+            image,
+            digit,
+            (digit_x, digit_y),
+            font,
+            text_angle + random.randint(-8, 8),
+        )
+
+    # Extra clutter lines
+    for _ in range(24):
+        x1 = random.randint(0, width)
+        y1 = random.randint(0, height)
+        x2 = x1 + random.randint(-140, 140)
+        y2 = y1 + random.randint(-100, 100)
+
+        shade = random.randint(165, 225)
+        draw.line(
+            (x1, y1, x2, y2),
+            fill=(shade, shade, shade),
+            width=random.choice([1, 1, 2]),
+        )
+
+    # Extra small decoy dots after digits
+    for _ in range(420):
+        x = random.randint(0, width - 1)
+        y = random.randint(0, height - 1)
+        shade = random.randint(135, 220)
+        draw.point((x, y), fill=(shade, shade, shade))
+
+    # Slight blur so text/lines don't look too clean
+    image = image.filter(ImageFilter.GaussianBlur(radius=0.35))
 
     bio = io.BytesIO()
     bio.name = "bika_captcha.png"
     image.save(bio, format="PNG")
     bio.seek(0)
+
     return InputFile(bio, filename="bika_captcha.png")
 
 
