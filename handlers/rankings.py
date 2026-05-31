@@ -105,29 +105,71 @@ async def gtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def todaygtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await should_ignore_update(update):
         return
+
     today = yangon_date_key()
+    daily_limit = int(CLAIM_DAILY_LIMIT)
+
     rows = await get_db().claim_logs.aggregate(
         [
             {"$match": {"yangonDate": today}},
+
+            
+            {"$sort": {"createdAt": 1}},
+
             {
                 "$group": {
                     "_id": "$userId",
                     "count": {"$sum": 1},
+                    "claimTimes": {"$push": "$createdAt"},
                     "username": {"$last": "$username"},
                     "firstName": {"$last": "$firstName"},
                     "lastName": {"$last": "$lastName"},
                 }
             },
-            {"$sort": {"count": -1, "firstName": 1}},
+
+        
+            {
+                "$addFields": {
+                    "limitReached": {"$gte": ["$count", daily_limit]},
+                    "limitReachedAt": {
+                        "$cond": [
+                            {"$gte": ["$count", daily_limit]},
+                            {"$arrayElemAt": ["$claimTimes", daily_limit - 1]},
+                            None,
+                        ]
+                    },
+                    "lastClaimAt": {"$arrayElemAt": ["$claimTimes", -1]},
+                }
+            },
+
+            {
+                "$sort": {
+                    "limitReached": -1,
+                    "limitReachedAt": 1,
+                    "count": -1,
+                    "lastClaimAt": 1,
+                    "firstName": 1,
+                }
+            },
+
             {"$limit": 10},
         ]
     ).to_list(10)
 
     if not rows:
-        await update.effective_message.reply_text(t("rank_no_today", date=today, timezone=CLAIM_TIMEZONE))
+        await update.effective_message.reply_text(
+            t("rank_no_today", date=today, timezone=CLAIM_TIMEZONE)
+        )
         return
 
-    lines = [t("rank_today_header"), t("rank_today_date", date=escape_html(today), timezone=escape_html(CLAIM_TIMEZONE)), "", t("rank_today_subtitle"), ""]
+    lines = [
+        t("rank_today_header"),
+        t("rank_today_date", date=escape_html(today), timezone=escape_html(CLAIM_TIMEZONE)),
+        "",
+        t("rank_today_subtitle"),
+        "",
+    ]
+
     for i, row in enumerate(rows, start=1):
         user_doc = {
             "userId": int(row.get("_id", 0) or 0),
@@ -135,8 +177,20 @@ async def todaygtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "firstName": row.get("firstName", ""),
             "lastName": row.get("lastName", ""),
         }
-        lines.append(t("rank_today_row", rank=_rank_emoji(i), user=mention_user_doc(user_doc), count=int(row.get("count", 0) or 0)))
-    await update.effective_message.reply_html("\n".join(lines), disable_web_page_preview=True)
+
+        lines.append(
+            t(
+                "rank_today_row",
+                rank=_rank_emoji(i),
+                user=mention_user_doc(user_doc),
+                count=int(row.get("count", 0) or 0),
+            )
+        )
+
+    await update.effective_message.reply_html(
+        "\n".join(lines),
+        disable_web_page_preview=True,
+    )
 
 
 async def mylimit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
