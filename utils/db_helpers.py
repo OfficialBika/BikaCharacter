@@ -235,22 +235,82 @@ async def global_card_stats(card_id: str) -> dict:
         {"userId": 1, "username": 1, "firstName": 1, "lastName": 1, "cards": 1},
     ).to_list(500)
 
+    def _time_sort_value(value) -> float:
+        try:
+            return float(value.timestamp())
+        except Exception:
+            # Users without claim history are placed after users with known reached-time.
+            return 4102444800.0
+
     total_owned = 0
     catchers = []
+    user_ids: list[int] = []
+
     for user in users:
         card = next((c for c in user.get("cards", []) if str(c.get("cardId")) == str(card_id)), None)
         if not card:
             continue
-        count = int(card.get("count", 0))
+
+        count = int(card.get("count", 0) or 0)
         total_owned += count
+
+        user_id = int(user.get("userId", 0) or 0)
+        user_ids.append(user_id)
+
         catchers.append({
-            "userId": user.get("userId"),
+            "userId": user_id,
             "username": user.get("username", ""),
             "firstName": user.get("firstName", ""),
             "lastName": user.get("lastName", ""),
             "count": count,
+            "reachedCountAt": None,
         })
-    catchers.sort(key=lambda x: (-int(x.get("count", 0)), str(x.get("firstName", ""))))
+
+    if user_ids:
+        log_rows = await db.claim_logs.aggregate(
+            [
+                {
+                    "$match": {
+                        "cardId": str(card_id),
+                        "userId": {"$in": user_ids},
+                    }
+                },
+                {"$sort": {"createdAt": 1}},
+                {
+                    "$group": {
+                        "_id": "$userId",
+                        "claimTimes": {"$push": "$createdAt"},
+                    }
+                },
+            ]
+        ).to_list(None)
+
+        claim_times_by_user = {
+            int(row.get("_id", 0) or 0): list(row.get("claimTimes", []))
+            for row in log_rows
+        }
+
+        for catcher in catchers:
+            user_id = int(catcher.get("userId", 0) or 0)
+            count = int(catcher.get("count", 0) or 0)
+            times = claim_times_by_user.get(user_id, [])
+
+            # For equal card counts, keep the one who reached that count first on top.
+            # Gifts/admin give may not have claim logs, so use the last known claim time as fallback.
+            if times and len(times) >= count:
+                catcher["reachedCountAt"] = times[count - 1]
+            elif times:
+                catcher["reachedCountAt"] = times[-1]
+            else:
+                catcher["reachedCountAt"] = None
+
+    catchers.sort(
+        key=lambda x: (
+            -int(x.get("count", 0) or 0),
+            _time_sort_value(x.get("reachedCountAt")),
+            str(x.get("firstName", "")).lower(),
+        )
+    )
     return {"totalOwned": total_owned, "topCatchers": catchers[:10]}
 
 
