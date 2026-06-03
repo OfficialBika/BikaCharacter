@@ -4,7 +4,7 @@ import math
 import random
 from collections import defaultdict
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaAnimation, InputMediaDocument, InputMediaPhoto, InputMediaVideo, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from config import HAREM_PAGE_SIZE
@@ -21,6 +21,78 @@ from utils.i18n import t
 MAX_HAREM_CAPTION_CHARS = 900
 MAX_CARD_ROWS_PER_PAGE = 12
 MAX_ANIME_GROUPS_PER_PAGE = max(1, int(HAREM_PAGE_SIZE or 5))
+
+MEDIA_FIELDS = ("fileId", "fileUniqueId", "mediaType", "mimeType", "fileName")
+
+
+def _media_type(card: dict) -> str:
+    media_type = str(card.get("mediaType") or "photo").strip().lower()
+    mime_type = str(card.get("mimeType") or "").strip().lower()
+    if not media_type or media_type == "photo":
+        if mime_type.startswith("video/"):
+            return "video"
+        if mime_type == "image/gif":
+            return "animation"
+    return media_type or "photo"
+
+
+async def hydrate_user_card_media(user_doc: dict) -> dict:
+    """Merge latest media fields from photos collection into user's card snapshots.
+
+    This keeps old claimed video cards working even if their user.cards snapshot
+    was saved before mediaType support existed. It does not modify the database.
+    """
+    cards = [dict(card) for card in user_doc.get("cards", [])]
+    card_ids = [str(card.get("cardId", "")).strip() for card in cards if str(card.get("cardId", "")).strip()]
+    if not card_ids:
+        updated = dict(user_doc)
+        updated["cards"] = cards
+        return updated
+
+    docs = await get_db().photos.find(
+        {"cardId": {"$in": card_ids}},
+        {"cardId": 1, "fileId": 1, "fileUniqueId": 1, "mediaType": 1, "mimeType": 1, "fileName": 1},
+    ).to_list(None)
+    by_card_id = {str(doc.get("cardId", "")): doc for doc in docs}
+
+    for card in cards:
+        doc = by_card_id.get(str(card.get("cardId", "")))
+        if not doc:
+            card.setdefault("mediaType", "photo")
+            continue
+        for field in MEDIA_FIELDS:
+            value = doc.get(field)
+            if value not in (None, ""):
+                card[field] = value
+        card.setdefault("mediaType", "photo")
+
+    updated = dict(user_doc)
+    updated["cards"] = cards
+    return updated
+
+
+def _input_media_for_card(card: dict, caption: str):
+    media_type = _media_type(card)
+    file_id = card["fileId"]
+    if media_type == "video":
+        return InputMediaVideo(media=file_id, caption=caption, parse_mode="HTML")
+    if media_type == "animation":
+        return InputMediaAnimation(media=file_id, caption=caption, parse_mode="HTML")
+    if media_type == "document":
+        return InputMediaDocument(media=file_id, caption=caption, parse_mode="HTML")
+    return InputMediaPhoto(media=file_id, caption=caption, parse_mode="HTML")
+
+
+async def _reply_card_media(message, card: dict, caption: str, reply_markup=None):
+    media_type = _media_type(card)
+    file_id = card["fileId"]
+    if media_type == "video":
+        return await message.reply_video(file_id, caption=caption, parse_mode="HTML", reply_markup=reply_markup)
+    if media_type == "animation":
+        return await message.reply_animation(file_id, caption=caption, parse_mode="HTML", reply_markup=reply_markup)
+    if media_type == "document":
+        return await message.reply_document(file_id, caption=caption, parse_mode="HTML", reply_markup=reply_markup)
+    return await message.reply_photo(file_id, caption=caption, parse_mode="HTML", reply_markup=reply_markup)
 
 
 def _card_id_sort_value(card: dict) -> tuple[int, int | str]:
@@ -290,6 +362,7 @@ async def send_harem(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
             await update.effective_message.reply_text(t("harem_no_cards_user"))
         return
 
+    user_doc = await hydrate_user_card_media(user_doc)
     caption, safe_page, total_pages, view_cards = await build_harem_caption(user_doc, page)
     cover = choose_cover(user_doc, view_cards)
     keyboard = harem_keyboard(user_id, safe_page, total_pages)
@@ -305,7 +378,7 @@ async def send_harem(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
         query = update.callback_query
         try:
             await query.edit_message_media(
-                InputMediaPhoto(media=cover["fileId"], caption=caption, parse_mode="HTML"),
+                _input_media_for_card(cover, caption),
                 reply_markup=keyboard,
             )
         except Exception:
@@ -318,9 +391,9 @@ async def send_harem(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
         return
 
     try:
-        await update.effective_message.reply_photo(cover["fileId"], caption=caption, parse_mode="HTML", reply_markup=keyboard)
+        await _reply_card_media(update.effective_message, cover, caption, reply_markup=keyboard)
     except Exception as exc:
-        print("HAREM SEND PHOTO ERROR:", repr(exc))
+        print("HAREM SEND MEDIA ERROR:", repr(exc))
         await update.effective_message.reply_text(caption, parse_mode="HTML", reply_markup=keyboard)
 
 

@@ -10,6 +10,48 @@ from utils.rarity import get_rarity_emoji
 from utils.text import escape_html, utcnow
 from utils.i18n import t
 
+MEDIA_FIELDS = ("fileId", "fileUniqueId", "mediaType", "mimeType", "fileName")
+
+
+def _media_type(card: dict) -> str:
+    media_type = str(card.get("mediaType") or "photo").strip().lower()
+    mime_type = str(card.get("mimeType") or "").strip().lower()
+    if not media_type or media_type == "photo":
+        if mime_type.startswith("video/"):
+            return "video"
+        if mime_type == "image/gif":
+            return "animation"
+    return media_type or "photo"
+
+
+async def _hydrate_card_media(card: dict | None) -> dict | None:
+    if not card:
+        return None
+    card = dict(card)
+    doc = await get_db().photos.find_one(
+        {"cardId": str(card.get("cardId", ""))},
+        {"fileId": 1, "fileUniqueId": 1, "mediaType": 1, "mimeType": 1, "fileName": 1},
+    )
+    if doc:
+        for field in MEDIA_FIELDS:
+            value = doc.get(field)
+            if value not in (None, ""):
+                card[field] = value
+    card.setdefault("mediaType", "photo")
+    return card
+
+
+async def _reply_card_media(message, card: dict, caption: str, reply_markup=None):
+    media_type = _media_type(card)
+    file_id = card["fileId"]
+    if media_type == "video":
+        return await message.reply_video(file_id, caption=caption, reply_markup=reply_markup)
+    if media_type == "animation":
+        return await message.reply_animation(file_id, caption=caption, reply_markup=reply_markup)
+    if media_type == "document":
+        return await message.reply_document(file_id, caption=caption, reply_markup=reply_markup)
+    return await message.reply_photo(file_id, caption=caption, reply_markup=reply_markup)
+
 
 async def fav_with_args(update: Update, context: ContextTypes.DEFAULT_TYPE, args: list[str]) -> None:
     if await should_ignore_update(update):
@@ -18,17 +60,20 @@ async def fav_with_args(update: Update, context: ContextTypes.DEFAULT_TYPE, args
     if not args:
         fav_id = str(user_doc.get("favoriteCardId", ""))
         card = next((c for c in user_doc.get("cards", []) if str(c.get("cardId")) == fav_id), None)
+        card = await _hydrate_card_media(card)
         if not card:
             await update.message.reply_text(t("fav_not_set"))
             return
-        await update.message.reply_photo(
-            card["fileId"],
+        await _reply_card_media(
+            update.message,
+            card,
             caption=t("fav_current_caption", emoji=get_rarity_emoji(card.get("rarity")), name=card.get("name"), card_id=card.get("cardId"), anime=card.get("anime")),
         )
         return
 
     card_id = str(args[0]).strip()
     card = next((c for c in user_doc.get("cards", []) if str(c.get("cardId")) == card_id), None)
+    card = await _hydrate_card_media(card)
     if not card:
         await update.message.reply_text(t("fav_missing_collection"))
         return
@@ -38,8 +83,9 @@ async def fav_with_args(update: Update, context: ContextTypes.DEFAULT_TYPE, args
             InlineKeyboardButton(t("fav_button_no"), callback_data=f"fav_no:{update.effective_user.id}"),
         ]]
     )
-    await update.message.reply_photo(
-        card["fileId"],
+    await _reply_card_media(
+        update.message,
+        card,
         caption=t("fav_confirm", name=card.get("name"), anime=card.get("anime")),
         reply_markup=keyboard,
     )

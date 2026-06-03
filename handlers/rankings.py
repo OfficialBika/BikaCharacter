@@ -28,16 +28,17 @@ def _rank_emoji(index: int) -> str:
         return "🥉"
     return f"{index}."
 
+
 def _time_sort_value(value) -> float:
     try:
         return float(value.timestamp())
     except Exception:
-        # Users without claim history are placed after users with known reached-time.
         return 4102444800.0
 
 
 def _name_sort_value(row: dict) -> str:
     return str(row.get("firstName") or row.get("username") or "").lower()
+
 
 async def topgroup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await should_ignore_update(update):
@@ -73,7 +74,7 @@ async def gtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     db = get_db()
 
-    # Collect more than 10 candidates, then apply time tie-break using claim_logs.createdAt.
+    # Fetch more than 10 first, then sort with time-based tie breaker.
     rows = await db.users.aggregate(
         [
             {"$unwind": "$cards"},
@@ -88,15 +89,16 @@ async def gtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 }
             },
             {"$sort": {"total": -1, "unique": -1}},
-            {"$limit": 300},
+            {"$limit": 100},
         ]
-    ).to_list(300)
+    ).to_list(100)
 
     if not rows:
         await update.effective_message.reply_text(t("rank_no_global"))
         return
 
     user_ids = [int(row.get("_id", 0) or 0) for row in rows]
+
     log_rows = await db.claim_logs.aggregate(
         [
             {"$match": {"userId": {"$in": user_ids}}},
@@ -120,9 +122,6 @@ async def gtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         total = int(row.get("total", 0) or 0)
         times = claim_times_by_user.get(user_id, [])
 
-        # Sort users with the same total/unique by the time they reached that total.
-        # If some cards came from gift/admin give and no claim log exists for them,
-        # fall back to that user's last claim time, then name as final stable tie-break.
         if times and len(times) >= total:
             row["reachedTotalAt"] = times[total - 1]
         elif times:
@@ -138,6 +137,7 @@ async def gtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             _name_sort_value(row),
         )
     )
+
     rows = rows[:10]
 
     lines = [t("rank_global_header"), "", t("rank_global_subtitle"), ""]
@@ -157,7 +157,11 @@ async def gtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 unique=int(row.get("unique", 0) or 0),
             )
         )
-    await update.effective_message.reply_html("\n".join(lines), disable_web_page_preview=True)
+
+    await update.effective_message.reply_html(
+        "\n".join(lines),
+        disable_web_page_preview=True,
+    )
 
 
 async def todaygtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
