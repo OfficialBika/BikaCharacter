@@ -14,6 +14,68 @@ from utils.text import level_from_exp, progress_bar
 from utils.i18n import t
 
 
+def detect_card_media_type(card: dict) -> str:
+    media_type = str(card.get("mediaType") or "").strip().lower()
+    if media_type in {"photo", "video", "animation", "document"}:
+        return media_type
+    if media_type == "gif":
+        return "animation"
+
+    mime_type = str(card.get("mimeType") or "").strip().lower()
+    file_name = str(card.get("fileName") or "").strip().lower()
+    if mime_type.startswith("video/") or file_name.endswith((".mp4", ".mov", ".mkv", ".webm")):
+        return "video"
+    if mime_type == "image/gif" or file_name.endswith(".gif"):
+        return "animation"
+    if mime_type and not mime_type.startswith("image/"):
+        return "document"
+    return "photo"
+
+
+async def hydrate_card_media(card: dict | None) -> dict | None:
+    """Merge media metadata from photos collection for old user.cards snapshots."""
+    if not card:
+        return None
+
+    merged = dict(card)
+    card_id = str(merged.get("cardId", ""))
+    needs_lookup = not merged.get("mediaType") or detect_card_media_type(merged) == "photo"
+
+    if card_id and needs_lookup:
+        photo_doc = await get_db().photos.find_one(
+            {"cardId": card_id},
+            {"fileId": 1, "fileUniqueId": 1, "mediaType": 1, "mimeType": 1, "fileName": 1},
+        )
+        if photo_doc:
+            for key in ("fileId", "fileUniqueId", "mediaType", "mimeType", "fileName"):
+                value = photo_doc.get(key)
+                if value:
+                    merged[key] = value
+
+    return merged
+
+
+async def reply_profile_media(message, cover: dict, text: str) -> None:
+    media_type = detect_card_media_type(cover)
+    file_id = str(cover.get("fileId") or "")
+    if not file_id:
+        await message.reply_text(text)
+        return
+
+    try:
+        if media_type == "video":
+            await message.reply_video(file_id, caption=text)
+        elif media_type == "animation":
+            await message.reply_animation(file_id, caption=text)
+        elif media_type == "document":
+            await message.reply_document(file_id, caption=text)
+        else:
+            await message.reply_photo(file_id, caption=text)
+    except Exception as exc:
+        print("PROFILE SEND MEDIA ERROR:", repr(exc))
+        await message.reply_text(text)
+
+
 def build_profile_text(user_doc: dict, total_photo_count: int) -> str:
     cards = list(user_doc.get("cards", []))
     total_owned = sum(int(c.get("count", 0)) for c in cards)
@@ -54,8 +116,9 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         cover = next((c for c in cards if str(c.get("cardId")) == str(user.get("favoriteCardId"))), None)
     if not cover and cards:
         cover = random.choice(cards)
+    cover = await hydrate_card_media(cover)
     if cover and cover.get("fileId"):
-        await update.message.reply_photo(cover["fileId"], caption=text)
+        await reply_profile_media(update.message, cover, text)
     else:
         await update.message.reply_text(text)
 

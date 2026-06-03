@@ -25,6 +25,58 @@ from utils.i18n import t
 CAPTCHA_RARITIES = set()  # High-rarity captcha now happens before spawn in handlers/drop.py
 
 
+def detect_card_media_type(card_doc: dict) -> str:
+    """Return Telegram media type for a stored card document.
+
+    This keeps old cards working too: if mediaType is missing, infer from mimeType/fileName.
+    """
+    media_type = str(card_doc.get("mediaType") or "").strip().lower()
+    if media_type in {"photo", "video", "animation", "document"}:
+        return media_type
+    if media_type == "gif":
+        return "animation"
+
+    mime_type = str(card_doc.get("mimeType") or "").strip().lower()
+    file_name = str(card_doc.get("fileName") or "").strip().lower()
+
+    if mime_type.startswith("video/") or file_name.endswith((".mp4", ".mov", ".mkv", ".webm")):
+        return "video"
+    if mime_type == "image/gif" or file_name.endswith(".gif"):
+        return "animation"
+    if mime_type and not mime_type.startswith("image/"):
+        return "document"
+    return "photo"
+
+
+async def ensure_claimed_card_media_fields(user_id: int, card_doc: dict) -> None:
+    """Backfill media fields into user.cards after a claim.
+
+    Older db_helpers.py versions only saved fileId. This makes newly claimed video/GIF/document
+    cards usable in /harem, /fav, /profile and inline even if the helper was not updated yet.
+    """
+    card_id = str(card_doc.get("cardId", ""))
+    if not card_id:
+        return
+
+    set_fields = {
+        "cards.$.mediaType": detect_card_media_type(card_doc),
+    }
+    for src_key, dst_key in (
+        ("mimeType", "cards.$.mimeType"),
+        ("fileName", "cards.$.fileName"),
+        ("fileUniqueId", "cards.$.fileUniqueId"),
+        ("fileId", "cards.$.fileId"),
+    ):
+        value = str(card_doc.get(src_key) or "")
+        if value:
+            set_fields[dst_key] = value
+
+    await get_db().users.update_one(
+        {"userId": int(user_id), "cards.cardId": card_id},
+        {"$set": set_fields},
+    )
+
+
 def is_captcha_rarity(rarity: str | None) -> bool:
     return str(rarity or "") in CAPTCHA_RARITIES
 
@@ -388,6 +440,7 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     await add_card_to_user(update.effective_user, photo_doc, 1)
+    await ensure_claimed_card_media_fields(update.effective_user.id, photo_doc)
     await log_claim_event(update.effective_user, update.effective_chat, photo_doc, reservation.get("date"))
     await update.message.reply_html(
         t(
@@ -500,6 +553,7 @@ async def captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     await add_card_to_user(query.from_user, photo_doc, 1)
+    await ensure_claimed_card_media_fields(query.from_user.id, photo_doc)
     await log_claim_event(query.from_user, query.message.chat, photo_doc, reservation.get("date"))
 
     try:

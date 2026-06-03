@@ -473,6 +473,10 @@ async def send_manual_pre_spawn_captcha(
                     "rarity": scheduled_rarity,
                     "anime": str(photo.get("anime", "")),
                     "fileId": str(photo.get("fileId", "")),
+                    "mediaType": detect_card_media_type(photo),
+                    "mimeType": str(photo.get("mimeType", "") or ""),
+                    "fileName": str(photo.get("fileName", "") or ""),
+                    "fileUniqueId": str(photo.get("fileUniqueId", "") or ""),
                     "messageId": 0,
                     "dropNumber": int(drop_number),
                     "scheduledRarity": scheduled_rarity,
@@ -676,8 +680,52 @@ async def pre_spawn_captcha_callback(update: Update, context: ContextTypes.DEFAU
             "rarity": str(active.get("rarity", scheduled_rarity)),
             "anime": str(active.get("anime", "")),
             "fileId": str(active.get("fileId", "")),
+            "mediaType": str(active.get("mediaType", "photo") or "photo"),
+            "mimeType": str(active.get("mimeType", "") or ""),
+            "fileName": str(active.get("fileName", "") or ""),
+            "fileUniqueId": str(active.get("fileUniqueId", "") or ""),
         }
     await send_spawn_card(context, int(chat_id), chat, scheduled_rarity, drop_number, forced_photo=forced_photo)
+
+
+def detect_card_media_type(card: dict) -> str:
+    media_type = str(card.get("mediaType") or "").strip().lower()
+    if media_type in {"photo", "video", "animation", "document"}:
+        return media_type
+    if media_type == "gif":
+        return "animation"
+
+    mime_type = str(card.get("mimeType") or "").strip().lower()
+    file_name = str(card.get("fileName") or "").strip().lower()
+    if mime_type.startswith("video/") or file_name.endswith((".mp4", ".mov", ".mkv", ".webm")):
+        return "video"
+    if mime_type == "image/gif" or file_name.endswith(".gif"):
+        return "animation"
+    if mime_type and not mime_type.startswith("image/"):
+        return "document"
+    return "photo"
+
+
+async def send_card_media(context: ContextTypes.DEFAULT_TYPE, chat_id: int, card: dict, caption: str):
+    media_type = detect_card_media_type(card)
+    file_id = str(card.get("fileId") or "")
+
+    if media_type == "video":
+        return await context.bot.send_video(chat_id=chat_id, video=file_id, caption=caption)
+    if media_type == "animation":
+        return await context.bot.send_animation(chat_id=chat_id, animation=file_id, caption=caption)
+    if media_type == "document":
+        return await context.bot.send_document(chat_id=chat_id, document=file_id, caption=caption)
+    return await context.bot.send_photo(chat_id=chat_id, photo=file_id, caption=caption)
+
+
+def card_media_snapshot(card: dict) -> dict:
+    return {
+        "mediaType": detect_card_media_type(card),
+        "mimeType": str(card.get("mimeType", "") or ""),
+        "fileName": str(card.get("fileName", "") or ""),
+        "fileUniqueId": str(card.get("fileUniqueId", "") or ""),
+    }
 
 
 async def send_spawn_card(
@@ -704,7 +752,7 @@ async def send_spawn_card(
     group_name = safe_chat_title(chat) if chat else str(chat_id)
     caption = t("spawn_caption", emoji=emoji, group_name=group_name)
     try:
-        sent = await context.bot.send_photo(chat_id=chat_id, photo=photo["fileId"], caption=caption)
+        sent = await send_card_media(context, chat_id, photo, caption)
     except Exception as exc:
         print("DROP SEND ERROR:", repr(exc))
         return
@@ -716,6 +764,10 @@ async def send_spawn_card(
         "rarity": str(photo.get("rarity", "Common")),
         "anime": str(photo.get("anime", "")),
         "fileId": str(photo.get("fileId", "")),
+        "mediaType": detect_card_media_type(photo),
+        "mimeType": str(photo.get("mimeType", "") or ""),
+        "fileName": str(photo.get("fileName", "") or ""),
+        "fileUniqueId": str(photo.get("fileUniqueId", "") or ""),
         "messageId": int(sent.message_id),
         "dropNumber": int(drop_number),
         "scheduledRarity": scheduled_rarity,
