@@ -155,6 +155,18 @@ async def get_drop_photo_for_rarity(rarity: str) -> Optional[dict]:
 
 
 def public_card_snapshot(photo_doc: dict, qty: int = 1) -> dict:
+    media_type = str(photo_doc.get("mediaType") or "photo").strip().lower()
+    mime_type = str(photo_doc.get("mimeType") or "").strip()
+
+    # Backward compatibility for old database records that did not store mediaType.
+    if not media_type or media_type == "photo":
+        if mime_type.startswith("video/"):
+            media_type = "video"
+        elif mime_type == "image/gif":
+            media_type = "animation"
+        else:
+            media_type = media_type or "photo"
+
     return {
         "cardId": str(photo_doc.get("cardId", "")),
         "name": str(photo_doc.get("name", "")),
@@ -162,6 +174,10 @@ def public_card_snapshot(photo_doc: dict, qty: int = 1) -> dict:
         "rarity": str(photo_doc.get("rarity", "Common")),
         "anime": str(photo_doc.get("anime", "Unknown")),
         "fileId": str(photo_doc.get("fileId", "")),
+        "fileUniqueId": str(photo_doc.get("fileUniqueId", "")),
+        "mediaType": media_type,
+        "mimeType": mime_type,
+        "fileName": str(photo_doc.get("fileName") or ""),
         "count": int(qty),
     }
 
@@ -239,7 +255,7 @@ async def global_card_stats(card_id: str) -> dict:
         try:
             return float(value.timestamp())
         except Exception:
-            # Users without claim history are placed after users with known reached-time.
+            # No claim history: keep these behind users with known claim time.
             return 4102444800.0
 
     total_owned = 0
@@ -295,8 +311,8 @@ async def global_card_stats(card_id: str) -> dict:
             count = int(catcher.get("count", 0) or 0)
             times = claim_times_by_user.get(user_id, [])
 
-            # For equal card counts, keep the one who reached that count first on top.
-            # Gifts/admin give may not have claim logs, so use the last known claim time as fallback.
+            # Sort by the time the user reached this card count.
+            # Example: for x3, use the 3rd claim time for this card when available.
             if times and len(times) >= count:
                 catcher["reachedCountAt"] = times[count - 1]
             elif times:
@@ -311,6 +327,7 @@ async def global_card_stats(card_id: str) -> dict:
             str(x.get("firstName", "")).lower(),
         )
     )
+
     return {"totalOwned": total_owned, "topCatchers": catchers[:10]}
 
 
