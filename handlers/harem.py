@@ -8,6 +8,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from config import HAREM_PAGE_SIZE
+from database.mongodb import get_db
 from utils.cooldown import should_ignore_update
 from utils.db_helpers import ensure_user, get_user_doc
 from utils.permissions import is_global_admin
@@ -34,6 +35,29 @@ def group_cards_by_anime(cards: list[dict]) -> list[tuple[str, list[dict]]]:
     for card in cards:
         grouped[card.get("anime") or "Unknown"].append(card)
     return sorted(grouped.items(), key=lambda item: item[0].lower())
+
+
+async def get_database_anime_totals(anime_names: list[str]) -> dict[str, int]:
+    """Return database total card count for each anime shown in harem.
+
+    Header format becomes owned unique cards / total cards in database.
+    Example: Demon Slayer (3/20).
+    """
+    names = [str(name or "").strip() for name in anime_names if str(name or "").strip()]
+    if not names:
+        return {}
+
+    rows = await get_db().photos.aggregate(
+        [
+            {"$match": {"anime": {"$in": names}}},
+            {"$group": {"_id": "$anime", "total": {"$sum": 1}}},
+        ]
+    ).to_list(None)
+
+    return {
+        str(row.get("_id", "")).strip(): int(row.get("total", 0) or 0)
+        for row in rows
+    }
 
 
 def get_harem_cards_for_view(user_doc: dict) -> tuple[list[dict], str, str]:
@@ -81,7 +105,12 @@ def _can_add_lines(current: list[str], new_lines: list[str], card_rows: int, add
     return raw_len <= 650
 
 
-def _paginate_grouped_cards(grouped: list[tuple[str, list[dict]]]) -> list[list[str]]:
+def _paginate_grouped_cards(
+    grouped: list[tuple[str, list[dict]]],
+    database_anime_totals: dict[str, int] | None = None,
+) -> list[list[str]]:
+    database_anime_totals = database_anime_totals or {}
+
     pages: list[list[str]] = []
     current: list[str] = []
     current_card_rows = 0
@@ -99,9 +128,19 @@ def _paginate_grouped_cards(grouped: list[tuple[str, list[dict]]]) -> list[list[
 
     for anime, anime_cards in grouped:
         sorted_cards = sorted(anime_cards, key=_card_id_sort_value)
-        unique_count = len(sorted_cards)
-        total_count = sum(int(c.get("count", 0) or 0) for c in sorted_cards)
-        header = [f"⚜️ <b>{escape_html(anime)}</b> ({unique_count}/{total_count})", "─────────────"]
+
+        # User owned unique card count for this anime.
+        owned_unique = len(sorted_cards)
+
+        # Total unique card count in database for this anime.
+        # If the database lookup cannot find it, fallback to owned_unique
+        # so /harem never breaks because of missing/old data.
+        anime_key = str(anime).strip()
+        database_total = int(database_anime_totals.get(anime_key, 0) or 0)
+        if database_total <= 0:
+            database_total = owned_unique
+
+        header = [f"⚜️ <b>{escape_html(anime)}</b> ({owned_unique}/{database_total})", "─────────────"]
         card_lines = [_card_line(card) for card in sorted_cards]
 
         index = 0
@@ -197,9 +236,14 @@ def _fit_caption(prefix: list[str], body: list[str]) -> str:
     return "\n".join(prefix + trimmed_body).strip()
 
 
-def build_harem_caption(user_doc: dict, page: int = 1) -> tuple[str, int, int, list[dict]]:
+async def build_harem_caption(user_doc: dict, page: int = 1) -> tuple[str, int, int, list[dict]]:
     view_cards, sort_mode, selected_rarity = get_harem_cards_for_view(user_doc)
     grouped = group_cards_by_anime(view_cards)
+
+    # For anime section headers, show owned unique cards / total cards in database.
+    # Example: ⚜️ Demon Slayer (3/20)
+    anime_names = [anime for anime, _cards in grouped]
+    database_anime_totals = await get_database_anime_totals(anime_names)
 
     if not grouped:
         if sort_mode == "rarity" and selected_rarity:
@@ -207,7 +251,7 @@ def build_harem_caption(user_doc: dict, page: int = 1) -> tuple[str, int, int, l
         else:
             body_pages = [[t("harem_no_cards")]]
     else:
-        body_pages = _paginate_grouped_cards(grouped)
+        body_pages = _paginate_grouped_cards(grouped, database_anime_totals)
 
     total_pages = max(1, len(body_pages))
     page = max(1, min(page, total_pages))
@@ -246,7 +290,7 @@ async def send_harem(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
             await update.effective_message.reply_text(t("harem_no_cards_user"))
         return
 
-    caption, safe_page, total_pages, view_cards = build_harem_caption(user_doc, page)
+    caption, safe_page, total_pages, view_cards = await build_harem_caption(user_doc, page)
     cover = choose_cover(user_doc, view_cards)
     keyboard = harem_keyboard(user_id, safe_page, total_pages)
 

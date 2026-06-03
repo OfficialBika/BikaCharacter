@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import config
-from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 from telegram import Update
 from telegram.error import TelegramError
@@ -23,6 +22,9 @@ ADDER_GROUP_ID = int(getattr(config, "ADDER_GROUP_ID", -1003983636133) or -10039
 SETTINGS_ID = "config"
 CARD_COUNTER_ID = "photo_card_id"
 CARD_RESERVATIONS_COLLECTION = "card_id_reservations"
+
+
+SUPPORTED_DOCUMENT_MIME_PREFIXES = ("image/", "video/")
 
 
 def is_allowed_add_chat(update: Update) -> bool:
@@ -166,27 +168,121 @@ def _database_caption(action: str, parsed: dict, adder) -> str:
     )
 
 
+def _extract_message_media(msg) -> dict | None:
+    """Return Telegram media info for supported card media.
+
+    Supported:
+      - photo
+      - video / mp4 sent as Telegram video
+      - animation / gif
+      - image/video sent as document
+    """
+    if msg.photo:
+        media = msg.photo[-1]
+        return {
+            "mediaType": "photo",
+            "fileId": media.file_id,
+            "fileUniqueId": media.file_unique_id,
+            "mimeType": "",
+            "fileName": "",
+        }
+
+    if msg.video:
+        media = msg.video
+        return {
+            "mediaType": "video",
+            "fileId": media.file_id,
+            "fileUniqueId": media.file_unique_id,
+            "mimeType": media.mime_type or "video/mp4",
+            "fileName": media.file_name or "",
+        }
+
+    if msg.animation:
+        media = msg.animation
+        return {
+            "mediaType": "animation",
+            "fileId": media.file_id,
+            "fileUniqueId": media.file_unique_id,
+            "mimeType": media.mime_type or "image/gif",
+            "fileName": media.file_name or "",
+        }
+
+    if msg.document:
+        media = msg.document
+        mime_type = media.mime_type or ""
+        if not mime_type.startswith(SUPPORTED_DOCUMENT_MIME_PREFIXES):
+            return None
+        return {
+            "mediaType": "document",
+            "fileId": media.file_id,
+            "fileUniqueId": media.file_unique_id,
+            "mimeType": mime_type,
+            "fileName": media.file_name or "",
+        }
+
+    return None
+
+
 async def _post_to_card_database_channel(
     context: ContextTypes.DEFAULT_TYPE,
     file_id: str,
     caption: str,
+    media_type: str,
 ) -> dict:
     if not CARD_DATABASE_CHANNEL_ID:
         raise RuntimeError("CARD_DATABASE_CHANNEL_ID is missing in .env")
 
-    sent = await context.bot.send_photo(
-        chat_id=CARD_DATABASE_CHANNEL_ID,
-        photo=file_id,
-        caption=caption,
-        parse_mode="HTML",
-    )
+    if media_type == "video":
+        sent = await context.bot.send_video(
+            chat_id=CARD_DATABASE_CHANNEL_ID,
+            video=file_id,
+            caption=caption,
+            parse_mode="HTML",
+        )
+        media = sent.video
+        stored_file_id = media.file_id if media else file_id
+        file_unique_id = media.file_unique_id if media else ""
 
-    best = sent.photo[-1] if sent.photo else None
+    elif media_type == "animation":
+        sent = await context.bot.send_animation(
+            chat_id=CARD_DATABASE_CHANNEL_ID,
+            animation=file_id,
+            caption=caption,
+            parse_mode="HTML",
+        )
+        media = sent.animation
+        stored_file_id = media.file_id if media else file_id
+        file_unique_id = media.file_unique_id if media else ""
+
+    elif media_type == "document":
+        sent = await context.bot.send_document(
+            chat_id=CARD_DATABASE_CHANNEL_ID,
+            document=file_id,
+            caption=caption,
+            parse_mode="HTML",
+        )
+        media = sent.document
+        stored_file_id = media.file_id if media else file_id
+        file_unique_id = media.file_unique_id if media else ""
+
+    else:
+        sent = await context.bot.send_photo(
+            chat_id=CARD_DATABASE_CHANNEL_ID,
+            photo=file_id,
+            caption=caption,
+            parse_mode="HTML",
+        )
+        media = sent.photo[-1] if sent.photo else None
+        stored_file_id = media.file_id if media else file_id
+        file_unique_id = media.file_unique_id if media else ""
+        media_type = "photo"
+
     return {
         "storageChatId": sent.chat_id,
         "storageMessageId": sent.message_id,
-        "fileId": best.file_id if best else file_id,
-        "fileUniqueId": best.file_unique_id if best else "",
+        "fileId": stored_file_id,
+        "fileUniqueId": file_unique_id,
+        "mediaType": media_type,
     }
 
 
@@ -198,13 +294,17 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     msg = update.effective_message
-    if not msg or not msg.photo:
+    if not msg:
+        return
+
+    media_info = _extract_message_media(msg)
+    if not media_info:
         return
 
     caption = (msg.caption or "").strip()
     looks_like_add = caption.lower().startswith("/add") or bool(parse_forward_character(caption))
 
-    # /add မဟုတ်တဲ့ group photo တွေကို ignore
+    # /add မဟုတ်တဲ့ group/private media တွေကို ignore
     if not looks_like_add:
         return
 
@@ -215,7 +315,8 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
 
-    file_id = msg.photo[-1].file_id
+    file_id = media_info["fileId"]
+    media_type = media_info["mediaType"]
 
     parsed = parse_add_caption(caption)
     mode = "Card"
@@ -258,7 +359,7 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         channel_caption = _database_caption(action, parsed, update.effective_user)
 
         try:
-            storage = await _post_to_card_database_channel(context, file_id, channel_caption)
+            storage = await _post_to_card_database_channel(context, file_id, channel_caption, media_type)
         except TelegramError as exc:
             await msg.reply_text(
                 "❌ Failed to post card media to Bika Database channel.\n\n"
@@ -277,6 +378,9 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             **parsed,
             "fileId": storage["fileId"],
             "fileUniqueId": storage.get("fileUniqueId", ""),
+            "mediaType": storage.get("mediaType", media_type),
+            "mimeType": media_info.get("mimeType", ""),
+            "fileName": media_info.get("fileName", ""),
             "storageChatId": storage["storageChatId"],
             "storageMessageId": storage["storageMessageId"],
             "addedBy": update.effective_user.id,
@@ -298,6 +402,7 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             f"Name: {parsed['name']}\n"
             f"Rarity: {parsed['rarity']}\n"
             f"Anime: {parsed['anime']}\n"
+            f"Media: {storage.get('mediaType', media_type)}\n"
             f"Bika Database Message ID: {storage['storageMessageId']}"
         )
     finally:
@@ -306,5 +411,5 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 def register_photo_add_handlers(app: Application) -> None:
-    # DM + Adder Group နှစ်ခုလုံးက photo captions တွေဖမ်းရန်
-    app.add_handler(MessageHandler(filters.PHOTO, photo_add_handler))
+    # DM + Adder Group နှစ်ခုလုံးက photo/video/gif/document captions တွေဖမ်းရန်
+    app.add_handler(MessageHandler(filters.ATTACHMENT, photo_add_handler))
