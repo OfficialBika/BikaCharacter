@@ -34,7 +34,7 @@ def is_allowed_add_chat(update: Update) -> bool:
 
     # Bot DM ထဲမှာ add ခွင့်ပြု
     if chat.type == "private":
-        return True
+        return False
 
     # သတ်မှတ်ထားတဲ့ Adder Group ထဲမှာ add ခွင့်ပြု
     return int(chat.id) == int(ADDER_GROUP_ID)
