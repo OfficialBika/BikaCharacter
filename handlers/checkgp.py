@@ -5,14 +5,15 @@ from datetime import datetime, timezone
 
 from telegram import Chat, ChatMemberUpdated, Update
 from telegram.constants import ChatMemberStatus
-from telegram.ext import Application, ChatMemberHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from database.mongodb import get_db
 from utils.db_helpers import ensure_group
+from utils.permissions import is_owner
 from utils.text import utcnow
 
 
-MIN_GROUP_MEMBERS = 30
+MIN_GROUP_MEMBERS = 40
 LEAVE_MESSAGE = "This group can't afford me. I'm leaving now...."
 
 ACTIVE_STATUSES = {
@@ -37,6 +38,31 @@ async def _get_member_count(context: ContextTypes.DEFAULT_TYPE, chat_id: int) ->
     except Exception as exc:
         print("CHECKGP MEMBER COUNT ERROR:", repr(exc), flush=True)
         return 0
+
+
+async def _is_approved_group(chat_id: int) -> bool:
+    group = await get_db().groups.find_one({"groupId": int(chat_id)}, {"checkgpApproved": 1})
+    return bool((group or {}).get("checkgpApproved") is True)
+
+
+async def _mark_approved_group_passed(chat: Chat, trigger: str) -> None:
+    await get_db().groups.update_one(
+        {"groupId": int(chat.id)},
+        {
+            "$set": {
+                "title": chat.title or getattr(chat, "full_name", "") or str(chat.id),
+                "username": getattr(chat, "username", "") or "",
+                "checkgpPassed": True,
+                "checkgpApproved": True,
+                "checkgpMinMembers": int(MIN_GROUP_MEMBERS),
+                "checkgpTrigger": str(trigger),
+                "checkgpLeaveReason": "owner_approved",
+                "checkgpCheckedAt": utcnow(),
+                "updatedAt": utcnow(),
+            }
+        },
+        upsert=True,
+    )
 
 
 async def _save_check_result(
@@ -79,6 +105,12 @@ async def _check_and_leave_if_needed(
         await asyncio.sleep(delay_seconds)
 
     await ensure_group(chat)
+
+    # Owner-approved groups are allowed even if they are below MIN_GROUP_MEMBERS.
+    if await _is_approved_group(int(chat.id)):
+        await _mark_approved_group_passed(chat, trigger)
+        return False
+
     member_count = await _get_member_count(context, int(chat.id))
 
     # If Telegram API failed and returned 0, still leave because the group cannot be verified.
@@ -148,7 +180,79 @@ async def check_group_requirements_on_message(update: Update, context: ContextTy
     await _check_and_leave_if_needed(context, chat, trigger="group_message")
 
 
+def _parse_group_id(value: str) -> int | None:
+    try:
+        value = str(value or "").strip()
+        if value.lstrip("-").isdigit():
+            return int(value)
+    except Exception:
+        pass
+    return None
+
+
+async def approve_group_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only DM command: /approve <group_id>
+
+    Approved groups bypass the 40-member auto-leave rule.
+    """
+    if not update.effective_user or not is_owner(update.effective_user.id):
+        return
+
+    msg = update.effective_message
+    if update.effective_chat and update.effective_chat.type != "private":
+        await msg.reply_text("Please use this command in bot DM: /approve <group_id>")
+        return
+
+    if not context.args:
+        await msg.reply_text("Usage: /approve <group_id>\nExample: /approve -1001234567890")
+        return
+
+    group_id = _parse_group_id(context.args[0])
+    if group_id is None:
+        await msg.reply_text("❌ Invalid group_id. Example: /approve -1001234567890")
+        return
+
+    title = f"Approved Group {group_id}"
+    username = ""
+
+    # If the bot is still in the group, fetch readable title/username.
+    try:
+        chat = await context.bot.get_chat(int(group_id))
+        title = chat.title or getattr(chat, "full_name", "") or title
+        username = getattr(chat, "username", "") or ""
+    except Exception:
+        # Bot may have already left. Approval is still saved; add the bot again after this.
+        pass
+
+    await get_db().groups.update_one(
+        {"groupId": int(group_id)},
+        {
+            "$set": {
+                "groupId": int(group_id),
+                "title": title,
+                "username": username,
+                "checkgpApproved": True,
+                "checkgpApprovedBy": int(update.effective_user.id),
+                "checkgpApprovedAt": utcnow(),
+                "checkgpPassed": True,
+                "checkgpMinMembers": int(MIN_GROUP_MEMBERS),
+                "checkgpLeaveReason": "owner_approved",
+                "updatedAt": utcnow(),
+            }
+        },
+        upsert=True,
+    )
+
+    await msg.reply_text(
+        "✅ Group approved.\n"
+        f"Group ID: {group_id}\n"
+        "This group will not auto-leave even if members are below 40.\n"
+        "If the bot already left, add it back to the group now."
+    )
+
+
 def register_checkgp_handlers(app: Application) -> None:
+    app.add_handler(CommandHandler("approve", approve_group_cmd), group=-100)
     app.add_handler(ChatMemberHandler(check_group_requirements, ChatMemberHandler.MY_CHAT_MEMBER), group=-100)
     app.add_handler(
         MessageHandler(filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL, check_group_requirements_on_message),
