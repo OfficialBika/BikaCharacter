@@ -13,7 +13,7 @@ from utils.permissions import is_owner
 from utils.text import utcnow
 
 
-MIN_GROUP_MEMBERS = 40
+MIN_GROUP_MEMBERS = 30
 LEAVE_MESSAGE = "This group can't afford me. I'm leaving now...."
 
 ACTIVE_STATUSES = {
