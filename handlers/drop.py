@@ -302,6 +302,35 @@ def pre_spawn_caption(scheduled_rarity: str, group_name: str, seconds: int) -> s
     )
 
 
+def user_mention_html(user) -> str:
+    """Build a safe clickable mention for the user who clicked captcha."""
+    if not user:
+        return "Unknown"
+
+    name = " ".join([user.first_name or "", user.last_name or ""]).strip()
+    if not name:
+        name = user.username or str(user.id)
+
+    return f'<a href="tg://user?id={int(user.id)}">{escape_html(name)}</a>'
+
+
+def build_pre_spawn_wrong_text(query, pre_cap: dict, choice_index: int) -> str:
+    """Wrong captcha result text with clicked answer and clickable user mention."""
+    options = list(pre_cap.get("options") or [])
+
+    if 0 <= int(choice_index) < len(options):
+        clicked_answer = str(options[int(choice_index)])
+    else:
+        clicked_answer = "Unknown"
+
+    return (
+        "❌ <b>𝐖𝐑𝐎𝐍𝐆 𝐂𝐀𝐏𝐓𝐂𝐇𝐀</b>\n\n"
+        f"👤 ᴄʟɪᴄᴋᴇᴅ ʙʏ: {user_mention_html(query.from_user)}\n"
+        f"🔢 ᴄʟɪᴄᴋᴇᴅ ᴀɴꜱᴡᴇʀ: <b>{escape_html(clicked_answer)}</b>\n\n"
+        "ᴛʜɪꜱ ꜱᴄʜᴇᴅᴜʟᴇᴅ ʜɪɢʜ-ʀᴀʀɪᴛʏ ꜱᴘᴀᴡɴ ʜᴀꜱ ʙᴇᴇɴ ʟᴏꜱᴛ."
+    )
+
+
 async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_countable_message(update):
         return
@@ -607,21 +636,25 @@ async def pre_spawn_captcha_callback(update: Update, context: ContextTypes.DEFAU
     correct_index = int(pre_cap.get("answerIndex", -1))
     if choice_index != correct_index:
         await mark_pre_spawn_lost(chat_id, nonce, "failed")
+
+        wrong_text = build_pre_spawn_wrong_text(query, pre_cap, choice_index)
+
         try:
             await query.edit_message_caption(
-                caption=t("pre_spawn_wrong"),
+                caption=wrong_text,
                 parse_mode=ParseMode.HTML,
                 reply_markup=None,
             )
         except Exception:
             try:
                 await query.edit_message_text(
-                    t("pre_spawn_wrong"),
+                    wrong_text,
                     parse_mode=ParseMode.HTML,
                     reply_markup=None,
                 )
             except Exception:
                 pass
+
         await query.answer(t("pre_spawn_wrong_alert"), show_alert=True)
         await clear_lost_pre_spawn(chat_id, nonce)
         return
