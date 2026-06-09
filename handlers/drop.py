@@ -630,6 +630,12 @@ async def pre_spawn_captcha_callback(update: Update, context: ContextTypes.DEFAU
     active = (latest or {}).get("activeDrop") or {}
     pre_cap = active.get("preSpawnCaptcha") or {}
     if not active or pre_cap.get("status") != "pending":
+        # Stale button cleanup: if the captcha is already solved/failed/timeout,
+        # remove old inline buttons so users cannot keep clicking a dead captcha.
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
         await query.answer(t("captcha_finished"), show_alert=True)
         return
 
@@ -662,7 +668,9 @@ async def pre_spawn_captcha_callback(update: Update, context: ContextTypes.DEFAU
     scheduled_rarity = str(active.get("scheduledRarity") or active.get("rarity") or "Divine")
     drop_number = int(active.get("dropNumber", 0) or 0)
 
-    solved = await get_db().groups.find_one_and_update(
+    # Lock this captcha first. Do not leave it as "pending" while the card is spawning,
+    # otherwise double taps can race each other. "solving" also tells stale clicks to stop.
+    solving = await get_db().groups.find_one_and_update(
         {
             "groupId": int(chat_id),
             "activeDrop.preSpawnCaptcha.nonce": str(nonce),
@@ -670,7 +678,7 @@ async def pre_spawn_captcha_callback(update: Update, context: ContextTypes.DEFAU
         },
         {
             "$set": {
-                "activeDrop.preSpawnCaptcha.status": "solved",
+                "activeDrop.preSpawnCaptcha.status": "solving",
                 "activeDrop.preSpawnCaptcha.solvedByUserId": int(query.from_user.id),
                 "activeDrop.preSpawnCaptcha.solvedByName": " ".join([query.from_user.first_name or "", query.from_user.last_name or ""]).strip()
                     or query.from_user.username
@@ -681,7 +689,11 @@ async def pre_spawn_captcha_callback(update: Update, context: ContextTypes.DEFAU
         },
         return_document=ReturnDocument.AFTER,
     )
-    if not solved:
+    if not solving:
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
         await query.answer(t("captcha_finished"), show_alert=True)
         return
 
@@ -699,7 +711,11 @@ async def pre_spawn_captcha_callback(update: Update, context: ContextTypes.DEFAU
                 reply_markup=None,
             )
         except Exception:
-            pass
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
     await query.answer(t("solved"))
 
     # Use the callback chat when available; otherwise send by chat_id only.
@@ -718,7 +734,17 @@ async def pre_spawn_captcha_callback(update: Update, context: ContextTypes.DEFAU
             "fileName": str(active.get("fileName", "") or ""),
             "fileUniqueId": str(active.get("fileUniqueId", "") or ""),
         }
-    await send_spawn_card(context, int(chat_id), chat, scheduled_rarity, drop_number, forced_photo=forced_photo)
+
+    spawned = await send_spawn_card(context, int(chat_id), chat, scheduled_rarity, drop_number, forced_photo=forced_photo)
+    if not spawned:
+        # If the card cannot be sent, clear the pre-spawn state so the group does not remain stuck.
+        try:
+            await get_db().groups.update_one(
+                {"groupId": int(chat_id), "activeDrop.preSpawnCaptcha.nonce": str(nonce)},
+                {"$set": {"activeDrop": None, "updatedAt": utcnow()}},
+            )
+        except Exception:
+            pass
 
 
 def detect_card_media_type(card: dict) -> str:
@@ -740,16 +766,41 @@ def detect_card_media_type(card: dict) -> str:
 
 
 async def send_card_media(context: ContextTypes.DEFAULT_TYPE, chat_id: int, card: dict, caption: str):
+    """Send card media with safe fallbacks.
+
+    Some old DB rows may have mediaType missing or wrong. Try the detected type first,
+    then fallback methods so a video file_id does not get stuck just because it was
+    saved as a photo card earlier.
+    """
     media_type = detect_card_media_type(card)
     file_id = str(card.get("fileId") or "")
+    if not file_id:
+        raise RuntimeError("Missing card fileId")
 
     if media_type == "video":
-        return await context.bot.send_video(chat_id=chat_id, video=file_id, caption=caption)
-    if media_type == "animation":
-        return await context.bot.send_animation(chat_id=chat_id, animation=file_id, caption=caption)
-    if media_type == "document":
-        return await context.bot.send_document(chat_id=chat_id, document=file_id, caption=caption)
-    return await context.bot.send_photo(chat_id=chat_id, photo=file_id, caption=caption)
+        send_order = ["video", "animation", "document", "photo"]
+    elif media_type == "animation":
+        send_order = ["animation", "video", "document", "photo"]
+    elif media_type == "document":
+        send_order = ["document", "video", "animation", "photo"]
+    else:
+        send_order = ["photo", "video", "animation", "document"]
+
+    last_exc = None
+    for method in send_order:
+        try:
+            if method == "video":
+                return await context.bot.send_video(chat_id=chat_id, video=file_id, caption=caption)
+            if method == "animation":
+                return await context.bot.send_animation(chat_id=chat_id, animation=file_id, caption=caption)
+            if method == "document":
+                return await context.bot.send_document(chat_id=chat_id, document=file_id, caption=caption)
+            return await context.bot.send_photo(chat_id=chat_id, photo=file_id, caption=caption)
+        except Exception as exc:
+            last_exc = exc
+            print(f"DROP SEND {method.upper()} FALLBACK ERROR:", repr(exc))
+
+    raise RuntimeError(f"All media send methods failed: {last_exc!r}")
 
 
 def card_media_snapshot(card: dict) -> dict:
@@ -768,7 +819,7 @@ async def send_spawn_card(
     scheduled_rarity: str,
     drop_number: int,
     forced_photo: dict | None = None,
-) -> None:
+) -> bool:
     photo = forced_photo or await get_drop_photo_for_rarity(scheduled_rarity)
     if not photo:
         await get_db().groups.update_one(
@@ -779,7 +830,7 @@ async def send_spawn_card(
             await context.bot.send_message(chat_id=chat_id, text=t("spawn_no_card"))
         except Exception:
             pass
-        return
+        return False
 
     emoji = get_rarity_emoji(photo.get("rarity"))
     group_name = safe_chat_title(chat) if chat else str(chat_id)
@@ -788,7 +839,15 @@ async def send_spawn_card(
         sent = await send_card_media(context, chat_id, photo, caption)
     except Exception as exc:
         print("DROP SEND ERROR:", repr(exc))
-        return
+        await get_db().groups.update_one(
+            {"groupId": int(chat_id)},
+            {"$set": {"activeDrop": None, "updatedAt": utcnow()}},
+        )
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=t("spawn_no_card"))
+        except Exception:
+            pass
+        return False
 
     active_drop = {
         "cardId": str(photo.get("cardId", "")),
@@ -813,6 +872,7 @@ async def send_spawn_card(
         {"groupId": int(chat_id)},
         {"$set": {"activeDrop": active_drop, "updatedAt": utcnow()}},
     )
+    return True
 
 
 async def owner_drop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
