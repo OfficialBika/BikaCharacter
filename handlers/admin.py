@@ -488,41 +488,144 @@ async def delete_card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
     )
 
+def _give_usage_text() -> str:
+    return (
+        "ᴜꜱᴀɢᴇ:\n"
+        "• Reply target user with: /give <card_id>\n"
+        "• Or use: /give <user_id> <card_id>\n\n"
+        "ᴇxᴀᴍᴘʟᴇ:\n"
+        "/give 123456789 60"
+    )
+
+
+def _mention_user_id_html(user_id: int, user_doc: dict | None = None) -> str:
+    user_doc = user_doc or {}
+    display = " ".join(
+        [
+            str(user_doc.get("firstName", "") or ""),
+            str(user_doc.get("lastName", "") or ""),
+        ]
+    ).strip()
+
+    if not display:
+        display = str(user_doc.get("username", "") or "").strip()
+    if not display:
+        display = str(user_id)
+
+    return f'<a href="tg://user?id={int(user_id)}">{escape_html(display)}</a>'
+
+
+def _detect_card_media_type(card: dict) -> str:
+    media_type = str(card.get("mediaType") or "").strip().lower()
+    if media_type == "gif":
+        return "animation"
+    if media_type in {"photo", "video", "animation", "document"}:
+        return media_type
+
+    mime_type = str(card.get("mimeType") or "").strip().lower()
+    file_name = str(card.get("fileName") or "").strip().lower()
+
+    if mime_type.startswith("video/") or file_name.endswith((".mp4", ".mov", ".mkv", ".webm")):
+        return "video"
+    if mime_type == "image/gif" or file_name.endswith(".gif"):
+        return "animation"
+    if mime_type and not mime_type.startswith("image/"):
+        return "document"
+
+    return "photo"
+
+
+async def _reply_give_preview(msg, photo: dict, caption: str) -> None:
+    file_id = str(photo.get("fileId") or "")
+    media_type = _detect_card_media_type(photo)
+
+    try:
+        if media_type == "video":
+            await msg.reply_video(video=file_id, caption=caption, parse_mode="HTML")
+            return
+        if media_type == "animation":
+            await msg.reply_animation(animation=file_id, caption=caption, parse_mode="HTML")
+            return
+        if media_type == "document":
+            await msg.reply_document(document=file_id, caption=caption, parse_mode="HTML")
+            return
+        await msg.reply_photo(photo=file_id, caption=caption, parse_mode="HTML")
+        return
+    except Exception:
+        await msg.reply_html(caption)
+
+
 async def give_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only: give one card to a user.
+
+    Supported:
+      /give <card_id>              (reply to target user)
+      /give <user_id> <card_id>    (without reply)
+    """
     if not is_owner(update.effective_user.id):
         return
+
     msg = update.effective_message
-    if not context.args:
-        await msg.reply_text(t("give_usage"))
-        return
-    if not msg.reply_to_message or not msg.reply_to_message.from_user:
-        await msg.reply_text(t("give_reply_target"))
+    args = list(context.args or [])
+
+    if not args:
+        await msg.reply_text(_give_usage_text())
         return
 
-    card_id = str(context.args[0]).strip()
-    target = msg.reply_to_message.from_user
-    if target.is_bot:
-        await msg.reply_text(t("give_bot_account"))
+    target_id: Optional[int] = None
+    target_html = ""
+    card_id = ""
+
+    reply_user = msg.reply_to_message.from_user if msg.reply_to_message and msg.reply_to_message.from_user else None
+
+    if reply_user:
+        # Old system: reply to a user + /give cardid
+        card_id = str(args[0]).strip()
+        if reply_user.is_bot:
+            await msg.reply_text(t("give_bot_account"))
+            return
+
+        await ensure_user(reply_user)
+        target_id = int(reply_user.id)
+        target_html = mention_user(reply_user)
+
+    else:
+        # New system: /give userid cardid
+        if len(args) < 2:
+            await msg.reply_text(_give_usage_text())
+            return
+
+        target_id = _int_or_none(args[0])
+        if not target_id:
+            await msg.reply_text("❌ ɪɴᴠᴀʟɪᴅ ᴜꜱᴇʀ ɪᴅ.\n\n" + _give_usage_text())
+            return
+
+        card_id = str(args[1]).strip()
+        target_doc = await ensure_user_by_id(int(target_id))
+        target_html = _mention_user_id_html(int(target_id), target_doc)
+
+    if not card_id:
+        await msg.reply_text(_give_usage_text())
         return
+
     photo = await get_photo_by_card_id(card_id)
     if not photo:
         await msg.reply_text(t("give_not_found", card_id=card_id))
         return
 
-    await ensure_user(target)
-    await add_card_to_user_id(int(target.id), photo, 1)
+    await add_card_to_user_id(int(target_id), photo, 1)
+
     caption = t(
         "give_caption",
-        target=mention_user(target),
+        target=target_html,
         emoji=get_rarity_emoji(photo.get("rarity")),
         name=escape_html(photo.get("name")),
         card_id=escape_html(photo.get("cardId")),
         anime=escape_html(photo.get("anime")),
     )
-    try:
-        await msg.reply_photo(photo=photo.get("fileId"), caption=caption, parse_mode="HTML")
-    except Exception:
-        await msg.reply_html(caption)
+
+    await _reply_give_preview(msg, photo, caption)
+
 
 
 def register_admin_handlers(app: Application) -> None:
