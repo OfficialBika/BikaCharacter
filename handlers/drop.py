@@ -10,6 +10,7 @@ from pathlib import Path
 from pymongo import ReturnDocument
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.constants import ParseMode
+from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from config import BOT_MUTE_SECONDS, CLAIM_CAPTCHA_SECONDS, DEFAULT_CHANGETIME
@@ -765,43 +766,120 @@ def detect_card_media_type(card: dict) -> str:
     return "photo"
 
 
-async def send_card_media(context: ContextTypes.DEFAULT_TYPE, chat_id: int, card: dict, caption: str):
-    """Send card media with safe fallbacks.
+def normalize_media_type(value: object) -> str:
+    media_type = str(value or "").strip().lower()
+    if media_type == "gif":
+        return "animation"
+    if media_type in {"photo", "video", "animation", "document"}:
+        return media_type
+    return "photo"
 
-    Some old DB rows may have mediaType missing or wrong. Try the detected type first,
-    then fallback methods so a video file_id does not get stuck just because it was
-    saved as a photo card earlier.
+
+def media_type_from_bad_request(exc: Exception) -> str | None:
+    """Telegram tells the real file type in messages like:
+    Can't use file of type photo as video.
+    Use that to retry once with the correct method instead of spamming all methods.
     """
-    media_type = detect_card_media_type(card)
+    text = str(exc).lower()
+    for kind in ("photo", "video", "animation", "document"):
+        if f"file of type {kind}" in text:
+            return kind
+    return None
+
+
+def media_type_from_file_path(file_path: str, fallback: str) -> str:
+    path = str(file_path or "").lower()
+
+    # Telegram file_path usually contains folders/extensions like photos/file.jpg,
+    # videos/file.mp4, animations/file.mp4, documents/file.xxx.
+    if "/photos/" in path or path.endswith((".jpg", ".jpeg", ".png", ".webp")):
+        return "photo"
+    if "/videos/" in path or path.endswith((".mp4", ".mov", ".mkv", ".webm")):
+        if fallback == "animation":
+            return "animation"
+        return "video"
+    if "/animations/" in path or path.endswith(".gif"):
+        return "animation"
+    if "/documents/" in path and fallback in {"photo", "video", "animation", "document"}:
+        # Documents may be real documents, animation files, or Telegram-stored videos.
+        # Keep the DB/mime detected type unless it is unknown.
+        return fallback
+    return fallback
+
+
+async def resolve_card_media_type(context: ContextTypes.DEFAULT_TYPE, card: dict) -> str:
+    """Resolve media type safely for old DB rows.
+
+    Old rows can have mediaType missing/wrong. get_file is a cheap way to infer
+    obvious photo/video paths before sending, reducing BadRequest + flood spam.
+    """
+    file_id = str(card.get("fileId") or "")
+    media_type = normalize_media_type(detect_card_media_type(card))
+    if not file_id:
+        return media_type
+
+    try:
+        tg_file = await context.bot.get_file(file_id)
+        file_path = str(getattr(tg_file, "file_path", "") or "")
+        media_type = media_type_from_file_path(file_path, media_type)
+    except Exception:
+        # If get_file fails, use DB/mime detection. Do not log; send step will handle it.
+        pass
+
+    return normalize_media_type(media_type)
+
+
+async def send_by_media_type(bot, chat_id: int, file_id: str, caption: str, media_type: str):
+    media_type = normalize_media_type(media_type)
+    if media_type == "video":
+        return await bot.send_video(chat_id=chat_id, video=file_id, caption=caption)
+    if media_type == "animation":
+        return await bot.send_animation(chat_id=chat_id, animation=file_id, caption=caption)
+    if media_type == "document":
+        return await bot.send_document(chat_id=chat_id, document=file_id, caption=caption)
+    return await bot.send_photo(chat_id=chat_id, photo=file_id, caption=caption)
+
+
+async def send_by_media_type_with_retry(bot, chat_id: int, file_id: str, caption: str, media_type: str):
+    """Send once, retry only for temporary Telegram issues.
+
+    This avoids the old behavior that tried photo/video/animation/document in a loop
+    and caused flood-control logs.
+    """
+    try:
+        return await send_by_media_type(bot, chat_id, file_id, caption, media_type)
+    except RetryAfter as exc:
+        delay = int(getattr(exc, "retry_after", 3) or 3)
+        await asyncio.sleep(min(max(delay, 1), 10))
+        return await send_by_media_type(bot, chat_id, file_id, caption, media_type)
+    except (TimedOut, NetworkError):
+        await asyncio.sleep(1)
+        return await send_by_media_type(bot, chat_id, file_id, caption, media_type)
+
+
+async def send_card_media(context: ContextTypes.DEFAULT_TYPE, chat_id: int, card: dict, caption: str):
+    """Send card media without fallback spam.
+
+    Rules:
+      1) Resolve media type from DB + mime/fileName + Telegram get_file path.
+      2) Send using that method.
+      3) If Telegram says the file is actually another type, retry once with that exact type.
+      4) Never try all methods repeatedly; this prevents flood-control errors.
+    """
     file_id = str(card.get("fileId") or "")
     if not file_id:
         raise RuntimeError("Missing card fileId")
 
-    if media_type == "video":
-        send_order = ["video", "animation", "document", "photo"]
-    elif media_type == "animation":
-        send_order = ["animation", "video", "document", "photo"]
-    elif media_type == "document":
-        send_order = ["document", "video", "animation", "photo"]
-    else:
-        send_order = ["photo", "video", "animation", "document"]
+    media_type = await resolve_card_media_type(context, card)
 
-    last_exc = None
-    for method in send_order:
-        try:
-            if method == "video":
-                return await context.bot.send_video(chat_id=chat_id, video=file_id, caption=caption)
-            if method == "animation":
-                return await context.bot.send_animation(chat_id=chat_id, animation=file_id, caption=caption)
-            if method == "document":
-                return await context.bot.send_document(chat_id=chat_id, document=file_id, caption=caption)
-            return await context.bot.send_photo(chat_id=chat_id, photo=file_id, caption=caption)
-        except Exception as exc:
-            last_exc = exc
-            print(f"DROP SEND {method.upper()} FALLBACK ERROR:", repr(exc))
-
-    raise RuntimeError(f"All media send methods failed: {last_exc!r}")
-
+    try:
+        return await send_by_media_type_with_retry(context.bot, chat_id, file_id, caption, media_type)
+    except BadRequest as exc:
+        real_type = media_type_from_bad_request(exc)
+        if real_type and real_type != media_type:
+            # Retry only once with Telegram-reported real type.
+            return await send_by_media_type_with_retry(context.bot, chat_id, file_id, caption, real_type)
+        raise
 
 def card_media_snapshot(card: dict) -> dict:
     return {
@@ -837,8 +915,7 @@ async def send_spawn_card(
     caption = t("spawn_caption", emoji=emoji, group_name=group_name)
     try:
         sent = await send_card_media(context, chat_id, photo, caption)
-    except Exception as exc:
-        print("DROP SEND ERROR:", repr(exc))
+    except Exception:
         await get_db().groups.update_one(
             {"groupId": int(chat_id)},
             {"$set": {"activeDrop": None, "updatedAt": utcnow()}},
@@ -927,10 +1004,15 @@ async def owner_drop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    await send_spawn_card(context, target_chat_id, target_chat, rarity, drop_number=0, forced_photo=photo)
-    await msg.reply_text(
-        f"✅ Manual drop spawned.\nCard ID: {card_id}\nRarity: {rarity}\nChat ID: {target_chat_id}"
-    )
+    spawned = await send_spawn_card(context, target_chat_id, target_chat, rarity, drop_number=0, forced_photo=photo)
+    if spawned:
+        await msg.reply_text(
+            f"✅ Manual drop spawned.\nCard ID: {card_id}\nRarity: {rarity}\nChat ID: {target_chat_id}"
+        )
+    else:
+        await msg.reply_text(
+            f"❌ Manual drop failed. Please check this card mediaType/fileId.\nCard ID: {card_id}\nRarity: {rarity}\nChat ID: {target_chat_id}"
+        )
 
 
 def register_drop_handlers(app: Application) -> None:
