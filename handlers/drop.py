@@ -12,7 +12,16 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Upda
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from config import BOT_MUTE_SECONDS, CLAIM_CAPTCHA_SECONDS, DEFAULT_CHANGETIME
+from config import (
+    BOT_MUTE_SECONDS,
+    CLAIM_CAPTCHA_SECONDS,
+    DEFAULT_CHANGETIME,
+    DROP_IGNORE_OLD_MESSAGES_SECONDS,
+    CAPTCHA_IMAGE_FORMAT,
+    CAPTCHA_IMAGE_WIDTH,
+    CAPTCHA_IMAGE_HEIGHT,
+    CAPTCHA_JPEG_QUALITY,
+)
 from database.mongodb import get_db
 from utils.cooldown import is_bot_muted, record_message_and_maybe_mute
 from utils.db_helpers import ensure_group, ensure_user, get_drop_photo_for_rarity, get_photo_by_card_id
@@ -32,7 +41,7 @@ PRE_SPAWN_CAPTCHA_RARITIES = {"Divine", "CrossVerse", "Cataphract", "Supreme"}
 # after PM2 restarts the process. Without this guard, old group messages can
 # be counted at once and multiple cards can spawn immediately on startup.
 BOT_STARTED_AT = datetime.now(timezone.utc)
-STALE_UPDATE_GRACE_SECONDS = 30
+STALE_UPDATE_GRACE_SECONDS = int(DROP_IGNORE_OLD_MESSAGES_SECONDS)
 
 
 def _datetime_to_utc_ts(value) -> float:
@@ -148,7 +157,15 @@ def make_pre_spawn_captcha() -> dict:
 
 
 def render_pre_spawn_captcha_image(code: str) -> InputFile:
-    """Render a 4-digit noisy captcha image."""
+    """Render a smaller compressed 4-digit noisy captcha image.
+
+    JPEG output saves much more bandwidth than PNG while still being readable.
+    Size/format can be controlled from .env:
+      CAPTCHA_IMAGE_FORMAT=jpeg
+      CAPTCHA_IMAGE_WIDTH=960
+      CAPTCHA_IMAGE_HEIGHT=480
+      CAPTCHA_JPEG_QUALITY=74
+    """
     try:
         from PIL import Image, ImageDraw, ImageFont, ImageFilter
     except Exception as exc:
@@ -177,18 +194,29 @@ def render_pre_spawn_captcha_image(code: str) -> InputFile:
 
         return font
 
+    width = max(640, int(CAPTCHA_IMAGE_WIDTH))
+    height = max(320, int(CAPTCHA_IMAGE_HEIGHT))
+    output_format = str(CAPTCHA_IMAGE_FORMAT or "jpeg").strip().lower()
+    if output_format == "jpg":
+        output_format = "jpeg"
+
+    image = Image.new("RGB", (width, height), (248, 248, 248))
+    draw = ImageDraw.Draw(image)
+
+    font = load_captcha_font(max(40, int(height * 0.12)))
+    layer_size = max(120, int(height * 0.34))
+
     def draw_rotated_digit(base_img, digit: str, center_pos: tuple[float, float], font, angle: int) -> None:
-        digit_layer = Image.new("RGBA", (180, 180), (255, 255, 255, 0))
+        digit_layer = Image.new("RGBA", (layer_size, layer_size), (255, 255, 255, 0))
         digit_draw = ImageDraw.Draw(digit_layer)
 
         bbox = digit_draw.textbbox((0, 0), digit, font=font)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
 
-        x = (180 - text_w) // 2
-        y = (180 - text_h) // 2
+        x = (layer_size - text_w) // 2
+        y = (layer_size - text_h) // 2
 
-        # Shadow + main digit. ဒါကြောင့် နည်းနည်းရူပ်ပြီးလည်း ဖတ်လို့ရမယ်။
         digit_draw.text((x + 2, y + 2), digit, font=font, fill=(180, 180, 180, 130))
         digit_draw.text((x, y), digit, font=font, fill=(70, 70, 70, 235))
 
@@ -200,24 +228,18 @@ def render_pre_spawn_captcha_image(code: str) -> InputFile:
 
         px = int(center_pos[0] - digit_layer.width / 2)
         py = int(center_pos[1] - digit_layer.height / 2)
-
         base_img.paste(digit_layer, (px, py), digit_layer)
 
-    width, height = 1280, 640
-    image = Image.new("RGB", (width, height), (248, 248, 248))
-    draw = ImageDraw.Draw(image)
-
-    font = load_captcha_font(58)
-
-    # Background noise dots
-    for _ in range(650):
+    # Background noise. Scaled down with image size to reduce generated media size.
+    dot_count = max(260, int((width * height) / 1250))
+    for _ in range(dot_count):
         x = random.randint(0, width - 1)
         y = random.randint(0, height - 1)
         shade = random.randint(145, 225)
-        if random.random() < 0.75:
+        if random.random() < 0.80:
             draw.point((x, y), fill=(shade, shade, shade))
         else:
-            draw.ellipse((x, y, x + 2, y + 2), fill=(shade, shade, shade))
+            draw.ellipse((x, y, x + 1, y + 1), fill=(shade, shade, shade))
 
     line_colors = [
         (145, 20, 60),
@@ -228,63 +250,59 @@ def render_pre_spawn_captcha_image(code: str) -> InputFile:
         (170, 60, 135),
     ]
 
-    xs = [180, 460, 820, 1100]
+    xs = [int(width * 0.14), int(width * 0.38), int(width * 0.64), int(width * 0.86)]
+    min_cy = int(height * 0.36)
+    max_cy = int(height * 0.62)
 
     for idx, digit in enumerate(str(code)[:4]):
         cx = xs[idx]
-
-        # အရင်လိုအပေါ်မတက်စေဘဲ image အလယ်ပိုင်းနားမှာထားမယ်
-        cy = random.randint(220, 390)
-
+        cy = random.randint(min_cy, max_cy)
         line_type = random.choice(["vertical", "horizontal", "diag_up", "diag_down"])
 
         if line_type == "vertical":
-            x1 = cx + random.randint(-28, 28)
-            y1 = cy - random.randint(95, 145)
-            x2 = x1 + random.randint(-14, 14)
-            y2 = cy + random.randint(95, 145)
+            x1 = cx + random.randint(-int(width * 0.025), int(width * 0.025))
+            y1 = cy - random.randint(int(height * 0.15), int(height * 0.22))
+            x2 = x1 + random.randint(-int(width * 0.015), int(width * 0.015))
+            y2 = cy + random.randint(int(height * 0.15), int(height * 0.22))
             text_angle = random.randint(-14, 14)
 
         elif line_type == "horizontal":
-            x1 = cx - random.randint(105, 155)
-            y1 = cy + random.randint(-24, 24)
-            x2 = cx + random.randint(105, 155)
-            y2 = y1 + random.randint(-15, 15)
+            x1 = cx - random.randint(int(width * 0.08), int(width * 0.12))
+            y1 = cy + random.randint(-int(height * 0.04), int(height * 0.04))
+            x2 = cx + random.randint(int(width * 0.08), int(width * 0.12))
+            y2 = y1 + random.randint(-int(height * 0.025), int(height * 0.025))
             text_angle = random.randint(-10, 10)
 
         elif line_type == "diag_up":
-            x1 = cx - random.randint(80, 125)
-            y1 = cy + random.randint(70, 115)
-            x2 = cx + random.randint(80, 125)
-            y2 = cy - random.randint(70, 115)
+            x1 = cx - random.randint(int(width * 0.06), int(width * 0.10))
+            y1 = cy + random.randint(int(height * 0.10), int(height * 0.18))
+            x2 = cx + random.randint(int(width * 0.06), int(width * 0.10))
+            y2 = cy - random.randint(int(height * 0.10), int(height * 0.18))
             text_angle = random.randint(-38, -15)
 
         else:
-            x1 = cx - random.randint(80, 125)
-            y1 = cy - random.randint(70, 115)
-            x2 = cx + random.randint(80, 125)
-            y2 = cy + random.randint(70, 115)
+            x1 = cx - random.randint(int(width * 0.06), int(width * 0.10))
+            y1 = cy - random.randint(int(height * 0.10), int(height * 0.18))
+            x2 = cx + random.randint(int(width * 0.06), int(width * 0.10))
+            y2 = cy + random.randint(int(height * 0.10), int(height * 0.18))
             text_angle = random.randint(15, 38)
 
         color = random.choice(line_colors)
-
-        # Jagged line
         points = []
-        steps = 26
+        steps = 24
+        jitter = max(2, int(min(width, height) * 0.005))
         for s in range(steps + 1):
             ratio = s / steps
-            px = int(x1 + (x2 - x1) * ratio + random.randint(-3, 3))
-            py = int(y1 + (y2 - y1) * ratio + random.randint(-3, 3))
+            px = int(x1 + (x2 - x1) * ratio + random.randint(-jitter, jitter))
+            py = int(y1 + (y2 - y1) * ratio + random.randint(-jitter, jitter))
             points.append((px, py))
 
-        draw.line(points, fill=color, width=random.randint(4, 6))
+        draw.line(points, fill=color, width=max(3, int(height * 0.009)))
 
-        # Line center နားမှာ digit ထားမယ်
         mx = (x1 + x2) / 2
         my = (y1 + y2) / 2
-
-        digit_x = mx + random.randint(-12, 12)
-        digit_y = my + random.randint(-12, 12)
+        digit_x = mx + random.randint(-int(width * 0.012), int(width * 0.012))
+        digit_y = my + random.randint(-int(height * 0.018), int(height * 0.018))
 
         draw_rotated_digit(
             image,
@@ -294,37 +312,39 @@ def render_pre_spawn_captcha_image(code: str) -> InputFile:
             text_angle + random.randint(-8, 8),
         )
 
-    # Extra clutter lines
-    for _ in range(24):
+    for _ in range(max(12, int((width * height) / 28000))):
         x1 = random.randint(0, width)
         y1 = random.randint(0, height)
-        x2 = x1 + random.randint(-140, 140)
-        y2 = y1 + random.randint(-100, 100)
-
+        x2 = x1 + random.randint(-int(width * 0.10), int(width * 0.10))
+        y2 = y1 + random.randint(-int(height * 0.10), int(height * 0.10))
         shade = random.randint(165, 225)
-        draw.line(
-            (x1, y1, x2, y2),
-            fill=(shade, shade, shade),
-            width=random.choice([1, 1, 2]),
-        )
+        draw.line((x1, y1, x2, y2), fill=(shade, shade, shade), width=1)
 
-    # Extra small decoy dots after digits
-    for _ in range(420):
+    extra_dots = max(160, int((width * height) / 1800))
+    for _ in range(extra_dots):
         x = random.randint(0, width - 1)
         y = random.randint(0, height - 1)
         shade = random.randint(135, 220)
         draw.point((x, y), fill=(shade, shade, shade))
 
-    # Slight blur so text/lines don't look too clean
-    image = image.filter(ImageFilter.GaussianBlur(radius=0.35))
+    image = image.filter(ImageFilter.GaussianBlur(radius=0.28))
 
     bio = io.BytesIO()
-    bio.name = "bika_captcha.png"
-    image.save(bio, format="PNG")
+    if output_format in {"jpeg", "jpg"}:
+        bio.name = "bika_captcha.jpg"
+        image.save(
+            bio,
+            format="JPEG",
+            quality=max(45, min(95, int(CAPTCHA_JPEG_QUALITY))),
+            optimize=True,
+            progressive=True,
+        )
+    else:
+        bio.name = "bika_captcha.png"
+        image.save(bio, format="PNG", optimize=True)
+
     bio.seek(0)
-
-    return InputFile(bio, filename="bika_captcha.png")
-
+    return InputFile(bio, filename=bio.name)
 
 def pre_spawn_keyboard(chat_id: int, nonce: str, options: list[str]) -> InlineKeyboardMarkup:
     buttons = [
@@ -567,7 +587,7 @@ async def send_manual_pre_spawn_captcha(
                     "rarity": scheduled_rarity,
                     "anime": str(photo.get("anime", "")),
                     "fileId": str(photo.get("fileId", "")),
-                    "mediaType": detect_card_media_type(photo),
+                    "mediaType": str(photo.get("_sentMediaType") or detect_card_media_type(photo)),
                     "mimeType": str(photo.get("mimeType", "") or ""),
                     "fileName": str(photo.get("fileName", "") or ""),
                     "fileUniqueId": str(photo.get("fileUniqueId", "") or ""),
@@ -830,43 +850,50 @@ def detect_card_media_type(card: dict) -> str:
     return "photo"
 
 
-async def send_card_media(context: ContextTypes.DEFAULT_TYPE, chat_id: int, card: dict, caption: str):
-    """Send card media with safe fallbacks.
+def _actual_media_type_from_error(exc: Exception) -> str | None:
+    """Read Telegram type-mismatch BadRequest text and return the real file type."""
+    text = repr(exc).lower()
+    for actual in ("photo", "video", "animation", "document"):
+        if f"file of type {actual}" in text:
+            return actual
+    return None
 
-    Some old DB rows may have mediaType missing or wrong. Try the detected type first,
-    then fallback methods so a video file_id does not get stuck just because it was
-    saved as a photo card earlier.
+
+async def _send_media_as(context: ContextTypes.DEFAULT_TYPE, chat_id: int, method: str, file_id: str, caption: str):
+    if method == "video":
+        return await context.bot.send_video(chat_id=chat_id, video=file_id, caption=caption)
+    if method == "animation":
+        return await context.bot.send_animation(chat_id=chat_id, animation=file_id, caption=caption)
+    if method == "document":
+        return await context.bot.send_document(chat_id=chat_id, document=file_id, caption=caption)
+    return await context.bot.send_photo(chat_id=chat_id, photo=file_id, caption=caption)
+
+
+async def send_card_media(context: ContextTypes.DEFAULT_TYPE, chat_id: int, card: dict, caption: str):
+    """Send card media without fallback spam.
+
+    The old version tried photo/video/animation/document one after another.
+    That wasted Telegram API traffic and quickly hit flood limits. This version:
+      1) tries the detected type once;
+      2) if Telegram says the file is actually another type, retries once with that type;
+      3) stops.
     """
     media_type = detect_card_media_type(card)
     file_id = str(card.get("fileId") or "")
     if not file_id:
         raise RuntimeError("Missing card fileId")
 
-    if media_type == "video":
-        send_order = ["video", "animation", "document", "photo"]
-    elif media_type == "animation":
-        send_order = ["animation", "video", "document", "photo"]
-    elif media_type == "document":
-        send_order = ["document", "video", "animation", "photo"]
-    else:
-        send_order = ["photo", "video", "animation", "document"]
-
-    last_exc = None
-    for method in send_order:
-        try:
-            if method == "video":
-                return await context.bot.send_video(chat_id=chat_id, video=file_id, caption=caption)
-            if method == "animation":
-                return await context.bot.send_animation(chat_id=chat_id, animation=file_id, caption=caption)
-            if method == "document":
-                return await context.bot.send_document(chat_id=chat_id, document=file_id, caption=caption)
-            return await context.bot.send_photo(chat_id=chat_id, photo=file_id, caption=caption)
-        except Exception as exc:
-            last_exc = exc
-            print(f"DROP SEND {method.upper()} FALLBACK ERROR:", repr(exc))
-
-    raise RuntimeError(f"All media send methods failed: {last_exc!r}")
-
+    try:
+        sent = await _send_media_as(context, chat_id, media_type, file_id, caption)
+        card["_sentMediaType"] = media_type
+        return sent
+    except Exception as exc:
+        actual_type = _actual_media_type_from_error(exc)
+        if actual_type and actual_type != media_type:
+            sent = await _send_media_as(context, chat_id, actual_type, file_id, caption)
+            card["_sentMediaType"] = actual_type
+            return sent
+        raise
 
 def card_media_snapshot(card: dict) -> dict:
     return {
@@ -921,7 +948,7 @@ async def send_spawn_card(
         "rarity": str(photo.get("rarity", "Common")),
         "anime": str(photo.get("anime", "")),
         "fileId": str(photo.get("fileId", "")),
-        "mediaType": detect_card_media_type(photo),
+        "mediaType": str(photo.get("_sentMediaType") or detect_card_media_type(photo)),
         "mimeType": str(photo.get("mimeType", "") or ""),
         "fileName": str(photo.get("fileName", "") or ""),
         "fileUniqueId": str(photo.get("fileUniqueId", "") or ""),
@@ -933,6 +960,17 @@ async def send_spawn_card(
         "claimedByName": "",
         "droppedAt": utcnow(),
     }
+    sent_media_type = str(active_drop.get("mediaType") or "")
+    stored_media_type = str(photo.get("mediaType") or "").strip().lower()
+    if sent_media_type and sent_media_type != stored_media_type and photo.get("cardId"):
+        try:
+            await get_db().photos.update_one(
+                {"cardId": str(photo.get("cardId"))},
+                {"$set": {"mediaType": sent_media_type, "updatedAt": utcnow()}},
+            )
+        except Exception:
+            pass
+
     await get_db().groups.update_one(
         {"groupId": int(chat_id)},
         {"$set": {"activeDrop": active_drop, "updatedAt": utcnow()}},

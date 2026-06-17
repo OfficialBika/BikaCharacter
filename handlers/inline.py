@@ -13,6 +13,7 @@ from telegram import (
 )
 from telegram.ext import Application, ContextTypes, InlineQueryHandler
 
+from config import INLINE_CACHE_TIME, INLINE_PAGE_SIZE
 from database.mongodb import get_db
 from utils.parser import normalized_search_name
 from utils.permissions import is_global_admin
@@ -21,7 +22,6 @@ from utils.text import escape_html
 from utils.i18n import t
 
 # Telegram Bot API allows up to 50 inline results per answer.
-INLINE_PAGE_SIZE = 50
 
 
 def _inline_caption(photo: dict) -> str:
@@ -327,17 +327,17 @@ async def inline_character_search(update: Update, context: ContextTypes.DEFAULT_
     next_offset = str(offset + INLINE_PAGE_SIZE) if has_more else ""
 
     try:
-        await query.answer(results, cache_time=5, is_personal=True, next_offset=next_offset)
+        await query.answer(results, cache_time=INLINE_CACHE_TIME, is_personal=is_harem_query, next_offset=next_offset)
     except Exception as exc:
         # If one legacy item has an unknown/incorrect media type, Telegram rejects the whole answer.
         # Retry with only items that have explicit media metadata.
         print("INLINE ANSWER ERROR, RETRYING STRICT:", repr(exc))
         safe_results = _build_results(photos, is_harem_query, strict_known_media=True)
         try:
-            await query.answer(safe_results, cache_time=1, is_personal=True, next_offset="")
+            await query.answer(safe_results, cache_time=max(5, INLINE_CACHE_TIME), is_personal=is_harem_query, next_offset="")
         except Exception as exc2:
             print("INLINE STRICT ANSWER ERROR:", repr(exc2))
-            await query.answer([], cache_time=1, is_personal=True, next_offset="")
+            await query.answer([], cache_time=max(5, INLINE_CACHE_TIME), is_personal=is_harem_query, next_offset="")
 
 
 def register_inline_handlers(app: Application) -> None:
