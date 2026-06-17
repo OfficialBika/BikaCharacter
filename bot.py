@@ -14,6 +14,8 @@ from config import (
     MONGODB_URI,
     PORT,
     RUN_MODE,
+    ENABLE_HEALTH_SERVER,
+    BOT_ALLOWED_UPDATES,
     WEBHOOK_DROP_PENDING_UPDATES,
     WEBHOOK_PATH,
     WEBHOOK_SECRET_TOKEN,
@@ -90,6 +92,11 @@ async def start_web_server(app_bot: Application | None = None) -> web.AppRunner:
     return runner
 
 
+def allowed_updates_for_bot() -> list[str]:
+    """Limit Telegram update delivery to the update types this bot uses."""
+    return list(BOT_ALLOWED_UPDATES or ["message", "callback_query", "inline_query", "my_chat_member"])
+
+
 async def run_webhook(app: Application) -> tuple[web.AppRunner, str]:
     if not WEBHOOK_URL:
         raise RuntimeError("Missing WEBHOOK_URL. Example: https://your-service.onrender.com")
@@ -100,7 +107,7 @@ async def run_webhook(app: Application) -> tuple[web.AppRunner, str]:
     health_runner = await start_web_server(app)
     await app.bot.set_webhook(
         url=full_webhook_url,
-        allowed_updates=Update.ALL_TYPES,
+        allowed_updates=allowed_updates_for_bot(),
         secret_token=WEBHOOK_SECRET_TOKEN or None,
         drop_pending_updates=WEBHOOK_DROP_PENDING_UPDATES,
     )
@@ -108,17 +115,23 @@ async def run_webhook(app: Application) -> tuple[web.AppRunner, str]:
     return health_runner, full_webhook_url
 
 
-async def run_polling(app: Application) -> web.AppRunner:
-    health_runner = await start_web_server(None)
-    await app.bot.delete_webhook(drop_pending_updates=False)
-    await app.updater.start_polling(drop_pending_updates=False, allowed_updates=Update.ALL_TYPES)
+async def run_polling(app: Application) -> web.AppRunner | None:
+    health_runner = None
+    if ENABLE_HEALTH_SERVER:
+        health_runner = await start_web_server(None)
+
+    await app.bot.delete_webhook(drop_pending_updates=WEBHOOK_DROP_PENDING_UPDATES)
+    await app.updater.start_polling(
+        drop_pending_updates=WEBHOOK_DROP_PENDING_UPDATES,
+        allowed_updates=allowed_updates_for_bot(),
+    )
     print("BIKA Character Bot launched in polling mode")
     return health_runner
 
 
 async def main() -> None:
     print("Starting BIKA Character Bot...", flush=True)
-    print(f"RUN_MODE={RUN_MODE} PORT={PORT} WEBHOOK_URL_SET={bool(WEBHOOK_URL)} WEBHOOK_PATH={WEBHOOK_PATH}", flush=True)
+    print(f"RUN_MODE={RUN_MODE} PORT={PORT} WEBHOOK_URL_SET={bool(WEBHOOK_URL)} WEBHOOK_PATH={WEBHOOK_PATH} HEALTH={ENABLE_HEALTH_SERVER}", flush=True)
     print(f"MONGODB_URI_SET={bool(MONGODB_URI)}", flush=True)
 
     if not BOT_TOKEN:
