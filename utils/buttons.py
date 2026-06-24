@@ -14,9 +14,11 @@ from config import (
 from utils.rarity import get_rarity_button_emoji
 
 BUTTON_STYLE_PREFIX = {
-    "primary": "🔵",
-    "success": "✅",
-    "danger": "❌",
+    # Keep style colors through Bot API fields only. Do not prefix visible
+    # 🔵/✅/❌ emojis into button text.
+    "primary": "",
+    "success": "",
+    "danger": "",
 }
 
 _LEADING_SYMBOL_RE = re.compile(
@@ -50,9 +52,12 @@ def make_button(
     """Create an InlineKeyboardButton with Bot API button style/custom emoji.
 
     Fallback behavior:
-    - If custom emoji icon is disabled or missing, fallback_emoji is prefixed in text.
+    - Style colors are passed through Bot API fields only; no visible color emoji
+      (🔵/✅/❌) is added to text.
+    - Custom emoji fallback is still supported for special buttons/rarities when
+      a custom emoji icon cannot be used.
     - If python-telegram-bot is too old to accept api_kwargs, the button is created
-      without api_kwargs and the fallback emoji stays in the text.
+      without api_kwargs and custom fallback emoji stays in the text when provided.
     """
     label = _strip_leading_symbol(text) if strip_existing_emoji else str(text or "").strip()
     api_kwargs = _button_api_kwargs(style=style, custom_emoji_id=custom_emoji_id)
