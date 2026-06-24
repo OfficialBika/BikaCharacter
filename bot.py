@@ -42,6 +42,7 @@ async def register_commands(app: Application) -> None:
     await app.bot.set_my_commands(
         [
             BotCommand("harem", "Display your harem"),
+            BotCommand("search", "Search characters"),
             BotCommand("profile", "See your profile"),
             BotCommand("fav", "Set or show favourite character"),
             BotCommand("check", "Check character by ID"),

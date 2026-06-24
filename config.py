@@ -115,7 +115,25 @@ INLINE_CACHE_TIME = env_int("INLINE_CACHE_TIME", 60, 0, 300)
 CLAIM_DAILY_LIMIT = int(os.getenv("CLAIM_DAILY_LIMIT", "25") or 25)
 CLAIM_TIMEZONE = os.getenv("CLAIM_TIMEZONE", "Asia/Yangon").strip() or "Asia/Yangon"
 
+# Limited / owner-give-only card collection.
+# Cards with rarity Limited or non-numeric IDs such as 1a, 1s, 1bc are stored here.
+LIMITED_CARDS_COLLECTION = os.getenv("LIMITED_CARDS_COLLECTION", "limited_cards").strip() or "limited_cards"
+LIMITED_RARITY_NAME = os.getenv("LIMITED_RARITY_NAME", "Limited").strip() or "Limited"
+LIMITED_CUSTOM_EMOJI_ID = os.getenv("LIMITED_CUSTOM_EMOJI_ID", "5361837567463399422").strip()
+LIMITED_FALLBACK_EMOJI = os.getenv("LIMITED_FALLBACK_EMOJI", "🔮").strip() or "🔮"
+# Bot API supports custom emoji icons and colored button styles on InlineKeyboardButton.
+# These toggles make rollback easy if a self-hosted/old Bot API server is used.
+ENABLE_BUTTON_CUSTOM_EMOJI = env_bool("ENABLE_BUTTON_CUSTOM_EMOJI", "true")
+ENABLE_BUTTON_STYLE = env_bool("ENABLE_BUTTON_STYLE", "true")
+
+LIMITED_EMOJI = (
+    f'<tg-emoji emoji-id="{LIMITED_CUSTOM_EMOJI_ID}">{LIMITED_FALLBACK_EMOJI}</tg-emoji>'
+    if LIMITED_CUSTOM_EMOJI_ID
+    else LIMITED_FALLBACK_EMOJI
+)
+
 RARITY_ORDER = [
+    "Limited",
     "Supreme",
     "Cataphract",
     "CrossVerse",
@@ -127,9 +145,10 @@ RARITY_ORDER = [
     "Common",
 ]
 
-# Telegram Bot API does not allow real colored button backgrounds. These emoji labels are
-# used to make inline buttons visually colored/premium-style.
+# Rarity emoji used inside HTML messages/captions. Buttons use utils.buttons
+# to send Bot API icon_custom_emoji_id/style with safe fallback text.
 RARITY_EMOJI = {
+    "Limited": LIMITED_EMOJI,
     "Supreme": "🪞",
     "Cataphract": "✨",
     "CrossVerse": "⚡",
@@ -142,6 +161,7 @@ RARITY_EMOJI = {
 }
 
 RARITY_EXP = {
+    "Limited": 0,
     "Supreme": 100,
     "Cataphract": 60,
     "CrossVerse": 35,
