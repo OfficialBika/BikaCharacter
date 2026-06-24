@@ -77,7 +77,17 @@ BOT_ALLOWED_UPDATES = [
     if item.strip()
 ]
 # Ignore Telegram message updates older than the process start by this many seconds.
-DROP_IGNORE_OLD_MESSAGES_SECONDS = env_int("DROP_IGNORE_OLD_MESSAGES_SECONDS", 30, 0, 3600)
+# In VPS/PM2 polling mode, 0 is safest: any update created before this process
+# started is ignored, so offline queued messages cannot trigger mass drops.
+DROP_IGNORE_OLD_MESSAGES_SECONDS = env_int("DROP_IGNORE_OLD_MESSAGES_SECONDS", 0, 0, 3600)
+
+# Startup reset controls for VPS/PM2 polling.
+# When the bot process starts, reset all group message counters to avoid an old
+# near-complete counter (e.g. 98/100) immediately dropping after restart.
+RESET_GROUP_MESSAGE_COUNT_ON_STARTUP = env_bool("RESET_GROUP_MESSAGE_COUNT_ON_STARTUP", "true")
+# Keep active drops by default. Set true only if you want every restart to remove
+# currently spawned / unclaimed drops and pending captchas.
+CLEAR_ACTIVE_DROP_ON_STARTUP = env_bool("CLEAR_ACTIVE_DROP_ON_STARTUP", "false")
 
 # Captcha image compression. JPEG is much smaller than PNG for Render bandwidth.
 CAPTCHA_IMAGE_FORMAT = os.getenv("CAPTCHA_IMAGE_FORMAT", "jpeg").strip().lower()

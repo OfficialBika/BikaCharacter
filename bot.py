@@ -16,14 +16,17 @@ from config import (
     RUN_MODE,
     ENABLE_HEALTH_SERVER,
     BOT_ALLOWED_UPDATES,
+    RESET_GROUP_MESSAGE_COUNT_ON_STARTUP,
+    CLEAR_ACTIVE_DROP_ON_STARTUP,
     WEBHOOK_DROP_PENDING_UPDATES,
     WEBHOOK_PATH,
     WEBHOOK_SECRET_TOKEN,
     WEBHOOK_URL,
 )
-from database.mongodb import close_db, init_db
+from database.mongodb import close_db, get_db, init_db
 from handlers import register_handlers
 from web.app import create_health_app
+from utils.text import utcnow
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -129,6 +132,35 @@ async def run_polling(app: Application) -> web.AppRunner | None:
     return health_runner
 
 
+async def reset_group_state_on_startup() -> None:
+    """Reset group counters on every process start.
+
+    This is intentionally done after MongoDB init and before polling/webhook starts.
+    It prevents the bot from using old messageCount values left in MongoDB before a
+    VPS/PM2 restart, so changeTime counting always starts from 0 after startup.
+    """
+    set_data = {}
+    if RESET_GROUP_MESSAGE_COUNT_ON_STARTUP:
+        set_data["messageCount"] = 0
+    if CLEAR_ACTIVE_DROP_ON_STARTUP:
+        set_data["activeDrop"] = None
+
+    if not set_data:
+        print("STARTUP GROUP RESET: disabled", flush=True)
+        return
+
+    set_data["updatedAt"] = utcnow()
+    result = await get_db().groups.update_many({}, {"$set": set_data})
+    print(
+        "STARTUP GROUP RESET: "
+        f"matched={getattr(result, 'matched_count', 0)} "
+        f"modified={getattr(result, 'modified_count', 0)} "
+        f"messageCountReset={RESET_GROUP_MESSAGE_COUNT_ON_STARTUP} "
+        f"activeDropCleared={CLEAR_ACTIVE_DROP_ON_STARTUP}",
+        flush=True,
+    )
+
+
 async def main() -> None:
     print("Starting BIKA Character Bot...", flush=True)
     print(f"RUN_MODE={RUN_MODE} PORT={PORT} WEBHOOK_URL_SET={bool(WEBHOOK_URL)} WEBHOOK_PATH={WEBHOOK_PATH} HEALTH={ENABLE_HEALTH_SERVER}", flush=True)
@@ -142,6 +174,7 @@ async def main() -> None:
         raise RuntimeError("Missing WEBHOOK_URL in Render Environment Variables. Example: https://your-service.onrender.com")
 
     await init_db()
+    await reset_group_state_on_startup()
 
     app = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).build()
     register_handlers(app)
