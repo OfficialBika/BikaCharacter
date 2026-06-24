@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from config import RARITY_ORDER
+from config import RARITY_ORDER, LIMITED_RARITY_NAME
 from utils.rarity import normalize_rarity
 
 
@@ -88,10 +88,11 @@ def parse_add_caption(caption: str = "") -> Optional[dict]:
     """Parse /add captions.
 
     Supported formats:
-      /add 12 | Yelan | Legendary | Genshin Impact   -> update/save explicit ID 12
-      /add Yelan | Legendary | Genshin Impact        -> new card, ID auto-assigned
+      /add 12 | Yelan | Legendary | Genshin Impact   -> update/save explicit numeric ID 12
+      /add 1a | Special | Limited | Bika Limited      -> save owner-only limited card ID 1a
+      /add Yelan | Legendary | Genshin Impact        -> new normal card, ID auto-assigned
 
-    Returns `_cardIdProvided=True` when the caption included a numeric ID.
+    Returns `_cardIdProvided=True` when the caption included an explicit ID.
     For auto-ID new cards, cardId is an empty string and the add handler assigns it.
     """
     first_line = str(caption or "").split("\n")[0].strip()
@@ -107,7 +108,7 @@ def parse_add_caption(caption: str = "") -> Optional[dict]:
     anime = ""
     card_id_provided = False
 
-    if len(parts) >= 4 and re.fullmatch(r"\d+", parts[0]):
+    if len(parts) >= 4 and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", parts[0]):
         card_id, name, rarity_raw, anime = parts[:4]
         card_id_provided = True
     elif len(parts) >= 3:

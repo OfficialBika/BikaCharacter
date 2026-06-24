@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 
-from config import RARITY_EMOJI, RARITY_EXP, RARITY_ORDER
+from config import LIMITED_FALLBACK_EMOJI, LIMITED_RARITY_NAME, RARITY_EMOJI, RARITY_EXP, RARITY_ORDER
 
 
 def get_rarity_emoji(rarity: str | None) -> str:
@@ -11,6 +11,21 @@ def get_rarity_emoji(rarity: str | None) -> str:
 
 def get_rarity_exp(rarity: str | None) -> int:
     return int(RARITY_EXP.get(str(rarity or "Common"), 1))
+
+
+def get_rarity_button_emoji(rarity: str | None) -> str:
+    """Return a button-safe emoji.
+
+    Button text is plain text, so HTML <tg-emoji> tags must not be used there.
+    Limited buttons use icon_custom_emoji_id when available and this fallback emoji
+    when custom emoji icons are disabled or unsupported.
+    """
+    if str(rarity or "") == str(LIMITED_RARITY_NAME):
+        return LIMITED_FALLBACK_EMOJI
+    emoji = RARITY_EMOJI.get(str(rarity or ""), "🎴")
+    if isinstance(emoji, str) and emoji.startswith("<tg-emoji"):
+        return LIMITED_FALLBACK_EMOJI
+    return emoji
 
 
 def normalize_rarity(raw: str | None) -> str | None:

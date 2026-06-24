@@ -7,7 +7,7 @@ from typing import Optional
 from pymongo import ReturnDocument
 from telegram import Chat, User
 
-from config import DEFAULT_CHANGETIME, RARITY_ORDER
+from config import DEFAULT_CHANGETIME, RARITY_ORDER, LIMITED_CARDS_COLLECTION
 from database.mongodb import get_db
 from utils.parser import normalized_search_name
 from utils.rarity import get_rarity_exp
@@ -109,7 +109,27 @@ async def get_user_doc(user_id: int) -> Optional[dict]:
 
 
 async def get_photo_by_card_id(card_id: str) -> Optional[dict]:
-    return await get_db().photos.find_one({"cardId": str(card_id)})
+    """Find a card by ID from normal photos first, then owner-only limited_cards.
+
+    Limited cards are intentionally not used by random drop helpers below because
+    all random drop queries read only from db.photos.
+    """
+    db = get_db()
+    card_id = str(card_id)
+    doc = await db.photos.find_one({"cardId": card_id})
+    if doc:
+        doc = dict(doc)
+        doc["_sourceCollection"] = "photos"
+        doc["ownerOnly"] = False
+        return doc
+
+    doc = await db[LIMITED_CARDS_COLLECTION].find_one({"cardId": card_id})
+    if doc:
+        doc = dict(doc)
+        doc["_sourceCollection"] = LIMITED_CARDS_COLLECTION
+        doc["ownerOnly"] = True
+        return doc
+    return None
 
 
 async def get_random_photo(query: Optional[dict] = None) -> Optional[dict]:
