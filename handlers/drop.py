@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import random
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,7 @@ from pathlib import Path
 from pymongo import ReturnDocument
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.constants import ParseMode
+from telegram.error import Forbidden
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from config import (
@@ -44,6 +46,259 @@ PRE_SPAWN_CAPTCHA_RARITIES = {"Divine", "CrossVerse", "Cataphract", "Supreme"}
 # start from 0 on every VPS/PM2 restart.
 BOT_STARTED_AT = datetime.now(timezone.utc)
 STALE_UPDATE_GRACE_SECONDS = int(DROP_IGNORE_OLD_MESSAGES_SECONDS)
+
+
+# Drop safety controls. Kept inside drop.py so this update can be installed with
+# one file only. You can still override these from .env without editing config.py.
+def _env_bool(name: str, default: str = "true") -> bool:
+    return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int, min_value: int | None = None, max_value: int | None = None) -> int:
+    try:
+        value = int(os.getenv(name, str(default)) or default)
+    except Exception:
+        value = int(default)
+    if min_value is not None:
+        value = max(int(min_value), value)
+    if max_value is not None:
+        value = min(int(max_value), value)
+    return value
+
+
+AUTO_SKIP_BAD_GROUPS = _env_bool("AUTO_SKIP_BAD_GROUPS", "true")
+BAD_GROUP_PAUSE_MINUTES = _env_int("BAD_GROUP_PAUSE_MINUTES", 60, 1, 1440)
+DROP_SPAWN_LOCK_SECONDS = _env_int("DROP_SPAWN_LOCK_SECONDS", 45, 10, 300)
+
+DROP_LOCK_UNSET = {
+    "dropSpawnLockUntil": "",
+    "dropSpawnLockAt": "",
+    "dropSpawnLockReason": "",
+}
+DROP_PAUSE_UNSET = {
+    "dropPausedUntil": "",
+    "dropPausedReason": "",
+    "lastDropSendError": "",
+}
+
+
+def _drop_allowed_filter(now: datetime) -> dict:
+    """MongoDB filter that allows counting/spawning only when the group is ready.
+
+    This prevents double drops in the same group while a card/captcha is still
+    active or while another message update is already spawning a card.
+    """
+    return {
+        "$and": [
+            {
+                "$or": [
+                    {"dropPausedUntil": {"$exists": False}},
+                    {"dropPausedUntil": None},
+                    {"dropPausedUntil": {"$lte": now}},
+                ]
+            },
+            {
+                "$or": [
+                    {"dropSpawnLockUntil": {"$exists": False}},
+                    {"dropSpawnLockUntil": None},
+                    {"dropSpawnLockUntil": {"$lte": now}},
+                ]
+            },
+            {
+                "$or": [
+                    {"activeDrop": {"$exists": False}},
+                    {"activeDrop": None},
+                    {"activeDrop": {}},
+                    {"activeDrop.isClaimed": True},
+                    {"activeDrop.preSpawnCaptcha.status": {"$in": ["failed", "timeout", "missing_card"]}},
+                ]
+            },
+        ]
+    }
+
+
+def is_active_unclaimed_drop(active: dict | None) -> bool:
+    """True when a group already has an unclaimed card/captcha.
+
+    Existing code only blocked pending pre-spawn captcha. This also blocks normal
+    unclaimed cards, fixing cases where two drops can appear in one group.
+    """
+    active = active or {}
+    if not active:
+        return False
+
+    pre_cap = active.get("preSpawnCaptcha") or {}
+    if pre_cap.get("status") in {"pending", "solving"}:
+        return True
+
+    if active.get("cardId") and not active.get("isClaimed"):
+        return True
+
+    return False
+
+
+def _dt_is_future(value) -> bool:
+    ts = _datetime_to_utc_ts(value)
+    return bool(ts and ts > datetime.now(timezone.utc).timestamp())
+
+
+async def is_group_drop_paused(chat_id: int, group: dict | None) -> bool:
+    """Return True if this group is temporarily auto-skipped.
+
+    Expired pause records are cleared automatically so drops resume without an
+    owner command after BAD_GROUP_PAUSE_MINUTES.
+    """
+    group = group or {}
+    paused_until = group.get("dropPausedUntil")
+    if _dt_is_future(paused_until):
+        return True
+
+    if group.get("dropPaused"):
+        try:
+            await get_db().groups.update_one(
+                {"groupId": int(chat_id)},
+                {
+                    "$set": {"dropPaused": False, "updatedAt": utcnow()},
+                    "$unset": DROP_PAUSE_UNSET,
+                },
+            )
+        except Exception:
+            pass
+
+    return False
+
+
+def is_drop_send_permission_error(exc: Exception) -> bool:
+    """Detect errors caused by group permission/member status.
+
+    These are safe to auto-skip because retrying immediately will only spam logs
+    and slow the bot.
+    """
+    text = repr(exc).lower()
+    permission_needles = (
+        "not enough rights",
+        "have no rights",
+        "not enough rights to send",
+        "forbidden",
+        "bot is not a member",
+        "bot was kicked",
+        "user is deactivated",
+        "chat not found",
+        "group chat was deactivated",
+        "not enough rights to send photos",
+        "not enough rights to send videos",
+        "not enough rights to send documents",
+        "can't send",
+        "cannot send",
+    )
+    return isinstance(exc, Forbidden) or any(needle in text for needle in permission_needles)
+
+
+def drop_send_error_reason(exc: Exception) -> str:
+    text = repr(exc).lower()
+    if "not enough rights" in text and "photo" in text:
+        return "no_photo_permission"
+    if "not enough rights" in text and "video" in text:
+        return "no_video_permission"
+    if "not enough rights" in text and "document" in text:
+        return "no_document_permission"
+    if "not enough rights" in text or "have no rights" in text:
+        return "no_send_permission"
+    if "bot is not a member" in text or "bot was kicked" in text or "forbidden" in text:
+        return "bot_not_member_or_forbidden"
+    if "chat not found" in text or "deactivated" in text:
+        return "chat_unavailable"
+    return "send_error"
+
+
+async def mark_group_drop_skipped(
+    chat_id: int,
+    reason: str,
+    exc: Exception | None = None,
+    pause_group: bool = False,
+) -> None:
+    """Clear the current drop turn and optionally pause the group.
+
+    This is the auto-skip system for muted/no-permission groups. It prevents the
+    same bad group from repeatedly causing DROP SEND ERROR and slowing the bot.
+    """
+    now = utcnow()
+    set_data = {
+        "activeDrop": None,
+        "messageCount": 0,
+        "lastDropSkipReason": str(reason),
+        "lastDropSkipAt": now,
+        "updatedAt": now,
+    }
+    unset_data = dict(DROP_LOCK_UNSET)
+    inc_data = {"skippedDrops": 1}
+
+    if exc is not None:
+        set_data["lastDropSendError"] = repr(exc)[:500]
+        inc_data["dropSendErrors"] = 1
+
+    if AUTO_SKIP_BAD_GROUPS and pause_group:
+        set_data.update(
+            {
+                "dropPaused": True,
+                "dropPausedReason": str(reason),
+                "dropPausedAt": now,
+                "dropPausedUntil": now + timedelta(minutes=BAD_GROUP_PAUSE_MINUTES),
+            }
+        )
+    else:
+        set_data["dropPaused"] = False
+        unset_data.update(DROP_PAUSE_UNSET)
+
+    try:
+        await get_db().groups.update_one(
+            {"groupId": int(chat_id)},
+            {"$set": set_data, "$inc": inc_data, "$unset": unset_data},
+            upsert=True,
+        )
+    except Exception as db_exc:
+        print("DROP AUTO-SKIP DB ERROR:", repr(db_exc))
+
+    print(
+        f"DROP AUTO-SKIP: chat_id={int(chat_id)} reason={reason} "
+        f"pause={bool(AUTO_SKIP_BAD_GROUPS and pause_group)} error={repr(exc)[:220] if exc else ''}",
+        flush=True,
+    )
+
+
+async def acquire_drop_spawn_lock(chat_id: int, change_time: int, reason: str = "auto_drop") -> dict | None:
+    """Atomically lock a group before spawning.
+
+    With concurrent_updates=True, multiple messages can cross changeTime at the
+    same time. This lock ensures only one update can reset the counter and spawn.
+    """
+    now = utcnow()
+    query = {"groupId": int(chat_id), "messageCount": {"$gte": int(change_time)}}
+    query.update(_drop_allowed_filter(now))
+
+    return await get_db().groups.find_one_and_update(
+        query,
+        {
+            "$set": {
+                "messageCount": 0,
+                "dropSpawnLockAt": now,
+                "dropSpawnLockUntil": now + timedelta(seconds=DROP_SPAWN_LOCK_SECONDS),
+                "dropSpawnLockReason": str(reason),
+                "updatedAt": now,
+            }
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+async def release_drop_spawn_lock(chat_id: int) -> None:
+    try:
+        await get_db().groups.update_one(
+            {"groupId": int(chat_id)},
+            {"$unset": DROP_LOCK_UNSET, "$set": {"updatedAt": utcnow()}},
+        )
+    except Exception:
+        pass
 
 
 def _datetime_to_utc_ts(value) -> float:
@@ -416,6 +671,9 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not group:
         return
 
+    if await is_group_drop_paused(int(chat.id), group):
+        return
+
     active = (group or {}).get("activeDrop") or {}
     pre_cap = active.get("preSpawnCaptcha") or {}
     if pre_cap.get("status") == "pending":
@@ -431,10 +689,16 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     }
                 },
             )
+            active = {}
         else:
             # A high-rarity pre-spawn captcha is already active. Do not advance drop counter
             # until it is solved, failed, or timed out.
             return
+
+    # Do not count messages while an unclaimed card is already active.
+    # This prevents two drops from appearing in the same group at the same time.
+    if is_active_unclaimed_drop(active):
+        return
 
     # If Telegram gives us a real user, apply bot-mute / 6-message streak logic.
     # Forwarded media still has the forwarding user as effective_user and will be counted.
@@ -447,25 +711,37 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         just_muted = await record_message_and_maybe_mute(update)
         if just_muted:
-            await update.effective_message.reply_text(
-                t("bot_muted", name=user.first_name, minutes=BOT_MUTE_SECONDS // 60)
-            )
+            try:
+                await update.effective_message.reply_text(
+                    t("bot_muted", name=user.first_name, minutes=BOT_MUTE_SECONDS // 60)
+                )
+            except Exception:
+                pass
             return
 
     db = get_db()
+    now = utcnow()
+    query = {"groupId": int(chat.id)}
+    query.update(_drop_allowed_filter(now))
+
     updated = await db.groups.find_one_and_update(
-        {"groupId": int(chat.id)},
-        {"$inc": {"messageCount": 1}, "$set": {"updatedAt": utcnow()}},
+        query,
+        {"$inc": {"messageCount": 1}, "$set": {"updatedAt": now}},
         return_document=ReturnDocument.AFTER,
     )
+    if not updated:
+        return
+
     change_time = int((updated or {}).get("changeTime", DEFAULT_CHANGETIME) or DEFAULT_CHANGETIME)
     message_count = int((updated or {}).get("messageCount", 0) or 0)
     if message_count < change_time:
         return
 
-    await db.groups.update_one({"groupId": int(chat.id)}, {"$set": {"messageCount": 0, "updatedAt": utcnow()}})
-    await spawn_random_character(update, context)
+    locked = await acquire_drop_spawn_lock(int(chat.id), change_time, "auto_drop")
+    if not locked:
+        return
 
+    await spawn_random_character(update, context)
 
 async def spawn_random_character(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
@@ -486,7 +762,7 @@ async def spawn_random_character(update: Update, context: ContextTypes.DEFAULT_T
     await send_spawn_card(context, int(chat.id), chat, scheduled_rarity, drop_number)
 
 
-async def send_pre_spawn_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE, scheduled_rarity: str, drop_number: int) -> None:
+async def send_pre_spawn_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE, scheduled_rarity: str, drop_number: int) -> bool:
     chat = update.effective_chat
     captcha = make_pre_spawn_captcha()
     expires_at = utcnow() + timedelta(seconds=CLAIM_CAPTCHA_SECONDS)
@@ -494,19 +770,30 @@ async def send_pre_spawn_captcha(update: Update, context: ContextTypes.DEFAULT_T
     try:
         captcha_photo = render_pre_spawn_captcha_image(captcha["code"])
     except Exception as exc:
-        await update.effective_message.reply_text(f"❌ Failed to generate captcha image: {exc}")
-        await get_db().groups.update_one(
-            {"groupId": int(chat.id)},
-            {"$set": {"activeDrop": None, "updatedAt": utcnow()}},
-        )
-        return
+        try:
+            await update.effective_message.reply_text(f"❌ Failed to generate captcha image: {exc}")
+        except Exception:
+            pass
+        await mark_group_drop_skipped(int(chat.id), "captcha_render_error", exc, pause_group=False)
+        return False
 
-    sent = await update.effective_message.reply_photo(
-        photo=captcha_photo,
-        caption=pre_spawn_caption(scheduled_rarity, safe_chat_title(chat), CLAIM_CAPTCHA_SECONDS),
-        parse_mode=ParseMode.HTML,
-        reply_markup=pre_spawn_keyboard(int(chat.id), captcha["nonce"], captcha["options"]),
-    )
+    try:
+        sent = await update.effective_message.reply_photo(
+            photo=captcha_photo,
+            caption=pre_spawn_caption(scheduled_rarity, safe_chat_title(chat), CLAIM_CAPTCHA_SECONDS),
+            parse_mode=ParseMode.HTML,
+            reply_markup=pre_spawn_keyboard(int(chat.id), captcha["nonce"], captcha["options"]),
+        )
+    except Exception as exc:
+        reason = drop_send_error_reason(exc)
+        print("DROP CAPTCHA SEND ERROR:", repr(exc))
+        await mark_group_drop_skipped(
+            int(chat.id),
+            reason,
+            exc,
+            pause_group=is_drop_send_permission_error(exc),
+        )
+        return False
 
     await get_db().groups.update_one(
         {"groupId": int(chat.id)},
@@ -538,14 +825,16 @@ async def send_pre_spawn_captcha(update: Update, context: ContextTypes.DEFAULT_T
                         "messageId": int(sent.message_id),
                     },
                 },
+                "dropPaused": False,
                 "updatedAt": utcnow(),
-            }
+            },
+            "$unset": {**DROP_LOCK_UNSET, **DROP_PAUSE_UNSET},
         },
     )
     context.application.create_task(
         pre_spawn_timeout_task(context.bot, int(chat.id), captcha["nonce"], int(CLAIM_CAPTCHA_SECONDS))
     )
-
+    return True
 
 async def send_manual_pre_spawn_captcha(
     context: ContextTypes.DEFAULT_TYPE,
@@ -553,7 +842,7 @@ async def send_manual_pre_spawn_captcha(
     chat,
     photo: dict,
     drop_number: int = 0,
-) -> None:
+) -> bool:
     """Send the normal pre-spawn captcha for a specific owner-forced card."""
     scheduled_rarity = str(photo.get("rarity", "Common"))
     captcha = make_pre_spawn_captcha()
@@ -562,21 +851,31 @@ async def send_manual_pre_spawn_captcha(
     try:
         captcha_photo = render_pre_spawn_captcha_image(captcha["code"])
     except Exception as exc:
-        await context.bot.send_message(chat_id=int(chat_id), text=f"❌ Failed to generate captcha image: {exc}")
-        await get_db().groups.update_one(
-            {"groupId": int(chat_id)},
-            {"$set": {"activeDrop": None, "updatedAt": utcnow()}},
-            upsert=True,
-        )
-        return
+        try:
+            await context.bot.send_message(chat_id=int(chat_id), text=f"❌ Failed to generate captcha image: {exc}")
+        except Exception:
+            pass
+        await mark_group_drop_skipped(int(chat_id), "manual_captcha_render_error", exc, pause_group=False)
+        return False
 
-    sent = await context.bot.send_photo(
-        chat_id=int(chat_id),
-        photo=captcha_photo,
-        caption=pre_spawn_caption(scheduled_rarity, safe_chat_title(chat) if chat else str(chat_id), CLAIM_CAPTCHA_SECONDS),
-        parse_mode=ParseMode.HTML,
-        reply_markup=pre_spawn_keyboard(int(chat_id), captcha["nonce"], captcha["options"]),
-    )
+    try:
+        sent = await context.bot.send_photo(
+            chat_id=int(chat_id),
+            photo=captcha_photo,
+            caption=pre_spawn_caption(scheduled_rarity, safe_chat_title(chat) if chat else str(chat_id), CLAIM_CAPTCHA_SECONDS),
+            parse_mode=ParseMode.HTML,
+            reply_markup=pre_spawn_keyboard(int(chat_id), captcha["nonce"], captcha["options"]),
+        )
+    except Exception as exc:
+        reason = drop_send_error_reason(exc)
+        print("MANUAL DROP CAPTCHA SEND ERROR:", repr(exc))
+        await mark_group_drop_skipped(
+            int(chat_id),
+            reason,
+            exc,
+            pause_group=is_drop_send_permission_error(exc),
+        )
+        return False
 
     await get_db().groups.update_one(
         {"groupId": int(chat_id)},
@@ -613,15 +912,17 @@ async def send_manual_pre_spawn_captcha(
                         "messageId": int(sent.message_id),
                     },
                 },
+                "dropPaused": False,
                 "updatedAt": utcnow(),
-            }
+            },
+            "$unset": {**DROP_LOCK_UNSET, **DROP_PAUSE_UNSET},
         },
         upsert=True,
     )
     context.application.create_task(
         pre_spawn_timeout_task(context.bot, int(chat_id), captcha["nonce"], int(CLAIM_CAPTCHA_SECONDS))
     )
-
+    return True
 
 async def mark_pre_spawn_lost(chat_id: int, nonce: str, status: str) -> dict | None:
     return await get_db().groups.find_one_and_update(
@@ -916,10 +1217,7 @@ async def send_spawn_card(
 ) -> bool:
     photo = forced_photo or await get_drop_photo_for_rarity(scheduled_rarity)
     if not photo:
-        await get_db().groups.update_one(
-            {"groupId": int(chat_id)},
-            {"$set": {"activeDrop": None, "updatedAt": utcnow()}},
-        )
+        await mark_group_drop_skipped(int(chat_id), "no_card_for_scheduled_rarity", None, pause_group=False)
         try:
             await context.bot.send_message(chat_id=chat_id, text=t("spawn_no_card"))
         except Exception:
@@ -932,15 +1230,19 @@ async def send_spawn_card(
     try:
         sent = await send_card_media(context, chat_id, photo, caption)
     except Exception as exc:
+        reason = drop_send_error_reason(exc)
         print("DROP SEND ERROR:", repr(exc))
-        await get_db().groups.update_one(
-            {"groupId": int(chat_id)},
-            {"$set": {"activeDrop": None, "updatedAt": utcnow()}},
+        await mark_group_drop_skipped(
+            int(chat_id),
+            reason,
+            exc,
+            pause_group=is_drop_send_permission_error(exc),
         )
-        try:
-            await context.bot.send_message(chat_id=chat_id, text=t("spawn_no_card"))
-        except Exception:
-            pass
+        if not is_drop_send_permission_error(exc):
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=t("spawn_no_card"))
+            except Exception:
+                pass
         return False
 
     active_drop = {
@@ -975,10 +1277,16 @@ async def send_spawn_card(
 
     await get_db().groups.update_one(
         {"groupId": int(chat_id)},
-        {"$set": {"activeDrop": active_drop, "updatedAt": utcnow()}},
+        {
+            "$set": {
+                "activeDrop": active_drop,
+                "dropPaused": False,
+                "updatedAt": utcnow(),
+            },
+            "$unset": {**DROP_LOCK_UNSET, **DROP_PAUSE_UNSET},
+        },
     )
     return True
-
 
 async def owner_drop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Owner-only manual drop: /drop <card_id> <chat_id>."""
@@ -1029,17 +1337,26 @@ async def owner_drop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     rarity = str(photo.get("rarity", "Common"))
     if needs_pre_spawn_captcha(rarity):
-        await send_manual_pre_spawn_captcha(context, target_chat_id, target_chat, photo, drop_number=0)
-        await msg.reply_text(
-            f"✅ Manual drop captcha sent.\nCard ID: {card_id}\nRarity: {rarity}\nChat ID: {target_chat_id}"
-        )
+        sent = await send_manual_pre_spawn_captcha(context, target_chat_id, target_chat, photo, drop_number=0)
+        if sent:
+            await msg.reply_text(
+                f"✅ Manual drop captcha sent.\nCard ID: {card_id}\nRarity: {rarity}\nChat ID: {target_chat_id}"
+            )
+        else:
+            await msg.reply_text(
+                f"❌ Manual drop failed/skipped.\nCard ID: {card_id}\nRarity: {rarity}\nChat ID: {target_chat_id}"
+            )
         return
 
-    await send_spawn_card(context, target_chat_id, target_chat, rarity, drop_number=0, forced_photo=photo)
-    await msg.reply_text(
-        f"✅ Manual drop spawned.\nCard ID: {card_id}\nRarity: {rarity}\nChat ID: {target_chat_id}"
-    )
-
+    spawned = await send_spawn_card(context, target_chat_id, target_chat, rarity, drop_number=0, forced_photo=photo)
+    if spawned:
+        await msg.reply_text(
+            f"✅ Manual drop spawned.\nCard ID: {card_id}\nRarity: {rarity}\nChat ID: {target_chat_id}"
+        )
+    else:
+        await msg.reply_text(
+            f"❌ Manual drop failed/skipped.\nCard ID: {card_id}\nRarity: {rarity}\nChat ID: {target_chat_id}"
+        )
 
 def register_drop_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("drop", owner_drop_cmd))
