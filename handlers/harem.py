@@ -145,17 +145,19 @@ def get_harem_cards_for_view(user_doc: dict) -> tuple[list[dict], str, str]:
 
 
 def choose_cover(user_doc: dict, view_cards: list[dict] | None = None) -> dict | None:
-    cards = list(view_cards if view_cards is not None else user_doc.get("cards", []))
-    if not cards:
-        cards = list(user_doc.get("cards", []))
-    if not cards:
-        return None
-
+    all_cards = list(user_doc.get("cards", []))
     fav_id = str(user_doc.get("favoriteCardId", ""))
     if fav_id:
-        fav = next((c for c in cards if str(c.get("cardId")) == fav_id), None)
+        # Favourite cover must always win, even when hmode filters the list by rarity/anime.
+        fav = next((c for c in all_cards if str(c.get("cardId")) == fav_id), None)
         if fav:
             return fav
+
+    cards = list(view_cards if view_cards is not None else all_cards)
+    if not cards:
+        cards = all_cards
+    if not cards:
+        return None
     return random.choice(cards)
 
 

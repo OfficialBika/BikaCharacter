@@ -24,10 +24,35 @@ from utils.i18n import t
 # Telegram Bot API allows up to 50 inline results per answer.
 
 
+def _owner_display_name(user_doc: dict) -> str:
+    name = " ".join(
+        [
+            str(user_doc.get("firstName", "") or ""),
+            str(user_doc.get("lastName", "") or ""),
+        ]
+    ).strip()
+    if not name:
+        name = str(user_doc.get("username", "") or "").strip()
+    if not name:
+        name = f"User {user_doc.get('userId', '')}"
+    return name
+
+
+def _owner_mention_html(user_id: int, name: str) -> str:
+    return f'<a href="tg://user?id={int(user_id)}">{escape_html(name)}</a>'
+
+
 def _inline_caption(photo: dict) -> str:
+    owner_id = photo.get("_haremOwnerUserId")
+    owner_name = str(photo.get("_haremOwnerName") or "").strip()
+    if owner_id and owner_name:
+        header = f"𝐎𝐰𝐎! 𝐂𝐡𝐞𝐜𝐤 𝐨𝐮𝐭 {_owner_mention_html(int(owner_id), owner_name)}'s 𝐜𝐡𝐚𝐫𝐚𝐜𝐭𝐞𝐫!"
+    else:
+        header = t("card_check_header")
+
     return "\n".join(
         [
-            t("card_check_header"),
+            header,
             "",
             f"<b>{escape_html(photo.get('anime', 'Unknown'))}</b>",
             f"<b>{escape_html(photo.get('cardId', ''))}:</b> {escape_html(photo.get('name', 'Unknown'))}",
@@ -183,15 +208,22 @@ async def _fetch_inline_photos(raw_q: str, offset: int) -> tuple[list[dict], boo
 
 
 async def _fetch_user_harem_photos(user_id: int, requester_id: int, search_q: str, offset: int) -> tuple[list[dict], bool]:
-    if int(user_id) != int(requester_id) and not is_global_admin(int(requester_id)):
-        return [], False
-
-    user_doc = await get_db().users.find_one({"userId": int(user_id)}, {"cards": 1})
+    # Harem inline browsing is public: anyone can press the Characters button and
+    # choose cards from this harem. Page navigation is still owner-only in harem.py.
+    user_doc = await get_db().users.find_one(
+        {"userId": int(user_id)},
+        {"cards": 1, "userId": 1, "username": 1, "firstName": 1, "lastName": 1},
+    )
     if not user_doc:
         return [], False
 
     cards = [dict(c) for c in user_doc.get("cards", []) if c.get("fileId")]
     cards = await _hydrate_user_cards(cards)
+
+    owner_name = _owner_display_name(user_doc)
+    for card in cards:
+        card["_haremOwnerUserId"] = int(user_doc.get("userId") or user_id)
+        card["_haremOwnerName"] = owner_name
 
     search = normalized_search_name(search_q)
     if search:

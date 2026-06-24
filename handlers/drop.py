@@ -40,6 +40,8 @@ PRE_SPAWN_CAPTCHA_RARITIES = {"Divine", "CrossVerse", "Cataphract", "Supreme"}
 # When the bot is offline, Telegram may keep pending updates and deliver them
 # after PM2 restarts the process. Without this guard, old group messages can
 # be counted at once and multiple cards can spawn immediately on startup.
+# Combine this with RESET_GROUP_MESSAGE_COUNT_ON_STARTUP=true so MongoDB counters
+# start from 0 on every VPS/PM2 restart.
 BOT_STARTED_AT = datetime.now(timezone.utc)
 STALE_UPDATE_GRACE_SECONDS = int(DROP_IGNORE_OLD_MESSAGES_SECONDS)
 
