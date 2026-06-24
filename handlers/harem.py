@@ -7,12 +7,13 @@ from collections import defaultdict
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaAnimation, InputMediaDocument, InputMediaPhoto, InputMediaVideo, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from config import HAREM_PAGE_SIZE
+from config import HAREM_PAGE_SIZE, LIMITED_CARDS_COLLECTION
 from database.mongodb import get_db
 from utils.cooldown import should_ignore_update
 from utils.db_helpers import ensure_user, get_user_doc
 from utils.permissions import is_global_admin
 from utils.rarity import get_rarity_emoji
+from utils.buttons import action_button
 from utils.text import escape_html
 from utils.i18n import t
 
@@ -49,11 +50,10 @@ async def hydrate_user_card_media(user_doc: dict) -> dict:
         updated["cards"] = cards
         return updated
 
-    docs = await get_db().photos.find(
-        {"cardId": {"$in": card_ids}},
-        {"cardId": 1, "fileId": 1, "fileUniqueId": 1, "mediaType": 1, "mimeType": 1, "fileName": 1},
-    ).to_list(None)
-    by_card_id = {str(doc.get("cardId", "")): doc for doc in docs}
+    projection = {"cardId": 1, "fileId": 1, "fileUniqueId": 1, "mediaType": 1, "mimeType": 1, "fileName": 1}
+    normal_docs = await get_db().photos.find({"cardId": {"$in": card_ids}}, projection).to_list(None)
+    limited_docs = await get_db()[LIMITED_CARDS_COLLECTION].find({"cardId": {"$in": card_ids}}, projection).to_list(None)
+    by_card_id = {str(doc.get("cardId", "")): doc for doc in normal_docs + limited_docs}
 
     for card in cards:
         doc = by_card_id.get(str(card.get("cardId", "")))
@@ -119,17 +119,17 @@ async def get_database_anime_totals(anime_names: list[str]) -> dict[str, int]:
     if not names:
         return {}
 
-    rows = await get_db().photos.aggregate(
-        [
-            {"$match": {"anime": {"$in": names}}},
-            {"$group": {"_id": "$anime", "total": {"$sum": 1}}},
-        ]
-    ).to_list(None)
-
-    return {
-        str(row.get("_id", "")).strip(): int(row.get("total", 0) or 0)
-        for row in rows
-    }
+    totals: dict[str, int] = {}
+    pipeline = [
+        {"$match": {"anime": {"$in": names}}},
+        {"$group": {"_id": "$anime", "total": {"$sum": 1}}},
+    ]
+    for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
+        rows = await get_db()[collection_name].aggregate(pipeline).to_list(None)
+        for row in rows:
+            key = str(row.get("_id", "")).strip()
+            totals[key] = totals.get(key, 0) + int(row.get("total", 0) or 0)
+    return totals
 
 
 def get_harem_cards_for_view(user_doc: dict) -> tuple[list[dict], str, str]:
@@ -341,13 +341,14 @@ def harem_keyboard(user_id: int, page: int, total_pages: int) -> InlineKeyboardM
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton(t("harem_button_back"), callback_data=f"harem:{user_id}:{prev_page}"),
-                InlineKeyboardButton(f"💠 {page}/{total_pages}", callback_data="noop"),
-                InlineKeyboardButton(t("harem_button_next"), callback_data=f"harem:{user_id}:{next_page}"),
+                action_button(t("harem_button_back"), "danger", callback_data=f"harem:{user_id}:{prev_page}"),
+                action_button(f"{page}/{total_pages}", "primary", callback_data="noop"),
+                action_button(t("harem_button_next"), "primary", callback_data=f"harem:{user_id}:{next_page}"),
             ],
             [
-                InlineKeyboardButton(
+                action_button(
                     t("harem_inline_button"),
+                    "success",
                     switch_inline_query_current_chat=f"harem:{user_id}",
                 )
             ],

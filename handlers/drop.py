@@ -1003,6 +1003,9 @@ async def owner_drop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not photo:
         await msg.reply_text(f"❌ Card ID {card_id} not found.")
         return
+    if photo.get("ownerOnly") or str(photo.get("_sourceCollection", "")) == "limited_cards" or str(photo.get("rarity", "")).lower() == "limited":
+        await msg.reply_text("❌ Limited cards are owner give only. Use /give instead of /drop.")
+        return
 
     try:
         target_chat = await context.bot.get_chat(target_chat_id)

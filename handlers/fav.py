@@ -5,10 +5,11 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 from database.mongodb import get_db
 from utils.cooldown import should_ignore_update
-from utils.db_helpers import ensure_user, get_user_doc
+from utils.db_helpers import ensure_user, get_user_doc, get_photo_by_card_id
 from utils.rarity import get_rarity_emoji
 from utils.text import escape_html, utcnow
 from utils.i18n import t
+from utils.buttons import action_button
 
 MEDIA_FIELDS = ("fileId", "fileUniqueId", "mediaType", "mimeType", "fileName")
 
@@ -28,10 +29,7 @@ async def _hydrate_card_media(card: dict | None) -> dict | None:
     if not card:
         return None
     card = dict(card)
-    doc = await get_db().photos.find_one(
-        {"cardId": str(card.get("cardId", ""))},
-        {"fileId": 1, "fileUniqueId": 1, "mediaType": 1, "mimeType": 1, "fileName": 1},
-    )
+    doc = await get_photo_by_card_id(str(card.get("cardId", "")))
     if doc:
         for field in MEDIA_FIELDS:
             value = doc.get(field)
@@ -45,12 +43,12 @@ async def _reply_card_media(message, card: dict, caption: str, reply_markup=None
     media_type = _media_type(card)
     file_id = card["fileId"]
     if media_type == "video":
-        return await message.reply_video(file_id, caption=caption, reply_markup=reply_markup)
+        return await message.reply_video(file_id, caption=caption, parse_mode="HTML", reply_markup=reply_markup)
     if media_type == "animation":
-        return await message.reply_animation(file_id, caption=caption, reply_markup=reply_markup)
+        return await message.reply_animation(file_id, caption=caption, parse_mode="HTML", reply_markup=reply_markup)
     if media_type == "document":
-        return await message.reply_document(file_id, caption=caption, reply_markup=reply_markup)
-    return await message.reply_photo(file_id, caption=caption, reply_markup=reply_markup)
+        return await message.reply_document(file_id, caption=caption, parse_mode="HTML", reply_markup=reply_markup)
+    return await message.reply_photo(file_id, caption=caption, parse_mode="HTML", reply_markup=reply_markup)
 
 
 async def fav_with_args(update: Update, context: ContextTypes.DEFAULT_TYPE, args: list[str]) -> None:
@@ -67,7 +65,7 @@ async def fav_with_args(update: Update, context: ContextTypes.DEFAULT_TYPE, args
         await _reply_card_media(
             update.message,
             card,
-            caption=t("fav_current_caption", emoji=get_rarity_emoji(card.get("rarity")), name=card.get("name"), card_id=card.get("cardId"), anime=card.get("anime")),
+            caption=t("fav_current_caption", emoji=get_rarity_emoji(card.get("rarity")), name=escape_html(card.get("name")), card_id=escape_html(card.get("cardId")), anime=escape_html(card.get("anime"))),
         )
         return
 
@@ -79,14 +77,14 @@ async def fav_with_args(update: Update, context: ContextTypes.DEFAULT_TYPE, args
         return
     keyboard = InlineKeyboardMarkup(
         [[
-            InlineKeyboardButton(t("fav_button_yes"), callback_data=f"fav_yes:{update.effective_user.id}:{card_id}"),
-            InlineKeyboardButton(t("fav_button_no"), callback_data=f"fav_no:{update.effective_user.id}"),
+            action_button(t("fav_button_yes"), "success", callback_data=f"fav_yes:{update.effective_user.id}:{card_id}"),
+            action_button(t("fav_button_no"), "danger", callback_data=f"fav_no:{update.effective_user.id}"),
         ]]
     )
     await _reply_card_media(
         update.message,
         card,
-        caption=t("fav_confirm", name=card.get("name"), anime=card.get("anime")),
+        caption=t("fav_confirm", name=escape_html(card.get("name")), anime=escape_html(card.get("anime"))),
         reply_markup=keyboard,
     )
 

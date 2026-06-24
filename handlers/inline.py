@@ -13,7 +13,7 @@ from telegram import (
 )
 from telegram.ext import Application, ContextTypes, InlineQueryHandler
 
-from config import INLINE_CACHE_TIME, INLINE_PAGE_SIZE
+from config import INLINE_CACHE_TIME, INLINE_PAGE_SIZE, LIMITED_CARDS_COLLECTION
 from database.mongodb import get_db
 from utils.parser import normalized_search_name
 from utils.permissions import is_global_admin
@@ -126,11 +126,9 @@ async def _hydrate_user_cards(cards: list[dict]) -> list[dict]:
     if not card_ids:
         return cards
 
-    db_cards = await get_db().photos.find(
-        {"cardId": {"$in": card_ids}},
-        _base_projection(),
-    ).to_list(None)
-    by_id = {str(c.get("cardId")): c for c in db_cards}
+    normal_cards = await get_db().photos.find({"cardId": {"$in": card_ids}}, _base_projection()).to_list(None)
+    limited_cards = await get_db()[LIMITED_CARDS_COLLECTION].find({"cardId": {"$in": card_ids}}, _base_projection()).to_list(None)
+    by_id = {str(c.get("cardId")): c for c in normal_cards + limited_cards}
 
     hydrated: list[dict] = []
     for card in cards:
@@ -144,67 +142,47 @@ async def _hydrate_user_cards(cards: list[dict]) -> list[dict]:
 
 
 async def _fetch_inline_photos(raw_q: str, offset: int) -> tuple[list[dict], bool]:
+    """Search both normal photos and owner-only limited_cards for inline display.
+
+    limited_cards are never used by auto-drop; this is display/search only.
+    """
     db = get_db()
+    search = normalized_search_name(raw_q) if raw_q else ""
+    raw_id = str(raw_q or "").strip()
 
-    common_add_fields = {
-        "cardIdNum": {
-            "$convert": {
-                "input": "$cardId",
-                "to": "int",
-                "onError": 999999999,
-                "onNull": 999999999,
-            }
-        }
-    }
-
-    if not raw_q:
-        pipeline = [
-            {"$match": {"fileId": {"$exists": True, "$ne": ""}}},
-            {"$addFields": common_add_fields},
-            {"$sort": {"cardIdNum": 1, "createdAt": 1, "cardId": 1}},
-            {"$skip": offset},
-            {"$limit": INLINE_PAGE_SIZE + 1},
-            {"$project": _base_projection()},
-        ]
-    else:
-        search = normalized_search_name(raw_q)
-        if not search:
-            return [], False
-
+    projection = _base_projection()
+    query: dict = {"fileId": {"$exists": True, "$ne": ""}}
+    if search:
         contains_regex = re.compile(re.escape(search), re.IGNORECASE)
-        prefix_regex = f"^{re.escape(search)}"
-        pipeline = [
-            {
-                "$match": {
-                    "$or": [
-                        {"normalizedName": {"$regex": contains_regex}},
-                        {"cardId": str(raw_q).strip()},
-                    ],
-                    "fileId": {"$exists": True, "$ne": ""},
-                }
-            },
-            {
-                "$addFields": {
-                    **common_add_fields,
-                    "exactRank": {"$cond": [{"$eq": ["$normalizedName", search]}, 0, 1]},
-                    "prefixRank": {
-                        "$cond": [
-                            {"$regexMatch": {"input": "$normalizedName", "regex": prefix_regex, "options": "i"}},
-                            0,
-                            1,
-                        ]
-                    },
-                }
-            },
-            {"$sort": {"exactRank": 1, "prefixRank": 1, "cardIdNum": 1, "createdAt": 1, "cardId": 1}},
-            {"$skip": offset},
-            {"$limit": INLINE_PAGE_SIZE + 1},
-            {"$project": _base_projection()},
-        ]
+        query = {
+            "$or": [
+                {"normalizedName": {"$regex": contains_regex}},
+                {"cardId": raw_id},
+            ],
+            "fileId": {"$exists": True, "$ne": ""},
+        }
 
-    docs = await db.photos.aggregate(pipeline).to_list(INLINE_PAGE_SIZE + 1)
-    has_more = len(docs) > INLINE_PAGE_SIZE
-    return docs[:INLINE_PAGE_SIZE], has_more
+    docs: list[dict] = []
+    for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
+        part = await db[collection_name].find(query, projection).to_list(None)
+        for doc in part:
+            doc = dict(doc)
+            doc["_sourceCollection"] = collection_name
+            docs.append(doc)
+
+    if search:
+        def rank(card: dict):
+            normalized = str(card.get("normalizedName") or normalized_search_name(card.get("name", "")))
+            exact = 0 if normalized == search or str(card.get("cardId", "")).strip().lower() == raw_id.lower() else 1
+            prefix = 0 if normalized.startswith(search) else 1
+            return (exact, prefix, _card_sort_key(card))
+        docs.sort(key=rank)
+    else:
+        docs.sort(key=_card_sort_key)
+
+    chunk = docs[offset: offset + INLINE_PAGE_SIZE + 1]
+    has_more = len(chunk) > INLINE_PAGE_SIZE
+    return chunk[:INLINE_PAGE_SIZE], has_more
 
 
 async def _fetch_user_harem_photos(user_id: int, requester_id: int, search_q: str, offset: int) -> tuple[list[dict], bool]:

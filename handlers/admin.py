@@ -13,6 +13,7 @@ from config import (
     DEFAULT_CHANGETIME,
     OWNER_CHANGETIME_MAX,
     OWNER_CHANGETIME_MIN,
+    LIMITED_CARDS_COLLECTION,
 )
 from database.mongodb import get_db
 from utils.db_helpers import add_card_to_user_id, ensure_group, ensure_user, ensure_user_by_id, get_photo_by_card_id
@@ -90,14 +91,16 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_global_admin(update.effective_user.id):
         return
     db = get_db()
-    user_count, group_count, photo_count, transfer_count, mute_count, settings = await asyncio.gather(
+    user_count, group_count, normal_count, limited_count, transfer_count, mute_count, settings = await asyncio.gather(
         db.users.count_documents({}),
         db.groups.count_documents({}),
         db.photos.count_documents({}),
+        db[LIMITED_CARDS_COLLECTION].count_documents({}),
         db.transfers.count_documents({}),
         db.bot_mutes.count_documents({}),
         db.bot_settings.find_one({"_id": SETTINGS_ID}),
     )
+    photo_count = int(normal_count) + int(limited_count)
     adder_count = len((settings or {}).get("adderIds", []))
     text = t(
         "admin_dashboard",
@@ -143,13 +146,21 @@ async def admin_groups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def admin_photos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_global_admin(update.effective_user.id):
         return
-    photos = await get_db().photos.find({}).sort("createdAt", -1).limit(20).to_list(20)
-    if not photos:
+    db = get_db()
+    photos = await db.photos.find({}).sort("createdAt", -1).limit(20).to_list(20)
+    limited = await db[LIMITED_CARDS_COLLECTION].find({}).sort("createdAt", -1).limit(20).to_list(20)
+    for p in photos:
+        p["_listCollection"] = "photos"
+    for p in limited:
+        p["_listCollection"] = LIMITED_CARDS_COLLECTION
+    cards = sorted(photos + limited, key=lambda p: p.get("createdAt") or p.get("updatedAt") or 0, reverse=True)[:20]
+    if not cards:
         await update.message.reply_text(t("no_cards"))
         return
     lines = [t("card_list_header"), ""]
-    for p in photos:
-        lines.append(f"• {p.get('cardId')} | {p.get('name')} | {p.get('rarity')} | {p.get('anime')}")
+    for p in cards:
+        collection = p.get("_listCollection", "photos")
+        lines.append(f"• {p.get('cardId')} | {p.get('name')} | {p.get('rarity')} | {p.get('anime')} | {collection}")
     await update.message.reply_text("\n".join(lines))
 
 
@@ -414,6 +425,10 @@ async def delete_card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     db = get_db()
     photo = await db.photos.find_one({"cardId": card_id})
+    collection_name = "photos"
+    if not photo:
+        photo = await db[LIMITED_CARDS_COLLECTION].find_one({"cardId": card_id})
+        collection_name = LIMITED_CARDS_COLLECTION
 
     if not photo:
         await msg.reply_text(t("delete_not_found", card_id=card_id))
@@ -439,8 +454,8 @@ async def delete_card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except Exception as exc:
             channel_delete_status = t("delete_status_failed", error=exc)
 
-    # Delete card from main photos database.
-    photo_result = await db.photos.delete_one({"cardId": card_id})
+    # Delete card from its source database collection.
+    photo_result = await db[collection_name].delete_one({"cardId": card_id})
 
     # Remove this card from all users' harem.
     users_result = await db.users.update_many(
@@ -494,7 +509,8 @@ def _give_usage_text() -> str:
         "• Reply target user with: /give <card_id>\n"
         "• Or use: /give <user_id> <card_id>\n\n"
         "ᴇxᴀᴍᴘʟᴇ:\n"
-        "/give 123456789 60"
+        "/give 123456789 60\n"
+        "/give 123456789 1a  (Limited)"
     )
 
 

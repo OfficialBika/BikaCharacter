@@ -9,6 +9,7 @@ from utils.db_helpers import add_card_to_user_id, ensure_user, remove_card_from_
 from utils.rarity import get_rarity_emoji
 from utils.text import escape_html, mention_user, utcnow
 from utils.i18n import t
+from utils.buttons import action_button
 
 
 async def gift_with_args(update: Update, context: ContextTypes.DEFAULT_TYPE, args: list[str]) -> None:
@@ -57,8 +58,8 @@ async def gift_with_args(update: Update, context: ContextTypes.DEFAULT_TYPE, arg
     )
     keyboard = InlineKeyboardMarkup(
         [[
-            InlineKeyboardButton(t("gift_button_confirm"), callback_data=f"gift_confirm:{sender.id}:{receiver.id}:{card_id}:{qty}"),
-            InlineKeyboardButton(t("gift_button_cancel"), callback_data=f"gift_cancel:{sender.id}"),
+            action_button(t("gift_button_confirm"), "success", callback_data=f"gift_confirm:{sender.id}:{receiver.id}:{card_id}:{qty}"),
+            action_button(t("gift_button_cancel"), "danger", callback_data=f"gift_cancel:{sender.id}"),
         ]]
     )
     await msg.reply_html(preview, reply_markup=keyboard)
@@ -104,7 +105,14 @@ async def gift_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TY
         }
     )
     await query.edit_message_text(
-        t("gift_success", emoji=get_rarity_emoji(card.get("rarity")), name=card.get("name"), card_id=card.get("cardId"), qty=qty)
+        t(
+            "gift_success",
+            emoji=get_rarity_emoji(card.get("rarity")),
+            name=escape_html(card.get("name")),
+            card_id=escape_html(card.get("cardId")),
+            qty=qty,
+        ),
+        parse_mode="HTML",
     )
     await query.answer(t("gift_confirmed"))
 

@@ -7,12 +7,14 @@ from telegram.error import TelegramError
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from database.mongodb import get_db
-from utils.parser import parse_add_caption, parse_forward_character
+from utils.parser import parse_add_caption
 from utils.permissions import is_owner
 from utils.text import escape_html, mention_user, utcnow
 
 CARD_DATABASE_CHANNEL_ID = config.CARD_DATABASE_CHANNEL_ID
 RARITY_ORDER = config.RARITY_ORDER
+LIMITED_CARDS_COLLECTION = getattr(config, "LIMITED_CARDS_COLLECTION", "limited_cards")
+LIMITED_RARITY_NAME = getattr(config, "LIMITED_RARITY_NAME", "Limited")
 
 # Adder Group ထဲကနေ /add သုံးချင်တဲ့ group ID.
 # config.py ထဲမှာ ADDER_GROUP_ID ရှိရင် အဲဒါကိုသုံးမယ်။
@@ -25,6 +27,26 @@ CARD_RESERVATIONS_COLLECTION = "card_id_reservations"
 
 
 SUPPORTED_DOCUMENT_MIME_PREFIXES = ("image/", "video/")
+
+
+def is_forwarded_message(msg) -> bool:
+    """Detect Telegram forwarded/copy-forwarded messages and reject them for /add."""
+    return any(
+        getattr(msg, attr, None)
+        for attr in (
+            "forward_origin",
+            "forward_date",
+            "forward_from",
+            "forward_from_chat",
+            "forward_sender_name",
+        )
+    )
+
+
+def is_limited_card(parsed: dict, card_id_provided: bool) -> bool:
+    card_id = str(parsed.get("cardId", "")).strip()
+    rarity = str(parsed.get("rarity", "")).strip()
+    return rarity.lower() == str(LIMITED_RARITY_NAME).lower() or (card_id_provided and bool(card_id) and not card_id.isdigit())
 
 
 def is_allowed_add_chat(update: Update) -> bool:
@@ -52,13 +74,18 @@ async def is_allowed_adder(user_id: int) -> bool:
 
 
 async def _max_numeric_card_id() -> int:
-    docs = await get_db().photos.aggregate([
-        {"$match": {"cardId": {"$regex": r"^[0-9]+$"}}},
-        {"$project": {"cardIdNum": {"$toInt": "$cardId"}}},
-        {"$sort": {"cardIdNum": -1}},
-        {"$limit": 1},
-    ]).to_list(1)
-    return int(docs[0]["cardIdNum"]) if docs else 0
+    db = get_db()
+    max_id = 0
+    for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
+        docs = await db[collection_name].aggregate([
+            {"$match": {"cardId": {"$regex": r"^[0-9]+$"}}},
+            {"$project": {"cardIdNum": {"$toInt": "$cardId"}}},
+            {"$sort": {"cardIdNum": -1}},
+            {"$limit": 1},
+        ]).to_list(1)
+        if docs:
+            max_id = max(max_id, int(docs[0]["cardIdNum"]))
+    return max_id
 
 
 async def _ensure_card_counter() -> None:
@@ -96,11 +123,15 @@ async def _sync_card_counter_at_least(card_id: str) -> None:
 
 
 async def _existing_numeric_card_ids() -> set[int]:
-    docs = await get_db().photos.aggregate([
-        {"$match": {"cardId": {"$regex": r"^[0-9]+$"}}},
-        {"$project": {"_id": 0, "cardIdNum": {"$toInt": "$cardId"}}},
-    ]).to_list(None)
-    return {int(doc["cardIdNum"]) for doc in docs if int(doc.get("cardIdNum", 0) or 0) > 0}
+    db = get_db()
+    existing: set[int] = set()
+    for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
+        docs = await db[collection_name].aggregate([
+            {"$match": {"cardId": {"$regex": r"^[0-9]+$"}}},
+            {"$project": {"_id": 0, "cardIdNum": {"$toInt": "$cardId"}}},
+        ]).to_list(None)
+        existing.update(int(doc["cardIdNum"]) for doc in docs if int(doc.get("cardIdNum", 0) or 0) > 0)
+    return existing
 
 
 async def _reserved_numeric_card_ids() -> set[int]:
@@ -302,7 +333,13 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     caption = (msg.caption or "").strip()
-    looks_like_add = caption.lower().startswith("/add") or bool(parse_forward_character(caption))
+    looks_like_add = caption.lower().startswith("/add")
+
+    # Forward add is disabled. Direct uploads with /add only.
+    if is_forwarded_message(msg):
+        if looks_like_add:
+            await msg.reply_text("❌ Forward add is disabled. Please upload the media directly with /add.")
+        return
 
     # /add မဟုတ်တဲ့ group/private media တွေကို ignore
     if not looks_like_add:
@@ -319,41 +356,51 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     media_type = media_info["mediaType"]
 
     parsed = parse_add_caption(caption)
-    mode = "Card"
-
-    if not parsed:
-        parsed = parse_forward_character(caption)
-        mode = "Forward card"
-
     if not parsed:
         await msg.reply_text(
             "❌ Invalid add format.\n\n"
-            "New card with auto ID:\n"
+            "Normal card with auto ID:\n"
             "/add Yelan | Legendary | Genshin Impact\n\n"
-            "Update/save a specific ID:\n"
+            "Normal card with specific numeric ID:\n"
             "/add 2 | Yelan | Legendary | Genshin Impact\n\n"
+            "Limited owner-give-only card:\n"
+            "/add 1a | Special Name | Limited | Bika Limited\n\n"
             f"Allowed rarities:\n{', '.join(RARITY_ORDER)}"
         )
         return
 
     reserved_auto_card_id = ""
     card_id_provided = bool(parsed.pop("_cardIdProvided", False))
+    parsed["cardId"] = str(parsed.get("cardId", "")).strip()
 
-    if not card_id_provided:
-        parsed["cardId"] = await _reserve_next_card_id()
-        reserved_auto_card_id = parsed["cardId"]
-    else:
-        parsed["cardId"] = str(parsed.get("cardId", "")).strip()
-        if not parsed["cardId"].isdigit():
-            await msg.reply_text("❌ Card ID must be a number.")
+    limited_card = is_limited_card(parsed, card_id_provided)
+    if limited_card:
+        parsed["rarity"] = str(LIMITED_RARITY_NAME)
+        if not card_id_provided or not parsed["cardId"]:
+            await msg.reply_text("❌ Limited cards require a custom ID. Example: /add 1a | Name | Limited | Anime")
             return
+    else:
+        if not card_id_provided:
+            parsed["cardId"] = await _reserve_next_card_id()
+            reserved_auto_card_id = parsed["cardId"]
+        elif not parsed["cardId"].isdigit():
+            await msg.reply_text("❌ Non-numeric IDs are only allowed for Rarity Limited cards.")
+            return
+
+    collection_name = LIMITED_CARDS_COLLECTION if limited_card else "photos"
+    other_collection_name = "photos" if limited_card else LIMITED_CARDS_COLLECTION
+    mode = "Limited card" if limited_card else "Card"
 
     db = get_db()
     try:
-        existing = await db.photos.find_one(
+        existing = await db[collection_name].find_one(
             {"cardId": parsed["cardId"]},
             {"_id": 1, "createdAt": 1},
         )
+        duplicate_other = await db[other_collection_name].find_one({"cardId": parsed["cardId"]}, {"_id": 1})
+        if duplicate_other and not existing:
+            await msg.reply_text(f"❌ Card ID {parsed['cardId']} already exists in {other_collection_name}.")
+            return
 
         action = "Update" if existing else "Saved"
         channel_caption = _database_caption(action, parsed, update.effective_user)
@@ -387,13 +434,14 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             "updatedAt": now,
         }
 
-        await db.photos.update_one(
+        await db[collection_name].update_one(
             {"cardId": parsed["cardId"]},
             {"$set": doc, "$setOnInsert": {"createdAt": now}},
             upsert=True,
         )
 
-        await _sync_card_counter_at_least(parsed["cardId"])
+        if not limited_card:
+            await _sync_card_counter_at_least(parsed["cardId"])
 
         icon = "✅" if action == "Saved" else "♻️"
         await msg.reply_text(
@@ -403,6 +451,7 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             f"Rarity: {parsed['rarity']}\n"
             f"Anime: {parsed['anime']}\n"
             f"Media: {storage.get('mediaType', media_type)}\n"
+            f"Collection: {collection_name}\n"
             f"Bika Database Message ID: {storage['storageMessageId']}"
         )
     finally:

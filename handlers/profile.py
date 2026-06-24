@@ -5,12 +5,12 @@ import random
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from config import RARITY_ORDER
+from config import RARITY_ORDER, LIMITED_CARDS_COLLECTION
 from database.mongodb import get_db
 from utils.cooldown import should_ignore_update
-from utils.db_helpers import ensure_user, rarity_counts
+from utils.db_helpers import ensure_user, rarity_counts, get_photo_by_card_id
 from utils.rarity import get_rarity_emoji
-from utils.text import level_from_exp, progress_bar
+from utils.text import escape_html, level_from_exp, progress_bar
 from utils.i18n import t
 
 
@@ -42,10 +42,7 @@ async def hydrate_card_media(card: dict | None) -> dict | None:
     needs_lookup = not merged.get("mediaType") or detect_card_media_type(merged) == "photo"
 
     if card_id and needs_lookup:
-        photo_doc = await get_db().photos.find_one(
-            {"cardId": card_id},
-            {"fileId": 1, "fileUniqueId": 1, "mediaType": 1, "mimeType": 1, "fileName": 1},
-        )
+        photo_doc = await get_photo_by_card_id(card_id)
         if photo_doc:
             for key in ("fileId", "fileUniqueId", "mediaType", "mimeType", "fileName"):
                 value = photo_doc.get(key)
@@ -59,21 +56,21 @@ async def reply_profile_media(message, cover: dict, text: str) -> None:
     media_type = detect_card_media_type(cover)
     file_id = str(cover.get("fileId") or "")
     if not file_id:
-        await message.reply_text(text)
+        await message.reply_text(text, parse_mode="HTML")
         return
 
     try:
         if media_type == "video":
-            await message.reply_video(file_id, caption=text)
+            await message.reply_video(file_id, caption=text, parse_mode="HTML")
         elif media_type == "animation":
-            await message.reply_animation(file_id, caption=text)
+            await message.reply_animation(file_id, caption=text, parse_mode="HTML")
         elif media_type == "document":
-            await message.reply_document(file_id, caption=text)
+            await message.reply_document(file_id, caption=text, parse_mode="HTML")
         else:
-            await message.reply_photo(file_id, caption=text)
+            await message.reply_photo(file_id, caption=text, parse_mode="HTML")
     except Exception as exc:
         print("PROFILE SEND MEDIA ERROR:", repr(exc))
-        await message.reply_text(text)
+        await message.reply_text(text, parse_mode="HTML")
 
 
 def build_profile_text(user_doc: dict, total_photo_count: int) -> str:
@@ -84,6 +81,7 @@ def build_profile_text(user_doc: dict, total_photo_count: int) -> str:
     level = level_from_exp(user_doc.get("exp", 0))
     counts = rarity_counts(cards)
     username = " ".join([user_doc.get("firstName", ""), user_doc.get("lastName", "")]).strip() or user_doc.get("username") or "Unknown"
+    username = escape_html(username)
     fav = next((c for c in cards if str(c.get("cardId")) == str(user_doc.get("favoriteCardId", ""))), None)
 
     lines = [
@@ -95,12 +93,12 @@ def build_profile_text(user_doc: dict, total_photo_count: int) -> str:
         t("profile_harem", unique_owned=unique_owned, total_photo_count=total_photo_count, percent=harem_percent),
         t("profile_level", level=level["level"]),
         t("profile_progress", bar=progress_bar(level["percent"])),
-        t("profile_favourite", name=fav["name"], card_id=fav["cardId"]) if fav else t("profile_favourite_not_set"),
+        t("profile_favourite", name=escape_html(fav["name"]), card_id=escape_html(fav["cardId"])) if fav else t("profile_favourite_not_set"),
         "",
     ]
     for rarity in RARITY_ORDER:
         data = counts.get(rarity, {"unique": 0, "total": 0})
-        lines.append(t("profile_rarity_line", emoji=get_rarity_emoji(rarity), rarity=rarity, unique=data["unique"], total=data["total"]))
+        lines.append(t("profile_rarity_line", emoji=get_rarity_emoji(rarity), rarity=escape_html(rarity), unique=data["unique"], total=data["total"]))
     return "\n".join(lines)
 
 
@@ -108,7 +106,8 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if await should_ignore_update(update):
         return
     user = await ensure_user(update.effective_user)
-    total = await get_db().photos.count_documents({})
+    db = get_db()
+    total = await db.photos.count_documents({}) + await db[LIMITED_CARDS_COLLECTION].count_documents({})
     text = build_profile_text(user, total)
     cards = list(user.get("cards", []))
     cover = None
@@ -120,7 +119,7 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if cover and cover.get("fileId"):
         await reply_profile_media(update.message, cover, text)
     else:
-        await update.message.reply_text(text)
+        await update.message.reply_text(text, parse_mode="HTML")
 
 
 def register_profile_handlers(app: Application) -> None:

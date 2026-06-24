@@ -7,9 +7,10 @@ from config import RARITY_ORDER
 from database.mongodb import get_db
 from utils.cooldown import should_ignore_update
 from utils.db_helpers import ensure_user
-from utils.rarity import get_rarity_emoji
+from utils.rarity import get_rarity_button_emoji, get_rarity_emoji
 from utils.text import utcnow
 from utils.i18n import t
+from utils.buttons import action_button, rarity_button
 
 
 async def hmode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -21,13 +22,13 @@ async def hmode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton(t("hmode_sort_by_rarity"), callback_data=f"hmode:{user_id}:rarity_menu"),
-                InlineKeyboardButton(t("hmode_sort_by_anime"), callback_data=f"hmode:{user_id}:anime"),
+                action_button(t("hmode_sort_by_rarity"), "primary", callback_data=f"hmode:{user_id}:rarity_menu"),
+                action_button(t("hmode_sort_by_anime"), "primary", callback_data=f"hmode:{user_id}:anime"),
             ],
-            [InlineKeyboardButton(t("hmode_close"), callback_data=f"hmode:{user_id}:close")],
+            [action_button(t("hmode_close"), "danger", callback_data=f"hmode:{user_id}:close")],
         ]
     )
-    await update.message.reply_text(t("hmode_choose_sort"), reply_markup=keyboard)
+    await update.message.reply_text(t("hmode_choose_sort"), parse_mode="HTML", reply_markup=keyboard)
 
 
 def _rarity_keyboard(user_id: int) -> InlineKeyboardMarkup:
@@ -35,14 +36,16 @@ def _rarity_keyboard(user_id: int) -> InlineKeyboardMarkup:
     for rarity in RARITY_ORDER:
         rows.append(
             [
-                InlineKeyboardButton(
-                    t("hmode_rarity_button", emoji=get_rarity_emoji(rarity), rarity=rarity),
+                rarity_button(
+                    t("hmode_rarity_button", emoji=get_rarity_button_emoji(rarity), rarity=rarity),
+                    rarity,
+                    "primary",
                     callback_data=f"hmode:{user_id}:rarity:{rarity}",
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(t("hmode_back"), callback_data=f"hmode:{user_id}:main")])
-    rows.append([InlineKeyboardButton(t("hmode_close"), callback_data=f"hmode:{user_id}:close")])
+    rows.append([action_button(t("hmode_back"), "primary", callback_data=f"hmode:{user_id}:main")])
+    rows.append([action_button(t("hmode_close"), "danger", callback_data=f"hmode:{user_id}:close")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -50,10 +53,10 @@ def _main_keyboard(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton(t("hmode_sort_by_rarity"), callback_data=f"hmode:{user_id}:rarity_menu"),
-                InlineKeyboardButton(t("hmode_sort_by_anime"), callback_data=f"hmode:{user_id}:anime"),
+                action_button(t("hmode_sort_by_rarity"), "primary", callback_data=f"hmode:{user_id}:rarity_menu"),
+                action_button(t("hmode_sort_by_anime"), "primary", callback_data=f"hmode:{user_id}:anime"),
             ],
-            [InlineKeyboardButton(t("hmode_close"), callback_data=f"hmode:{user_id}:close")],
+            [action_button(t("hmode_close"), "danger", callback_data=f"hmode:{user_id}:close")],
         ]
     )
 
@@ -83,12 +86,12 @@ async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     if action == "main":
-        await query.edit_message_text(t("hmode_choose_sort"), reply_markup=_main_keyboard(user_id))
+        await query.edit_message_text(t("hmode_choose_sort"), parse_mode="HTML", reply_markup=_main_keyboard(user_id))
         await query.answer()
         return
 
     if action == "rarity_menu":
-        await query.edit_message_text(t("hmode_choose_rarity"), reply_markup=_rarity_keyboard(user_id))
+        await query.edit_message_text(t("hmode_choose_rarity"), parse_mode="HTML", reply_markup=_rarity_keyboard(user_id))
         await query.answer()
         return
 
@@ -106,7 +109,7 @@ async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             },
             upsert=True,
         )
-        await query.edit_message_text(t("hmode_set_anime"))
+        await query.edit_message_text(t("hmode_set_anime"), parse_mode="HTML")
         await query.answer(t("updated"))
         return
 
@@ -130,7 +133,7 @@ async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             },
             upsert=True,
         )
-        await query.edit_message_text(t("hmode_set_rarity", emoji=get_rarity_emoji(rarity), rarity=rarity))
+        await query.edit_message_text(t("hmode_set_rarity", emoji=get_rarity_emoji(rarity), rarity=rarity), parse_mode="HTML")
         await query.answer(t("updated"))
         return
 
@@ -141,7 +144,7 @@ async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             {"$set": {"haremSort": "anime", "haremRarity": "", "haremView": "anime", "updatedAt": now}},
             upsert=True,
         )
-        await query.edit_message_text(t("hmode_set_anime"))
+        await query.edit_message_text(t("hmode_set_anime"), parse_mode="HTML")
         await query.answer(t("updated"))
         return
 
