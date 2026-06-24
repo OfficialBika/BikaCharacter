@@ -6,7 +6,7 @@ from typing import Optional
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import ASCENDING, DESCENDING
 
-from config import DB_NAME, MONGODB_URI
+from config import DB_NAME, MONGODB_URI, LIMITED_CARDS_COLLECTION
 
 _client: Optional[AsyncIOMotorClient] = None
 _db: Optional[AsyncIOMotorDatabase] = None
@@ -36,6 +36,12 @@ async def ensure_indexes() -> None:
     await db.photos.create_index([("normalizedName", ASCENDING)])
     await db.photos.create_index([("rarity", ASCENDING)])
     await db.photos.create_index([("anime", ASCENDING)])
+
+    limited = db[LIMITED_CARDS_COLLECTION]
+    await limited.create_index([("cardId", ASCENDING)], unique=True)
+    await limited.create_index([("normalizedName", ASCENDING)])
+    await limited.create_index([("rarity", ASCENDING)])
+    await limited.create_index([("anime", ASCENDING)])
 
     await db.users.create_index([("userId", ASCENDING)], unique=True)
     await db.users.create_index([("updatedAt", DESCENDING)])
