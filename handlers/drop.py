@@ -82,12 +82,33 @@ DROP_PAUSE_UNSET = {
 }
 
 
-def _drop_allowed_filter(now: datetime) -> dict:
+def _drop_allowed_filter(now: datetime, *, allow_unclaimed_card: bool = False) -> dict:
     """MongoDB filter that allows counting/spawning only when the group is ready.
 
-    This prevents double drops in the same group while a card/captcha is still
-    active or while another message update is already spawning a card.
+    - Pending/solving pre-spawn captcha always blocks counting so a high-rarity
+      captcha cannot be skipped by normal chat activity.
+    - Normal unclaimed cards can optionally keep counting. When messageCount
+      reaches changeTime again, the old unclaimed card is recorded as skipped and
+      a new card is spawned.
+    - dropSpawnLock prevents two message updates from spawning two cards at once.
     """
+    active_ok = [
+        {"activeDrop": {"$exists": False}},
+        {"activeDrop": None},
+        {"activeDrop": {}},
+        {"activeDrop.isClaimed": True},
+        {"activeDrop.preSpawnCaptcha.status": {"$in": ["failed", "timeout", "missing_card"]}},
+    ]
+
+    if allow_unclaimed_card:
+        active_ok.append(
+            {
+                "activeDrop.cardId": {"$exists": True, "$ne": ""},
+                "activeDrop.isClaimed": False,
+                "activeDrop.preSpawnCaptcha.status": {"$nin": ["pending", "solving"]},
+            }
+        )
+
     return {
         "$and": [
             {
@@ -104,37 +125,33 @@ def _drop_allowed_filter(now: datetime) -> dict:
                     {"dropSpawnLockUntil": {"$lte": now}},
                 ]
             },
-            {
-                "$or": [
-                    {"activeDrop": {"$exists": False}},
-                    {"activeDrop": None},
-                    {"activeDrop": {}},
-                    {"activeDrop.isClaimed": True},
-                    {"activeDrop.preSpawnCaptcha.status": {"$in": ["failed", "timeout", "missing_card"]}},
-                ]
-            },
+            {"$or": active_ok},
         ]
     }
 
 
-def is_active_unclaimed_drop(active: dict | None) -> bool:
-    """True when a group already has an unclaimed card/captcha.
+def is_pre_spawn_pending(active: dict | None) -> bool:
+    """True while a pre-spawn captcha must block all drop counting."""
+    pre_cap = (active or {}).get("preSpawnCaptcha") or {}
+    return pre_cap.get("status") in {"pending", "solving"}
 
-    Existing code only blocked pending pre-spawn captcha. This also blocks normal
-    unclaimed cards, fixing cases where two drops can appear in one group.
+
+def is_unclaimed_spawn_card(active: dict | None) -> bool:
+    """True for a spawned card that users left unclaimed.
+
+    This intentionally excludes pending/solving pre-spawn captcha. Normal cards
+    left unclaimed are allowed to be skipped after the group reaches changeTime
+    again.
     """
     active = active or {}
-    if not active:
+    if not active or is_pre_spawn_pending(active):
         return False
+    return bool(active.get("cardId")) and not bool(active.get("isClaimed"))
 
-    pre_cap = active.get("preSpawnCaptcha") or {}
-    if pre_cap.get("status") in {"pending", "solving"}:
-        return True
 
-    if active.get("cardId") and not active.get("isClaimed"):
-        return True
-
-    return False
+def is_active_unclaimed_drop(active: dict | None) -> bool:
+    """Backward-compatible helper for manual checks."""
+    return is_pre_spawn_pending(active) or is_unclaimed_spawn_card(active)
 
 
 def _dt_is_future(value) -> bool:
@@ -274,7 +291,7 @@ async def acquire_drop_spawn_lock(chat_id: int, change_time: int, reason: str = 
     """
     now = utcnow()
     query = {"groupId": int(chat_id), "messageCount": {"$gte": int(change_time)}}
-    query.update(_drop_allowed_filter(now))
+    query.update(_drop_allowed_filter(now, allow_unclaimed_card=True))
 
     return await get_db().groups.find_one_and_update(
         query,
@@ -299,6 +316,58 @@ async def release_drop_spawn_lock(chat_id: int) -> None:
         )
     except Exception:
         pass
+
+
+def active_drop_snapshot(active: dict | None) -> dict:
+    """Small DB-safe snapshot for audit logs when an old drop is skipped."""
+    active = active or {}
+    return {
+        "cardId": str(active.get("cardId", "") or ""),
+        "name": str(active.get("name", "") or ""),
+        "rarity": str(active.get("rarity", "") or ""),
+        "anime": str(active.get("anime", "") or ""),
+        "messageId": int(active.get("messageId", 0) or 0),
+        "dropNumber": int(active.get("dropNumber", 0) or 0),
+        "droppedAt": active.get("droppedAt"),
+        "manualDrop": bool(active.get("manualDrop", False)),
+    }
+
+
+async def mark_unclaimed_drop_replaced(chat_id: int, active: dict | None, change_time: int) -> bool:
+    """Record that an old unclaimed drop was skipped by the next drop cycle.
+
+    The activeDrop is not cleared here. send_spawn_card() will replace it only
+    after the new media is successfully sent. If sending fails, the existing
+    auto-skip path clears the turn and records the send error.
+    """
+    if not is_unclaimed_spawn_card(active):
+        return False
+
+    now = utcnow()
+    snapshot = active_drop_snapshot(active)
+    try:
+        await get_db().groups.update_one(
+            {"groupId": int(chat_id)},
+            {
+                "$set": {
+                    "lastSkippedDrop": snapshot,
+                    "lastDropSkipReason": "replaced_unclaimed_by_next_drop",
+                    "lastDropSkipAt": now,
+                    "updatedAt": now,
+                },
+                "$inc": {"skippedDrops": 1, "replacedUnclaimedDrops": 1},
+            },
+        )
+    except Exception as exc:
+        print("DROP REPLACE OLD DB ERROR:", repr(exc), flush=True)
+        return False
+
+    print(
+        f"DROP REPLACE OLD: chat_id={int(chat_id)} old_card={snapshot.get('cardId')} "
+        f"changeTime={int(change_time)}",
+        flush=True,
+    )
+    return True
 
 
 def _datetime_to_utc_ts(value) -> float:
@@ -676,7 +745,7 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     active = (group or {}).get("activeDrop") or {}
     pre_cap = active.get("preSpawnCaptcha") or {}
-    if pre_cap.get("status") == "pending":
+    if pre_cap.get("status") in {"pending", "solving"}:
         # If a captcha expired while the bot process was offline, clear it now so the
         # group does not stay blocked forever after PM2 restarts the bot.
         if is_pre_spawn_expired(pre_cap):
@@ -695,10 +764,10 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             # until it is solved, failed, or timed out.
             return
 
-    # Do not count messages while an unclaimed card is already active.
-    # This prevents two drops from appearing in the same group at the same time.
-    if is_active_unclaimed_drop(active):
-        return
+    # Normal unclaimed cards do NOT block counting anymore.
+    # If the group reaches changeTime again, acquire_drop_spawn_lock() records
+    # the old card as skipped and the new card replaces it safely.
+    # Pending/solving pre-spawn captcha is still blocked above.
 
     # If Telegram gives us a real user, apply bot-mute / 6-message streak logic.
     # Forwarded media still has the forwarding user as effective_user and will be counted.
@@ -722,7 +791,7 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     db = get_db()
     now = utcnow()
     query = {"groupId": int(chat.id)}
-    query.update(_drop_allowed_filter(now))
+    query.update(_drop_allowed_filter(now, allow_unclaimed_card=True))
 
     updated = await db.groups.find_one_and_update(
         query,
@@ -741,7 +810,18 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not locked:
         return
 
-    await spawn_random_character(update, context)
+    await mark_unclaimed_drop_replaced(
+        int(chat.id),
+        (locked or {}).get("activeDrop") or {},
+        change_time,
+    )
+
+    try:
+        await spawn_random_character(update, context)
+    except Exception as exc:
+        # Do not leave dropSpawnLock stuck on unexpected runtime errors.
+        print("DROP SPAWN UNEXPECTED ERROR:", repr(exc), flush=True)
+        await mark_group_drop_skipped(int(chat.id), "spawn_unexpected_error", exc, pause_group=False)
 
 async def spawn_random_character(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
