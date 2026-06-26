@@ -357,6 +357,17 @@ async def reply_wrong_character_name(update: Update, active: dict, guess_raw: st
     )
 
 
+async def edit_claim_progress_message(progress_message, text: str, parse_mode: str | None = None) -> bool:
+    """Edit the single claim progress message instead of sending extra claim replies."""
+    if not progress_message:
+        return False
+    try:
+        await progress_message.edit_text(text, parse_mode=parse_mode)
+        return True
+    except Exception:
+        return False
+
+
 async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_chat.type not in ("group", "supergroup"):
         return
@@ -401,19 +412,26 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # High-rarity captcha is solved before the card spawns, so /bika claims no longer trigger captcha here.
 
-    # Send quick progress replies before the heavier claim DB writes,
-    # so group users immediately see that the claim is being processed.
+    # Send one quick progress message, then edit that same message for the next
+    # progress state and the final claim result. This keeps the group clean.
+    progress_message = None
     try:
-        await update.message.reply_text("⚡")
-        await update.message.reply_text("⏳")
+        progress_message = await update.message.reply_text("⚡")
+        await edit_claim_progress_message(progress_message, "⏳")
     except Exception:
-        pass
+        progress_message = None
 
     reservation = await reserve_daily_claim(update.effective_user.id)
     if not reservation.get("ok"):
-        await update.message.reply_text(
-            t("daily_limit", date=reservation.get("date"), used=reservation.get("used"), limit=CLAIM_DAILY_LIMIT, remaining=0)
+        text = t(
+            "daily_limit",
+            date=reservation.get("date"),
+            used=reservation.get("used"),
+            limit=CLAIM_DAILY_LIMIT,
+            remaining=0,
         )
+        if not await edit_claim_progress_message(progress_message, text):
+            await update.message.reply_text(text)
         return
 
     claimer_name = " ".join([update.effective_user.first_name or "", update.effective_user.last_name or ""]).strip()
@@ -438,29 +456,33 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await release_daily_claim(update.effective_user.id, reservation.get("date"))
         latest = await get_db().groups.find_one({"groupId": int(update.effective_chat.id)})
         latest_active = (latest or {}).get("activeDrop") or {}
-        await reply_already_caught(update, latest_active)
+        text = t("already_caught", caught_by=caught_by_html(latest_active))
+        if not await edit_claim_progress_message(progress_message, text, ParseMode.HTML):
+            await reply_already_caught(update, latest_active)
         return
 
     photo_doc = await get_photo_by_card_id(active.get("cardId"))
     if not photo_doc:
         await release_daily_claim(update.effective_user.id, reservation.get("date"))
-        await update.message.reply_text(t("drop_data_missing"))
+        text = t("drop_data_missing")
+        if not await edit_claim_progress_message(progress_message, text):
+            await update.message.reply_text(text)
         return
 
     await add_card_to_user(update.effective_user, photo_doc, 1)
     await ensure_claimed_card_media_fields(update.effective_user.id, photo_doc)
     await log_claim_event(update.effective_user, update.effective_chat, photo_doc, reservation.get("date"))
-    await update.message.reply_html(
-        t(
-            "claim_success",
-            claimer=mention_user(update.effective_user),
-            emoji=get_rarity_emoji(photo_doc.get("rarity")),
-            name=escape_html(photo_doc.get("name")),
-            card_id=escape_html(photo_doc.get("cardId")),
-            rarity=escape_html(photo_doc.get("rarity")),
-            anime=escape_html(photo_doc.get("anime")),
-        )
+    text = t(
+        "claim_success",
+        claimer=mention_user(update.effective_user),
+        emoji=get_rarity_emoji(photo_doc.get("rarity")),
+        name=escape_html(photo_doc.get("name")),
+        card_id=escape_html(photo_doc.get("cardId")),
+        rarity=escape_html(photo_doc.get("rarity")),
+        anime=escape_html(photo_doc.get("anime")),
     )
+    if not await edit_claim_progress_message(progress_message, text, ParseMode.HTML):
+        await update.message.reply_html(text)
 
 
 async def captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
