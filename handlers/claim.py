@@ -401,6 +401,14 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # High-rarity captcha is solved before the card spawns, so /bika claims no longer trigger captcha here.
 
+    # Send quick progress replies before the heavier claim DB writes,
+    # so group users immediately see that the claim is being processed.
+    try:
+        await update.message.reply_text("⚡")
+        await update.message.reply_text("⏳")
+    except Exception:
+        pass
+
     reservation = await reserve_daily_claim(update.effective_user.id)
     if not reservation.get("ok"):
         await update.message.reply_text(
