@@ -281,9 +281,22 @@ def build_drop_message_link(chat, message_id: int) -> str:
 
 
 def caught_by_html(active: dict) -> str:
-    """Return clickable catcher mention from activeDrop data."""
+    """Return clickable catcher mention from activeDrop data.
+
+    During a fast race, the first correct user gets a temporary claimLock before
+    the final result is written. Other users should still see that first user's
+    name instead of getting their own progress emoji or daily-limit reservation.
+    """
     user_id = int(active.get("claimedByUserId", 0) or 0)
-    name = escape_html(active.get("claimedByName") or "Someone")
+    name = escape_html(active.get("claimedByName") or "")
+
+    if not user_id:
+        lock = active.get("claimLock") or {}
+        user_id = int(lock.get("userId", 0) or 0)
+        name = escape_html(lock.get("userName") or name or "Someone")
+
+    if not name:
+        name = "Someone"
     if user_id:
         return f'<a href="tg://user?id={user_id}">{name}</a>'
     return name
@@ -368,6 +381,62 @@ async def edit_claim_progress_message(progress_message, text: str, parse_mode: s
         return False
 
 
+async def release_claim_lock(chat_id: int, card_id: str, claim_token: str) -> None:
+    """Release only this user's temporary claim lock."""
+    try:
+        await get_db().groups.update_one(
+            {
+                "groupId": int(chat_id),
+                "activeDrop.cardId": str(card_id),
+                "activeDrop.isClaimed": False,
+                "activeDrop.claimLock.token": str(claim_token),
+            },
+            {
+                "$unset": {"activeDrop.claimLock": ""},
+                "$set": {"updatedAt": utcnow()},
+            },
+        )
+    except Exception:
+        pass
+
+
+async def lock_claim_for_first_user(update: Update, active: dict, claimer_name: str, claim_token: str) -> dict | None:
+    """Atomically lock the drop for the first correct user only.
+
+    This is the key race-control step:
+    - The first correct user gets activeDrop.claimLock.
+    - Only that locked user receives the ⚡ -> ⏳ progress message.
+    - Other correct users immediately get the normal already-caught response.
+    - Daily limit is reserved only after this lock is acquired.
+    """
+    now = utcnow()
+    return await get_db().groups.find_one_and_update(
+        {
+            "groupId": int(update.effective_chat.id),
+            "activeDrop.cardId": str(active.get("cardId")),
+            "activeDrop.isClaimed": False,
+            "$or": [
+                {"activeDrop.claimLock": {"$exists": False}},
+                {"activeDrop.claimLock": None},
+                {"activeDrop.claimLock.expiresAt": {"$lte": now}},
+            ],
+        },
+        {
+            "$set": {
+                "activeDrop.claimLock": {
+                    "token": str(claim_token),
+                    "userId": int(update.effective_user.id),
+                    "userName": claimer_name or update.effective_user.username or str(update.effective_user.id),
+                    "createdAt": now,
+                    "expiresAt": now + timedelta(seconds=20),
+                },
+                "updatedAt": now,
+            }
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+
+
 async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_chat.type not in ("group", "supergroup"):
         return
@@ -378,16 +447,20 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if guess_raw is None:
         return
 
-    await ensure_user(update.effective_user)
     group = await ensure_group(update.effective_chat)
-    active = (group or {}).get("activeDrop")
+    active = (group or {}).get("activeDrop") or {}
     if not active or not active.get("cardId"):
         await update.message.reply_text(t("no_character_available"))
         return
 
-    # /bika without a name should not show usage text.
-    # If the card is already caught, show catcher. If not caught, show wrong-name + last drop link.
+    # If the card is already caught, do not send progress emoji.
     if active.get("isClaimed"):
+        await reply_already_caught(update, active)
+        return
+
+    # If another correct user is already being processed, keep this user's response fast
+    # and do not reserve daily limit for this user.
+    if active.get("claimLock"):
         await reply_already_caught(update, active)
         return
 
@@ -410,10 +483,30 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await reply_wrong_character_name(update, active, guess_raw)
         return
 
-    # High-rarity captcha is solved before the card spawns, so /bika claims no longer trigger captcha here.
+    # Only after the name is correct do we touch the user document.
+    await ensure_user(update.effective_user)
 
-    # Send one quick progress message, then edit that same message for the next
-    # progress state and the final claim result. This keeps the group clean.
+    # Fast read-only daily-limit check first. No count is deducted here.
+    date_key = yangon_date_key()
+    used = await get_daily_claim_count(update.effective_user.id, date_key)
+    if used >= CLAIM_DAILY_LIMIT:
+        await update.message.reply_text(
+            t("daily_limit", date=date_key, used=used, limit=CLAIM_DAILY_LIMIT, remaining=0)
+        )
+        return
+
+    claimer_name = " ".join([update.effective_user.first_name or "", update.effective_user.last_name or ""]).strip()
+    claim_token = secrets.token_hex(8)
+
+    locked = await lock_claim_for_first_user(update, active, claimer_name, claim_token)
+    if not locked:
+        latest = await get_db().groups.find_one({"groupId": int(update.effective_chat.id)})
+        latest_active = (latest or {}).get("activeDrop") or {}
+        await reply_already_caught(update, latest_active)
+        return
+
+    # Only the first locked user gets this single progress message. It is edited,
+    # not duplicated: ⚡ -> ⏳ -> final result.
     progress_message = None
     try:
         progress_message = await update.message.reply_text("⚡")
@@ -421,8 +514,9 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception:
         progress_message = None
 
-    reservation = await reserve_daily_claim(update.effective_user.id)
+    reservation = await reserve_daily_claim(update.effective_user.id, date_key)
     if not reservation.get("ok"):
+        await release_claim_lock(update.effective_chat.id, active.get("cardId"), claim_token)
         text = t(
             "daily_limit",
             date=reservation.get("date"),
@@ -434,12 +528,22 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text(text)
         return
 
-    claimer_name = " ".join([update.effective_user.first_name or "", update.effective_user.last_name or ""]).strip()
+    photo_doc = await get_photo_by_card_id(active.get("cardId"))
+    if not photo_doc:
+        await release_daily_claim(update.effective_user.id, reservation.get("date"))
+        await release_claim_lock(update.effective_chat.id, active.get("cardId"), claim_token)
+        text = t("drop_data_missing")
+        if not await edit_claim_progress_message(progress_message, text):
+            await update.message.reply_text(text)
+        return
+
     updated = await get_db().groups.find_one_and_update(
         {
             "groupId": int(update.effective_chat.id),
             "activeDrop.cardId": str(active.get("cardId")),
             "activeDrop.isClaimed": False,
+            "activeDrop.claimLock.token": str(claim_token),
+            "activeDrop.claimLock.userId": int(update.effective_user.id),
         },
         {
             "$set": {
@@ -447,7 +551,8 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "activeDrop.claimedByUserId": int(update.effective_user.id),
                 "activeDrop.claimedByName": claimer_name or update.effective_user.username or str(update.effective_user.id),
                 "updatedAt": utcnow(),
-            }
+            },
+            "$unset": {"activeDrop.claimLock": ""},
         },
         return_document=ReturnDocument.AFTER,
     )
@@ -461,17 +566,10 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await reply_already_caught(update, latest_active)
         return
 
-    photo_doc = await get_photo_by_card_id(active.get("cardId"))
-    if not photo_doc:
-        await release_daily_claim(update.effective_user.id, reservation.get("date"))
-        text = t("drop_data_missing")
-        if not await edit_claim_progress_message(progress_message, text):
-            await update.message.reply_text(text)
-        return
-
     await add_card_to_user(update.effective_user, photo_doc, 1)
     await ensure_claimed_card_media_fields(update.effective_user.id, photo_doc)
     await log_claim_event(update.effective_user, update.effective_chat, photo_doc, reservation.get("date"))
+
     text = t(
         "claim_success",
         claimer=mention_user(update.effective_user),
