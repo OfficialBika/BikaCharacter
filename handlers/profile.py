@@ -93,7 +93,7 @@ def build_profile_text(user_doc: dict, total_photo_count: int) -> str:
 
     lines = [
         "🎗 <b>𝐁𝐈𝐊𝐀 𝐂𝐀𝐓𝐂𝐇𝐄𝐑 𝐏𝐑𝐎𝐅𝐈𝐋𝐄</b> 🎗",
-        "━━━━━━━━━━━━━━━━━━━━",
+        "━━━━━━━━━━━━━━━━",
         f"👤 <b>ᴜꜱᴇʀ</b> : {username}",
         f"🆔 <b>ᴜꜱᴇʀ ɪᴅ</b> : <code>{escape_html(user_doc.get('userId'))}</code>",
         "",
@@ -121,7 +121,7 @@ def build_profile_text(user_doc: dict, total_photo_count: int) -> str:
         )
 
     lines.extend(rarity_lines)
-    lines.append("━━━━━━━━━━━━━━━━━━━━")
+    lines.append("━━━━━━━━━━━━━━━━")
     return "\n".join(lines)
 
 async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
