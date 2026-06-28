@@ -80,27 +80,49 @@ def build_profile_text(user_doc: dict, total_photo_count: int) -> str:
     harem_percent = (unique_owned / total_photo_count * 100) if total_photo_count else 0
     level = level_from_exp(user_doc.get("exp", 0))
     counts = rarity_counts(cards)
-    username = " ".join([user_doc.get("firstName", ""), user_doc.get("lastName", "")]).strip() or user_doc.get("username") or "Unknown"
+
+    username = " ".join([user_doc.get("firstName", ""), user_doc.get("lastName", "")]).strip()
+    username = username or user_doc.get("username") or "Unknown"
     username = escape_html(username)
+
     fav = next((c for c in cards if str(c.get("cardId")) == str(user_doc.get("favoriteCardId", ""))), None)
+    if fav:
+        fav_text = f'{escape_html(fav.get("name", "Unknown"))} <code>[{escape_html(fav.get("cardId", ""))}]</code>'
+    else:
+        fav_text = "ɴᴏᴛ ꜱᴇᴛ"
 
     lines = [
-        t("profile_header"),
+        "🎗 <b>𝐁𝐈𝐊𝐀 𝐂𝐀𝐓𝐂𝐇𝐄𝐑 𝐏𝐑𝐎𝐅𝐈𝐋𝐄</b> 🎗",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"👤 <b>ᴜꜱᴇʀ</b> : {username}",
+        f"🆔 <b>ᴜꜱᴇʀ ɪᴅ</b> : <code>{escape_html(user_doc.get('userId'))}</code>",
         "",
-        t("profile_user", username=username),
-        t("profile_user_id", user_id=user_doc.get("userId")),
-        t("profile_total_character", total_owned=total_owned, unique_owned=unique_owned),
-        t("profile_harem", unique_owned=unique_owned, total_photo_count=total_photo_count, percent=harem_percent),
-        t("profile_level", level=level["level"]),
-        t("profile_progress", bar=progress_bar(level["percent"])),
-        t("profile_favourite", name=escape_html(fav["name"]), card_id=escape_html(fav["cardId"])) if fav else t("profile_favourite_not_set"),
+        "🎴 <b>𝐂𝐎𝐋𝐋𝐄𝐂𝐓𝐈𝐎𝐍</b>",
+        f"├ ᴛᴏᴛᴀʟ : <b>{total_owned}</b> ᴄᴀʀᴅꜱ",
+        f"├ ᴜɴɪǫᴜᴇ : <b>{unique_owned}</b>/<b>{total_photo_count}</b>",
+        f"└ ʜᴀʀᴇᴍ : <b>{harem_percent:.3f}%</b>",
         "",
+        "⚡ <b>𝐋𝐄𝐕𝐄𝐋</b>",
+        f"├ ʟᴠʟ : <b>{level['level']}</b>",
+        f"└ ᴘʀᴏɢʀᴇꜱꜱ : {progress_bar(level['percent'])}",
+        "",
+        "💖 <b>𝐅𝐀𝐕𝐎𝐔𝐑𝐈𝐓𝐄</b>",
+        f"└ {fav_text}",
+        "",
+        "🏷 <b>𝐑𝐀𝐑𝐈𝐓𝐘 𝐒𝐓𝐀𝐓𝐒</b>",
     ]
+
+    rarity_lines = []
     for rarity in RARITY_ORDER:
         data = counts.get(rarity, {"unique": 0, "total": 0})
-        lines.append(t("profile_rarity_line", emoji=get_rarity_emoji(rarity), rarity=escape_html(rarity), unique=data["unique"], total=data["total"]))
-    return "\n".join(lines)
+        rarity_lines.append(
+            f"{get_rarity_emoji(rarity)} <b>{escape_html(rarity)}</b> · "
+            f"<code>{data['unique']}</code> unique / <code>{data['total']}</code> total"
+        )
 
+    lines.extend(rarity_lines)
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+    return "\n".join(lines)
 
 async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await should_ignore_update(update):
