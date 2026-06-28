@@ -374,6 +374,13 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     parsed["cardId"] = str(parsed.get("cardId", "")).strip()
 
     limited_card = is_limited_card(parsed, card_id_provided)
+    if limited_card and not is_owner(update.effective_user.id):
+        await msg.reply_text(
+            "❌ Limited cards can only be added/updated by the owner.\n"
+            "Normal adders can add/update normal numeric ID cards only."
+        )
+        return
+
     if limited_card:
         parsed["rarity"] = str(LIMITED_RARITY_NAME)
         if not card_id_provided or not parsed["cardId"]:
