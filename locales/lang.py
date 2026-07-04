@@ -12,7 +12,7 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'start_button_update': '📢 ᴜᴘᴅᴀᴛᴇ ᴄʜᴀɴɴᴇʟ',
         'start_message': 'ʜᴇʟʟᴏ {mention} !\n'
                          '\n'
-                         "ɪ'ᴍ <b>𝐁𝐢𝐤𝐚 𝐂𝐡𝐚𝐫𝐚𝐜𝐭𝐞𝐫 𝐁𝐨𝐭</b> .\n"
+                         "ɪ'ᴍ <b>𝐃𝐨𝐧𝐠𝐡𝐮𝐚 𝐂𝐡𝐚𝐫𝐚𝐜𝐭𝐞𝐫 𝐁𝐨𝐭</b> .\n"
                          '\n'
                          'ᴀ ᴄᴜᴛᴇ ᴄʜᴀʀᴀᴄᴛᴇʀ ᴄᴀᴛᴄʜɪɴɢ ᴀᴅᴠᴇɴᴛᴜʀᴇ. ᴀᴅᴅ ᴍᴇ ᴛᴏ ᴀ ɢʀᴏᴜᴘ, ᴄᴏʟʟᴇᴄᴛ ꜰᴀꜱᴛ, ᴀɴᴅ ʙᴜɪʟᴅ ʏᴏᴜʀ ʜᴀʀᴇᴍ.',
         'not_your_action': 'ɴᴏᴛ ʏᴏᴜʀ ᴀᴄᴛɪᴏɴ.',
@@ -43,7 +43,7 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'harem_no_cards_alert': 'ɴᴏ ᴄᴀʀᴅꜱ.',
         'harem_button_back': '« ʙᴀᴄᴋ',
         'harem_button_next': 'ɴᴇxᴛ »',
-        'profile_header': '🎗𝐁𝐈𝐊𝐀 𝐂𝐀𝐓𝐂𝐇𝐄𝐑 𝐏𝐑𝐎𝐅𝐈𝐋𝐄🎗',
+        'profile_header': '🎗𝐃𝐎𝐍𝐆𝐇𝐔𝐀 𝐂𝐀𝐓𝐂𝐇𝐄𝐑 𝐏𝐑𝐎𝐅𝐈𝐋𝐄🎗',
         'profile_user': '👤 ᴜꜱᴇʀ: {username}',
         'profile_user_id': '🆔 ᴜꜱᴇʀ ɪᴅ: {user_id}',
         'profile_total_character': '⚡ ᴛᴏᴛᴀʟ ᴄʜᴀʀᴀᴄᴛᴇʀ: {total_owned} ({unique_owned})',
@@ -87,7 +87,7 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'gift_cancelled': '❌ ɢɪꜰᴛ ᴄᴀɴᴄᴇʟʟᴇᴅ.',
         'rank_no_group': 'ɴᴏ ɢʀᴏᴜᴘ ᴄᴀᴛᴄʜ ʀᴀɴᴋɪɴɢ ʏᴇᴛ.',
         'rank_group_header': '🏆 <b>𝐓𝐎𝐏 𝐆𝐑𝐎𝐔𝐏 𝐑𝐀𝐍𝐊𝐈𝐍𝐆</b>',
-        'rank_group_subtitle': '<b>𝐁𝐲 /bika 𝐜𝐚𝐭𝐜𝐡𝐞𝐬 𝐫𝐚𝐧𝐤𝐢𝐧𝐠</b>',
+        'rank_group_subtitle': '<b>𝐁𝐲 /dao 𝐜𝐚𝐭𝐜𝐡𝐞𝐬 𝐫𝐚𝐧𝐤𝐢𝐧𝐠</b>',
         'rank_group_row': '{rank} {group} — <b>{count}</b> ᴄᴀᴛᴄʜᴇꜱ',
         'rank_no_global': 'ɴᴏ ɢʟᴏʙᴀʟ ʜᴀʀᴇᴍ ʀᴀɴᴋɪɴɢ ʏᴇᴛ.',
         'rank_global_header': '🌍 <b>𝐆𝐋𝐎𝐁𝐀𝐋 𝐓𝐎𝐏 𝟏𝟎 𝐔𝐒𝐄𝐑𝐒</b>',
@@ -96,7 +96,7 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'rank_no_today': 'ɴᴏ ᴄᴀᴛᴄʜᴇꜱ ʏᴇᴛ ᴛᴏᴅᴀʏ.\nᴅᴀᴛᴇ: {date} ({timezone})',
         'rank_today_header': '📅 <b>𝐓𝐎𝐃𝐀𝐘 𝐆𝐋𝐎𝐁𝐀𝐋 𝐓𝐎𝐏 𝟏𝟎</b>',
         'rank_today_date': 'ᴅᴀᴛᴇ: <b>{date}</b> ({timezone})',
-        'rank_today_subtitle': '<b>𝐁𝐲 /bika 𝐜𝐚𝐭𝐜𝐡𝐞𝐬 𝐭𝐨𝐝𝐚𝐲</b>',
+        'rank_today_subtitle': '<b>𝐁𝐲 /dao 𝐜𝐚𝐭𝐜𝐡𝐞𝐬 𝐭𝐨𝐝𝐚𝐲</b>',
         'rank_today_row': '{rank} {user} — <b>{count}</b> ᴄᴀᴛᴄʜᴇꜱ',
         'mylimit': '🎯 ᴅᴀɪʟʏ ᴄᴀᴛᴄʜ ʟɪᴍɪᴛ\n\nᴅᴀᴛᴇ: {date} ({timezone})\nᴜꜱᴇᴅ: {used}/{limit}\nʀᴇᴍᴀɪɴɪɴɢ: {remaining}',
         'bot_muted': '🤐 {name}, ʏᴏᴜ ꜱᴇɴᴛ ᴛᴏᴏ ᴍᴀɴʏ ᴍᴇꜱꜱᴀɢᴇꜱ ɪɴ ᴀ ʀᴏᴡ. ʙᴏᴛ ᴡɪʟʟ ɪɢɴᴏʀᴇ ʏᴏᴜ ꜰᴏʀ {minutes} ᴍɪɴᴜᴛᴇꜱ.',
@@ -173,7 +173,7 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
                             'ᴏᴡɴᴇʀ: {owner_min}-{owner_max}',
         'changetime_range': '❌ ᴄʜᴀɴɢᴇᴛɪᴍᴇ ᴍᴜꜱᴛ ʙᴇ ʙᴇᴛᴡᴇᴇɴ {min_v} ᴀɴᴅ {max_v}.',
         'changetime_updated': '✅ ᴄʜᴀɴɢᴇᴛɪᴍᴇ ᴜᴘᴅᴀᴛᴇᴅ ᴛᴏ {value} ᴍᴇꜱꜱᴀɢᴇꜱ.',
-        'admin_dashboard': '⚙️ 𝐁𝐈𝐊𝐀 𝐀𝐃𝐌𝐈𝐍 𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃\n'
+        'admin_dashboard': '⚙️ 𝐃𝐎𝐍𝐆𝐇𝐔𝐀 𝐀𝐃𝐌𝐈𝐍 𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃\n'
                            '\n'
                            '👤 ᴜꜱᴇʀꜱ: {users}\n'
                            '👥 ɢʀᴏᴜᴘꜱ: {groups}\n'
@@ -183,7 +183,6 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
                            '➕ ᴀᴅᴅᴇʀꜱ: {adders}\n'
                            '⏱ ᴜᴘᴛɪᴍᴇ: {uptime}\n'
                            '\n'
-                           'ᴜꜱᴇ: /admin_users /admin_groups /admin_photos\n'
                            'ᴏᴡɴᴇʀ: /clmute /transfer /addadder /rmadder /give',
         'no_users': 'ɴᴏ ᴜꜱᴇʀꜱ.',
         'user_list_header': '👤 𝐔𝐒𝐄𝐑 𝐋𝐈𝐒𝐓',
