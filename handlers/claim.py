@@ -11,11 +11,11 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOpti
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
-from config import BOT_USERNAME, CLAIM_CAPTCHA_SECONDS, CLAIM_DAILY_LIMIT, CLAIM_PREFIX_MIN_LENGTH
+from config import BOT_USERNAME, CLAIM_CAPTCHA_SECONDS, CLAIM_COMMAND, CLAIM_DAILY_LIMIT, CLAIM_PREFIX_MIN_LENGTH
 from database.mongodb import get_db
 from utils.cooldown import should_ignore_update
 from utils.claim_stats import get_daily_claim_count, log_claim_event, release_daily_claim, reserve_daily_claim, yangon_date_key
-from utils.db_helpers import add_card_to_user, ensure_group, ensure_user, get_photo_by_card_id
+from utils.db_helpers import add_card_to_user, ensure_user, get_photo_by_card_id
 from utils.parser import is_character_name_match, normalized_search_name
 from utils.rarity import get_rarity_emoji
 from utils.text import escape_html, mention_user, utcnow
@@ -23,6 +23,31 @@ from utils.i18n import t
 
 # Divine and every rarity above it must be protected with captcha.
 CAPTCHA_RARITIES = set()  # High-rarity captcha now happens before spawn in handlers/drop.py
+
+
+# Claim command is controlled by .env. Empty/invalid values fall back to "bika"
+# inside config.py.
+CLAIM_COMMAND_REGEX = re.compile(
+    rf"^/{re.escape(CLAIM_COMMAND)}(?:@([A-Za-z0-9_]{{5,32}}))?(?:\s+(.+))?$",
+    flags=re.IGNORECASE,
+)
+CLAIM_COMMAND_TRIGGER_REGEX = re.compile(
+    rf"^/{re.escape(CLAIM_COMMAND)}(?:@[A-Za-z0-9_]{{5,32}})?(?:\s|$)",
+    flags=re.IGNORECASE,
+)
+
+# Extremely small in-process race coordinator.
+#
+# Why it exists:
+# - after one correct guess is validated, the first local contender is reserved here;
+# - that user gets ⚡ immediately;
+# - later contenders get the already-caught response without waiting for the DB write
+#   pipeline to finish;
+# - MongoDB's atomic claimLock remains the source of truth, so database safety is
+#   preserved and multi-process conflicts are corrected by the background worker.
+_FAST_CLAIM_RESERVATIONS: dict[int, dict] = {}
+_FAST_CLAIM_MUTEX = asyncio.Lock()
+_FAST_CLAIM_TTL_SECONDS = 60.0
 
 
 def detect_card_media_type(card_doc: dict) -> str:
@@ -307,25 +332,18 @@ async def reply_already_caught(update: Update, active: dict) -> None:
 
 
 def extract_bika_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str | None:
-    """
-    Support both:
-      /bika name
-      /bika@BikaCharacterBot name
+    """Extract the guess for the configured claim command.
 
-    Return None only when the command is for another bot or is not a /bika command.
+    Examples when CLAIM_COMMAND=dao:
+      /dao name
+      /dao@YourBotUsername name
+
+    When CLAIM_COMMAND is absent from .env, the command is /bika.
     """
     msg = update.effective_message
     text = (msg.text or "").strip() if msg else ""
 
-    # CommandHandler fills context.args, but MessageHandler usually does not.
-    if context.args:
-        return " ".join(context.args).strip()
-
-    match = re.match(
-        r"^/bika(?:@([A-Za-z0-9_]{5,32}))?(?:\s+(.+))?$",
-        text,
-        flags=re.IGNORECASE,
-    )
+    match = CLAIM_COMMAND_REGEX.match(text)
     if not match:
         return None
 
@@ -334,14 +352,85 @@ def extract_bika_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> st
 
     allowed_bot_names = {
         str(BOT_USERNAME or "").replace("@", "").strip().lower(),
-        "bikacharacterbot",
     }
     allowed_bot_names.discard("")
 
+    # If BOT_USERNAME is configured, ignore commands explicitly addressed to a
+    # different bot. If BOT_USERNAME is blank, Telegram normally routes the
+    # update correctly and we accept the command.
     if mentioned_bot and allowed_bot_names and mentioned_bot not in allowed_bot_names:
         return None
 
     return guess
+
+
+def _claim_user_name(user) -> str:
+    return (
+        " ".join([user.first_name or "", user.last_name or ""]).strip()
+        or user.username
+        or str(user.id)
+    )
+
+
+async def get_fast_claim_reservation(chat_id: int) -> dict | None:
+    """Return a live local reservation without touching MongoDB."""
+    now = asyncio.get_running_loop().time()
+    async with _FAST_CLAIM_MUTEX:
+        state = _FAST_CLAIM_RESERVATIONS.get(int(chat_id))
+        if not state:
+            return None
+        if float(state.get("expiresAtMonotonic", 0.0) or 0.0) <= now:
+            _FAST_CLAIM_RESERVATIONS.pop(int(chat_id), None)
+            return None
+        return dict(state)
+
+
+async def reserve_fast_claim(chat_id: int, card_id: str, user) -> tuple[dict | None, dict | None]:
+    """Atomically reserve the first local correct contender.
+
+    Returns:
+      (new_reservation, None) for the first contender
+      (None, existing_reservation) for later contenders
+    """
+    now = asyncio.get_running_loop().time()
+    chat_id = int(chat_id)
+
+    async with _FAST_CLAIM_MUTEX:
+        existing = _FAST_CLAIM_RESERVATIONS.get(chat_id)
+        if existing and float(existing.get("expiresAtMonotonic", 0.0) or 0.0) > now:
+            return None, dict(existing)
+
+        token = secrets.token_hex(8)
+        state = {
+            "chatId": chat_id,
+            "cardId": str(card_id),
+            "token": token,
+            "userId": int(user.id),
+            "userName": _claim_user_name(user),
+            "expiresAtMonotonic": now + _FAST_CLAIM_TTL_SECONDS,
+        }
+        _FAST_CLAIM_RESERVATIONS[chat_id] = state
+        return dict(state), None
+
+
+async def clear_fast_claim_reservation(chat_id: int, token: str) -> None:
+    """Clear only the reservation created by this background worker."""
+    chat_id = int(chat_id)
+    async with _FAST_CLAIM_MUTEX:
+        current = _FAST_CLAIM_RESERVATIONS.get(chat_id)
+        if current and str(current.get("token", "")) == str(token):
+            _FAST_CLAIM_RESERVATIONS.pop(chat_id, None)
+
+
+async def reply_fast_reservation_caught(update: Update, state: dict) -> None:
+    """Fast loser path: no DB read/write is required."""
+    pseudo_active = {
+        "claimLock": {
+            "userId": int(state.get("userId", 0) or 0),
+            "userName": str(state.get("userName", "") or "Someone"),
+        }
+    }
+    await reply_already_caught(update, pseudo_active)
 
 
 async def reply_wrong_character_name(update: Update, active: dict, guess_raw: str = "") -> None:
@@ -428,7 +517,7 @@ async def lock_claim_for_first_user(update: Update, active: dict, claimer_name: 
                     "userId": int(update.effective_user.id),
                     "userName": claimer_name or update.effective_user.username or str(update.effective_user.id),
                     "createdAt": now,
-                    "expiresAt": now + timedelta(seconds=20),
+                    "expiresAt": now + timedelta(seconds=60),
                 },
                 "updatedAt": now,
             }
@@ -437,30 +526,357 @@ async def lock_claim_for_first_user(update: Update, active: dict, claimer_name: 
     )
 
 
-async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_chat.type not in ("group", "supergroup"):
+async def rollback_finalized_claim(
+    chat_id: int,
+    card_id: str,
+    claim_token: str,
+    user_id: int,
+) -> bool:
+    """Undo only this exact winner's finalized DB claim after a confirmed grant failure."""
+    result = await get_db().groups.update_one(
+        {
+            "groupId": int(chat_id),
+            "activeDrop.cardId": str(card_id),
+            "activeDrop.isClaimed": True,
+            "activeDrop.claimedByUserId": int(user_id),
+            "activeDrop.claimLock.token": str(claim_token),
+        },
+        {
+            "$set": {
+                "activeDrop.isClaimed": False,
+                "activeDrop.claimedByUserId": 0,
+                "activeDrop.claimedByName": "",
+                "updatedAt": utcnow(),
+            },
+            "$unset": {"activeDrop.claimLock": ""},
+        },
+    )
+    return bool(getattr(result, "modified_count", 0))
+
+
+async def finish_claim_progress(
+    update: Update,
+    progress_message,
+    text: str,
+    parse_mode: str | None = None,
+) -> None:
+    if await edit_claim_progress_message(progress_message, text, parse_mode):
         return
-    if await should_ignore_update(update):
+    try:
+        if parse_mode == ParseMode.HTML:
+            await update.message.reply_html(text)
+        else:
+            await update.message.reply_text(text)
+    except Exception:
+        pass
+
+
+async def process_claim_in_background(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    active: dict,
+    fast_state: dict,
+    progress_message,
+) -> None:
+    """Run the DB-heavy claim pipeline after the immediate ⚡ response.
+
+    Order:
+      1) Mongo atomic lock
+      2) ⏳ progress edit
+      3) ensure user + reserve daily limit
+      4) load card + atomically finalize winner
+      5) grant card
+      6) best-effort media backfill + claim log
+      7) final success edit
+
+    The local fast reservation makes later contenders return immediately while this
+    worker runs. MongoDB's claimLock still arbitrates the authoritative winner.
+    """
+    user = update.effective_user
+    chat = update.effective_chat
+    chat_id = int(chat.id)
+    card_id = str(active.get("cardId", ""))
+    claim_token = str(fast_state.get("token", ""))
+    claimer_name = str(fast_state.get("userName") or _claim_user_name(user))
+
+    daily_reserved = False
+    reservation_date = None
+    claim_finalized = False
+    card_granted = False
+    photo_doc = None
+    before_card_count = 0
+
+    try:
+        # First authoritative DB operation happens only after ⚡ has already been sent.
+        locked = await lock_claim_for_first_user(
+            update,
+            active,
+            claimer_name,
+            claim_token,
+        )
+        if not locked:
+            latest = await get_db().groups.find_one(
+                {"groupId": chat_id},
+                {"activeDrop": 1},
+            )
+            latest_active = (latest or {}).get("activeDrop") or {}
+            text = t("already_caught", caught_by=caught_by_html(latest_active))
+            await finish_claim_progress(update, progress_message, text, ParseMode.HTML)
+            return
+
+        # Preserve the existing single-message flow: ⚡ -> ⏳ -> final result.
+        await edit_claim_progress_message(progress_message, "⏳")
+
+        # Everything below is intentionally after the immediate emoji response.
+        user_doc = await ensure_user(user) or {}
+        existing_card = next(
+            (
+                c
+                for c in user_doc.get("cards", [])
+                if str(c.get("cardId")) == card_id
+            ),
+            None,
+        )
+        before_card_count = int((existing_card or {}).get("count", 0) or 0)
+
+        date_key = yangon_date_key()
+        reservation = await reserve_daily_claim(user.id, date_key)
+        if not reservation.get("ok"):
+            await release_claim_lock(chat_id, card_id, claim_token)
+            text = t(
+                "daily_limit",
+                date=reservation.get("date"),
+                used=reservation.get("used"),
+                limit=CLAIM_DAILY_LIMIT,
+                remaining=0,
+            )
+            await finish_claim_progress(update, progress_message, text)
+            return
+
+        daily_reserved = True
+        reservation_date = reservation.get("date")
+
+        photo_doc = await get_photo_by_card_id(card_id)
+        if not photo_doc:
+            await release_daily_claim(user.id, reservation_date)
+            daily_reserved = False
+            await release_claim_lock(chat_id, card_id, claim_token)
+            await finish_claim_progress(update, progress_message, t("drop_data_missing"))
+            return
+
+        # Finalize only the holder of this exact Mongo claim token.
+        # Keep claimLock until the inventory grant succeeds, so a confirmed grant
+        # failure can be rolled back safely.
+        updated = await get_db().groups.find_one_and_update(
+            {
+                "groupId": chat_id,
+                "activeDrop.cardId": card_id,
+                "activeDrop.isClaimed": False,
+                "activeDrop.claimLock.token": claim_token,
+                "activeDrop.claimLock.userId": int(user.id),
+            },
+            {
+                "$set": {
+                    "activeDrop.isClaimed": True,
+                    "activeDrop.claimedByUserId": int(user.id),
+                    "activeDrop.claimedByName": claimer_name,
+                    "updatedAt": utcnow(),
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+
+        if not updated or int(
+            (updated.get("activeDrop") or {}).get("claimedByUserId", 0) or 0
+        ) != int(user.id):
+            await release_daily_claim(user.id, reservation_date)
+            daily_reserved = False
+            latest = await get_db().groups.find_one(
+                {"groupId": chat_id},
+                {"activeDrop": 1},
+            )
+            latest_active = (latest or {}).get("activeDrop") or {}
+            text = t("already_caught", caught_by=caught_by_html(latest_active))
+            await finish_claim_progress(update, progress_message, text, ParseMode.HTML)
+            return
+
+        claim_finalized = True
+
+        # Critical inventory grant.
+        try:
+            await add_card_to_user(user, photo_doc, 1)
+            card_granted = True
+        except Exception as grant_exc:
+            # The helper updates the user and then reads it back. If an exception
+            # happens after the DB update, verify quantity before deciding to roll
+            # back; this avoids accidental duplicate grants on retry.
+            print("CLAIM CARD GRANT ERROR:", repr(grant_exc), flush=True)
+            latest_user = await get_db().users.find_one(
+                {"userId": int(user.id)},
+                {"cards": 1},
+            )
+            latest_card = next(
+                (
+                    c
+                    for c in (latest_user or {}).get("cards", [])
+                    if str(c.get("cardId")) == card_id
+                ),
+                None,
+            )
+            after_count = int((latest_card or {}).get("count", 0) or 0)
+            card_granted = after_count > before_card_count
+
+            if not card_granted:
+                await rollback_finalized_claim(
+                    chat_id,
+                    card_id,
+                    claim_token,
+                    user.id,
+                )
+                claim_finalized = False
+                if daily_reserved:
+                    await release_daily_claim(user.id, reservation_date)
+                    daily_reserved = False
+                await finish_claim_progress(
+                    update,
+                    progress_message,
+                    "⚠️ Claim processing failed. The card is available again.",
+                )
+                return
+
+        # Once the card is safely in the harem, clear the temporary DB lock.
+        await get_db().groups.update_one(
+            {
+                "groupId": chat_id,
+                "activeDrop.cardId": card_id,
+                "activeDrop.isClaimed": True,
+                "activeDrop.claimedByUserId": int(user.id),
+                "activeDrop.claimLock.token": claim_token,
+            },
+            {
+                "$unset": {"activeDrop.claimLock": ""},
+                "$set": {"updatedAt": utcnow()},
+            },
+        )
+
+        # Non-critical follow-up writes must never undo an already granted card.
+        try:
+            await ensure_claimed_card_media_fields(user.id, photo_doc)
+        except Exception as exc:
+            print("CLAIM MEDIA BACKFILL ERROR:", repr(exc), flush=True)
+
+        try:
+            await log_claim_event(user, chat, photo_doc, reservation_date)
+        except Exception as exc:
+            print("CLAIM LOG ERROR:", repr(exc), flush=True)
+
+        text = t(
+            "claim_success",
+            claimer=mention_user(user),
+            emoji=get_rarity_emoji(photo_doc.get("rarity")),
+            name=escape_html(photo_doc.get("name")),
+            card_id=escape_html(photo_doc.get("cardId")),
+            rarity=escape_html(photo_doc.get("rarity")),
+            anime=escape_html(photo_doc.get("anime")),
+        )
+        await finish_claim_progress(
+            update,
+            progress_message,
+            text,
+            ParseMode.HTML,
+        )
+
+    except Exception as exc:
+        print("CLAIM BACKGROUND ERROR:", repr(exc), flush=True)
+
+        # Compensate only before a card has been confirmed in the user's harem.
+        if claim_finalized and not card_granted:
+            try:
+                await rollback_finalized_claim(
+                    chat_id,
+                    card_id,
+                    claim_token,
+                    user.id,
+                )
+                claim_finalized = False
+            except Exception as rollback_exc:
+                print("CLAIM ROLLBACK ERROR:", repr(rollback_exc), flush=True)
+        elif not claim_finalized:
+            await release_claim_lock(chat_id, card_id, claim_token)
+
+        if daily_reserved and not card_granted:
+            try:
+                await release_daily_claim(user.id, reservation_date)
+                daily_reserved = False
+            except Exception as release_exc:
+                print("CLAIM DAILY RELEASE ERROR:", repr(release_exc), flush=True)
+
+        if card_granted and photo_doc:
+            # The card is already safe; present success even if a non-critical
+            # follow-up failed unexpectedly.
+            text = t(
+                "claim_success",
+                claimer=mention_user(user),
+                emoji=get_rarity_emoji(photo_doc.get("rarity")),
+                name=escape_html(photo_doc.get("name")),
+                card_id=escape_html(photo_doc.get("cardId")),
+                rarity=escape_html(photo_doc.get("rarity")),
+                anime=escape_html(photo_doc.get("anime")),
+            )
+            await finish_claim_progress(update, progress_message, text, ParseMode.HTML)
+        else:
+            await finish_claim_progress(
+                update,
+                progress_message,
+                "⚠️ Claim processing failed. Please try again.",
+            )
+
+    finally:
+        await clear_fast_claim_reservation(chat_id, claim_token)
+
+
+async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_chat or update.effective_chat.type not in ("group", "supergroup"):
         return
 
     guess_raw = extract_bika_guess(update, context)
     if guess_raw is None:
         return
 
-    group = await ensure_group(update.effective_chat)
+    chat_id = int(update.effective_chat.id)
+
+    # Fast loser path: once the first correct contender is locally reserved,
+    # later contenders get the already-caught response immediately with no DB wait.
+    fast_existing = await get_fast_claim_reservation(chat_id)
+    if fast_existing:
+        await reply_fast_reservation_caught(update, fast_existing)
+        return
+
+    # Before ⚡, correctness still requires the current activeDrop and the existing
+    # mute rule still has to be preserved. Run both checks concurrently to minimize
+    # pre-emoji latency. All claim writes and the heavy claim pipeline remain in
+    # the background after ⚡.
+    ignored, group = await asyncio.gather(
+        should_ignore_update(update),
+        get_db().groups.find_one(
+            {"groupId": chat_id},
+            {"activeDrop": 1},
+        ),
+    )
+    if ignored:
+        return
     active = (group or {}).get("activeDrop") or {}
+
     if not active or not active.get("cardId"):
         await update.message.reply_text(t("no_character_available"))
         return
 
-    # If the card is already caught, do not send progress emoji.
     if active.get("isClaimed"):
         await reply_already_caught(update, active)
         return
 
-    # If another correct user is already being processed, keep this user's response fast
-    # and do not reserve daily limit for this user.
-    if active.get("claimLock"):
+    db_claim_lock = active.get("claimLock") or {}
+    if db_claim_lock and not is_expired_datetime(db_claim_lock.get("expiresAt")):
         await reply_already_caught(update, active)
         return
 
@@ -483,104 +899,34 @@ async def bika_claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await reply_wrong_character_name(update, active, guess_raw)
         return
 
-    # Only after the name is correct do we touch the user document.
-    await ensure_user(update.effective_user)
-
-    # Fast read-only daily-limit check first. No count is deducted here.
-    date_key = yangon_date_key()
-    used = await get_daily_claim_count(update.effective_user.id, date_key)
-    if used >= CLAIM_DAILY_LIMIT:
-        await update.message.reply_text(
-            t("daily_limit", date=date_key, used=used, limit=CLAIM_DAILY_LIMIT, remaining=0)
-        )
+    # The first correct contender is selected in memory before any DB write.
+    fast_state, existing = await reserve_fast_claim(
+        chat_id,
+        str(active.get("cardId")),
+        update.effective_user,
+    )
+    if not fast_state:
+        await reply_fast_reservation_caught(update, existing or {})
         return
 
-    claimer_name = " ".join([update.effective_user.first_name or "", update.effective_user.last_name or ""]).strip()
-    claim_token = secrets.token_hex(8)
-
-    locked = await lock_claim_for_first_user(update, active, claimer_name, claim_token)
-    if not locked:
-        latest = await get_db().groups.find_one({"groupId": int(update.effective_chat.id)})
-        latest_active = (latest or {}).get("activeDrop") or {}
-        await reply_already_caught(update, latest_active)
-        return
-
-    # Only the first locked user gets this single progress message. It is edited,
-    # not duplicated: ⚡ -> ⏳ -> final result.
+    # Immediate first-user response.
     progress_message = None
     try:
         progress_message = await update.message.reply_text("⚡")
-        await edit_claim_progress_message(progress_message, "⏳")
-    except Exception:
-        progress_message = None
+    except Exception as exc:
+        print("CLAIM FAST EMOJI SEND ERROR:", repr(exc), flush=True)
 
-    reservation = await reserve_daily_claim(update.effective_user.id, date_key)
-    if not reservation.get("ok"):
-        await release_claim_lock(update.effective_chat.id, active.get("cardId"), claim_token)
-        text = t(
-            "daily_limit",
-            date=reservation.get("date"),
-            used=reservation.get("used"),
-            limit=CLAIM_DAILY_LIMIT,
-            remaining=0,
+    # DB-heavy work continues in the background. This handler returns immediately,
+    # so other claim updates can be processed and answered fast.
+    context.application.create_task(
+        process_claim_in_background(
+            update,
+            context,
+            active,
+            fast_state,
+            progress_message,
         )
-        if not await edit_claim_progress_message(progress_message, text):
-            await update.message.reply_text(text)
-        return
-
-    photo_doc = await get_photo_by_card_id(active.get("cardId"))
-    if not photo_doc:
-        await release_daily_claim(update.effective_user.id, reservation.get("date"))
-        await release_claim_lock(update.effective_chat.id, active.get("cardId"), claim_token)
-        text = t("drop_data_missing")
-        if not await edit_claim_progress_message(progress_message, text):
-            await update.message.reply_text(text)
-        return
-
-    updated = await get_db().groups.find_one_and_update(
-        {
-            "groupId": int(update.effective_chat.id),
-            "activeDrop.cardId": str(active.get("cardId")),
-            "activeDrop.isClaimed": False,
-            "activeDrop.claimLock.token": str(claim_token),
-            "activeDrop.claimLock.userId": int(update.effective_user.id),
-        },
-        {
-            "$set": {
-                "activeDrop.isClaimed": True,
-                "activeDrop.claimedByUserId": int(update.effective_user.id),
-                "activeDrop.claimedByName": claimer_name or update.effective_user.username or str(update.effective_user.id),
-                "updatedAt": utcnow(),
-            },
-            "$unset": {"activeDrop.claimLock": ""},
-        },
-        return_document=ReturnDocument.AFTER,
     )
-
-    if not updated or int(updated.get("activeDrop", {}).get("claimedByUserId", 0)) != int(update.effective_user.id):
-        await release_daily_claim(update.effective_user.id, reservation.get("date"))
-        latest = await get_db().groups.find_one({"groupId": int(update.effective_chat.id)})
-        latest_active = (latest or {}).get("activeDrop") or {}
-        text = t("already_caught", caught_by=caught_by_html(latest_active))
-        if not await edit_claim_progress_message(progress_message, text, ParseMode.HTML):
-            await reply_already_caught(update, latest_active)
-        return
-
-    await add_card_to_user(update.effective_user, photo_doc, 1)
-    await ensure_claimed_card_media_fields(update.effective_user.id, photo_doc)
-    await log_claim_event(update.effective_user, update.effective_chat, photo_doc, reservation.get("date"))
-
-    text = t(
-        "claim_success",
-        claimer=mention_user(update.effective_user),
-        emoji=get_rarity_emoji(photo_doc.get("rarity")),
-        name=escape_html(photo_doc.get("name")),
-        card_id=escape_html(photo_doc.get("cardId")),
-        rarity=escape_html(photo_doc.get("rarity")),
-        anime=escape_html(photo_doc.get("anime")),
-    )
-    if not await edit_claim_progress_message(progress_message, text, ParseMode.HTML):
-        await update.message.reply_html(text)
 
 
 async def captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -708,7 +1054,7 @@ async def captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 def register_claim_handlers(app: Application) -> None:
     app.add_handler(
         MessageHandler(
-            filters.Regex(r"^/bika(?:@[A-Za-z0-9_]{5,32})?(?:\s|$)"),
+            filters.Regex(CLAIM_COMMAND_TRIGGER_REGEX),
             bika_claim_cmd,
         )
     )
