@@ -22,6 +22,18 @@ def env_int(name: str, default: int, min_value: int | None = None, max_value: in
         value = min(int(max_value), value)
     return value
 
+
+def env_float(name: str, default: float, min_value: float | None = None, max_value: float | None = None) -> float:
+    try:
+        value = float(os.getenv(name, str(default)) or default)
+    except Exception:
+        value = float(default)
+    if min_value is not None:
+        value = max(float(min_value), value)
+    if max_value is not None:
+        value = min(float(max_value), value)
+    return value
+
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 MONGODB_URI = os.getenv("MONGODB_URI", os.getenv("MONGO_URI", "")).strip()
 DB_NAME = os.getenv("DATABASE_NAME", os.getenv("DB_NAME", "bika_character_bot")).strip()
@@ -118,9 +130,38 @@ CLAIM_TIMEZONE = os.getenv("CLAIM_TIMEZONE", "Asia/Yangon").strip() or "Asia/Yan
 # Limited / owner-give-only card collection.
 # Cards with rarity Limited or non-numeric IDs such as 1a, 1s, 1bc are stored here.
 LIMITED_CARDS_COLLECTION = os.getenv("LIMITED_CARDS_COLLECTION", "limited_cards").strip() or "limited_cards"
-LIMITED_RARITY_NAME = os.getenv("LIMITED_RARITY_NAME", "Limited").strip() or "Limited"
+
+# ---------------------------------------------------------------------------
+# RARITY SETTINGS
+# ---------------------------------------------------------------------------
+# New bot / new database အတွက် rarity name နဲ့ emoji တွေကို ဒီနေရာတစ်ခုတည်းကနေ
+# စိတ်ကြိုက်ပြောင်းနိုင်အောင် centralize လုပ်ထားပါတယ်။
+#
+# ပြောင်းချင်ရင် .env ထဲမှာ ဥပမာ:
+# RARITY_COMMON_NAME=Bronze
+# RARITY_COMMON_EMOJI=🥉
+#
+# Database အသစ်မစခင်ပြောင်းထားရင် migration မလိုပါဘူး။
+RARITY_COMMON_NAME = os.getenv("RARITY_COMMON_NAME", "Common").strip() or "Common"
+RARITY_UNCOMMON_NAME = os.getenv("RARITY_UNCOMMON_NAME", "Uncommon").strip() or "Uncommon"
+RARITY_RARE_NAME = os.getenv("RARITY_RARE_NAME", "Rare").strip() or "Rare"
+RARITY_LEGENDARY_NAME = os.getenv("RARITY_LEGENDARY_NAME", "Legendary").strip() or "Legendary"
+RARITY_MYSTICAL_NAME = os.getenv("RARITY_MYSTICAL_NAME", "Mystical").strip() or "Mystical"
+RARITY_DIVINE_NAME = os.getenv("RARITY_DIVINE_NAME", "Divine").strip() or "Divine"
+RARITY_CROSSVERSE_NAME = os.getenv("RARITY_CROSSVERSE_NAME", "CrossVerse").strip() or "CrossVerse"
+RARITY_CATAPHRACT_NAME = os.getenv("RARITY_CATAPHRACT_NAME", "Cataphract").strip() or "Cataphract"
+RARITY_SUPREME_NAME = os.getenv("RARITY_SUPREME_NAME", "Supreme").strip() or "Supreme"
+
+# Limited rarity name ကို old config key နဲ့လည်း compatible ဖြစ်အောင်ထားထားပါတယ်။
+LIMITED_RARITY_NAME = os.getenv(
+    "LIMITED_RARITY_NAME",
+    os.getenv("RARITY_LIMITED_NAME", "Limited"),
+).strip() or "Limited"
+RARITY_LIMITED_NAME = LIMITED_RARITY_NAME
+
 LIMITED_CUSTOM_EMOJI_ID = os.getenv("LIMITED_CUSTOM_EMOJI_ID", "5361837567463399422").strip()
-LIMITED_FALLBACK_EMOJI = os.getenv("LIMITED_FALLBACK_EMOJI", "🔮").strip() or "🔮"
+LIMITED_FALLBACK_EMOJI = os.getenv("LIMITED_FALLBACK_EMOJI", os.getenv("RARITY_LIMITED_EMOJI", "🔮")).strip() or "🔮"
+
 # Bot API supports custom emoji icons and colored button styles on InlineKeyboardButton.
 # These toggles make rollback easy if a self-hosted/old Bot API server is used.
 ENABLE_BUTTON_CUSTOM_EMOJI = env_bool("ENABLE_BUTTON_CUSTOM_EMOJI", "true")
@@ -132,43 +173,72 @@ LIMITED_EMOJI = (
     else LIMITED_FALLBACK_EMOJI
 )
 
+RARITY_COMMON_EMOJI = os.getenv("RARITY_COMMON_EMOJI", "🔵").strip() or "🔵"
+RARITY_UNCOMMON_EMOJI = os.getenv("RARITY_UNCOMMON_EMOJI", "🟣").strip() or "🟣"
+RARITY_RARE_EMOJI = os.getenv("RARITY_RARE_EMOJI", "🟠").strip() or "🟠"
+RARITY_LEGENDARY_EMOJI = os.getenv("RARITY_LEGENDARY_EMOJI", "🟡").strip() or "🟡"
+RARITY_MYSTICAL_EMOJI = os.getenv("RARITY_MYSTICAL_EMOJI", "💮").strip() or "💮"
+RARITY_DIVINE_EMOJI = os.getenv("RARITY_DIVINE_EMOJI", "⚜️").strip() or "⚜️"
+RARITY_CROSSVERSE_EMOJI = os.getenv("RARITY_CROSSVERSE_EMOJI", "⚡").strip() or "⚡"
+RARITY_CATAPHRACT_EMOJI = os.getenv("RARITY_CATAPHRACT_EMOJI", "✨").strip() or "✨"
+RARITY_SUPREME_EMOJI = os.getenv("RARITY_SUPREME_EMOJI", "🪞").strip() or "🪞"
+
 RARITY_ORDER = [
-    "Limited",
-    "Supreme",
-    "Cataphract",
-    "CrossVerse",
-    "Divine",
-    "Mystical",
-    "Legendary",
-    "Rare",
-    "Uncommon",
-    "Common",
+    RARITY_LIMITED_NAME,
+    RARITY_SUPREME_NAME,
+    RARITY_CATAPHRACT_NAME,
+    RARITY_CROSSVERSE_NAME,
+    RARITY_DIVINE_NAME,
+    RARITY_MYSTICAL_NAME,
+    RARITY_LEGENDARY_NAME,
+    RARITY_RARE_NAME,
+    RARITY_UNCOMMON_NAME,
+    RARITY_COMMON_NAME,
 ]
 
 # Rarity emoji used inside HTML messages/captions. Buttons use utils.buttons
 # to send Bot API icon_custom_emoji_id/style with safe fallback text.
 RARITY_EMOJI = {
-    "Limited": LIMITED_EMOJI,
-    "Supreme": "🪞",
-    "Cataphract": "✨",
-    "CrossVerse": "⚡",
-    "Divine": "⚜️",
-    "Mystical": "💮",
-    "Legendary": "🟡",
-    "Rare": "🟠",
-    "Uncommon": "🟣",
-    "Common": "🔵",
+    RARITY_LIMITED_NAME: LIMITED_EMOJI,
+    RARITY_SUPREME_NAME: RARITY_SUPREME_EMOJI,
+    RARITY_CATAPHRACT_NAME: RARITY_CATAPHRACT_EMOJI,
+    RARITY_CROSSVERSE_NAME: RARITY_CROSSVERSE_EMOJI,
+    RARITY_DIVINE_NAME: RARITY_DIVINE_EMOJI,
+    RARITY_MYSTICAL_NAME: RARITY_MYSTICAL_EMOJI,
+    RARITY_LEGENDARY_NAME: RARITY_LEGENDARY_EMOJI,
+    RARITY_RARE_NAME: RARITY_RARE_EMOJI,
+    RARITY_UNCOMMON_NAME: RARITY_UNCOMMON_EMOJI,
+    RARITY_COMMON_NAME: RARITY_COMMON_EMOJI,
 }
 
 RARITY_EXP = {
-    "Limited": 0,
-    "Supreme": 100,
-    "Cataphract": 60,
-    "CrossVerse": 35,
-    "Divine": 20,
-    "Mystical": 12,
-    "Legendary": 7,
-    "Rare": 4,
-    "Uncommon": 2,
-    "Common": 1,
+    RARITY_LIMITED_NAME: env_int("RARITY_LIMITED_EXP", 0, 0),
+    RARITY_SUPREME_NAME: env_int("RARITY_SUPREME_EXP", 100, 0),
+    RARITY_CATAPHRACT_NAME: env_int("RARITY_CATAPHRACT_EXP", 60, 0),
+    RARITY_CROSSVERSE_NAME: env_int("RARITY_CROSSVERSE_EXP", 35, 0),
+    RARITY_DIVINE_NAME: env_int("RARITY_DIVINE_EXP", 20, 0),
+    RARITY_MYSTICAL_NAME: env_int("RARITY_MYSTICAL_EXP", 12, 0),
+    RARITY_LEGENDARY_NAME: env_int("RARITY_LEGENDARY_EXP", 7, 0),
+    RARITY_RARE_NAME: env_int("RARITY_RARE_EXP", 4, 0),
+    RARITY_UNCOMMON_NAME: env_int("RARITY_UNCOMMON_EXP", 2, 0),
+    RARITY_COMMON_NAME: env_int("RARITY_COMMON_EXP", 1, 0),
 }
+
+# Scheduled drop config.
+# Normal drops use these base rarities. Milestones use the specific names below.
+DROP_BASE_RARITIES = tuple(
+    item.strip()
+    for item in os.getenv(
+        "DROP_BASE_RARITIES",
+        f"{RARITY_COMMON_NAME},{RARITY_UNCOMMON_NAME},{RARITY_RARE_NAME}",
+    ).split(",")
+    if item.strip()
+) or (RARITY_COMMON_NAME, RARITY_UNCOMMON_NAME, RARITY_RARE_NAME)
+
+DROP_20_RARITY = os.getenv("DROP_20_RARITY", RARITY_LEGENDARY_NAME).strip() or RARITY_LEGENDARY_NAME
+DROP_100_RARITY = os.getenv("DROP_100_RARITY", RARITY_MYSTICAL_NAME).strip() or RARITY_MYSTICAL_NAME
+DROP_300_RARITY = os.getenv("DROP_300_RARITY", RARITY_DIVINE_NAME).strip() or RARITY_DIVINE_NAME
+DROP_400_RARITY = os.getenv("DROP_400_RARITY", RARITY_CROSSVERSE_NAME).strip() or RARITY_CROSSVERSE_NAME
+DROP_500_PRIMARY_RARITY = os.getenv("DROP_500_PRIMARY_RARITY", RARITY_CATAPHRACT_NAME).strip() or RARITY_CATAPHRACT_NAME
+DROP_500_SECONDARY_RARITY = os.getenv("DROP_500_SECONDARY_RARITY", RARITY_SUPREME_NAME).strip() or RARITY_SUPREME_NAME
+DROP_500_SECONDARY_CHANCE = env_float("DROP_500_SECONDARY_CHANCE", 0.30, 0.0, 1.0)
