@@ -7,7 +7,7 @@ from typing import Optional
 from pymongo import ReturnDocument
 from telegram import Chat, User
 
-from config import DEFAULT_CHANGETIME, RARITY_ORDER, LIMITED_CARDS_COLLECTION
+from config import DEFAULT_CHANGETIME, RARITY_ORDER, LIMITED_CARDS_COLLECTION, RARITY_COMMON_NAME, DROP_BASE_RARITIES
 from database.mongodb import get_db
 from utils.parser import normalized_search_name
 from utils.rarity import get_rarity_exp
@@ -156,18 +156,18 @@ async def get_drop_photo_for_rarity(rarity: str) -> Optional[dict]:
     """Choose a card for the scheduled rarity.
 
     If the database has no cards for that rarity yet, fall back safely so the
-    group does not lose a spawn. Normal drops fall back within Common/Uncommon/Rare
+    group does not lose a spawn. Normal drops fall back within DROP_BASE_RARITIES
     first, then any card. Milestone drops fall back to any card only if the target
     rarity is empty.
     """
-    rarity = str(rarity or "Common")
+    rarity = str(rarity or RARITY_COMMON_NAME)
     photo = await get_random_photo_by_rarity(rarity)
     if photo:
         return photo
 
-    if rarity in ("Common", "Uncommon", "Rare"):
-        # Keep normal drops low-rarity when possible.
-        photo = await get_random_photo({"rarity": {"$in": ["Common", "Uncommon", "Rare"]}})
+    if rarity in DROP_BASE_RARITIES:
+        # Keep normal drops within configured base rarities when possible.
+        photo = await get_random_photo({"rarity": {"$in": list(DROP_BASE_RARITIES)}})
         if photo:
             return photo
 
@@ -191,7 +191,7 @@ def public_card_snapshot(photo_doc: dict, qty: int = 1) -> dict:
         "cardId": str(photo_doc.get("cardId", "")),
         "name": str(photo_doc.get("name", "")),
         "normalizedName": str(photo_doc.get("normalizedName") or normalized_search_name(photo_doc.get("name", ""))),
-        "rarity": str(photo_doc.get("rarity", "Common")),
+        "rarity": str(photo_doc.get("rarity", RARITY_COMMON_NAME)),
         "anime": str(photo_doc.get("anime", "Unknown")),
         "fileId": str(photo_doc.get("fileId", "")),
         "fileUniqueId": str(photo_doc.get("fileUniqueId", "")),
@@ -354,7 +354,7 @@ async def global_card_stats(card_id: str) -> dict:
 def rarity_counts(cards: list[dict]) -> dict:
     counts = {r: {"unique": 0, "total": 0} for r in RARITY_ORDER}
     for card in cards:
-        rarity = str(card.get("rarity", "Common"))
+        rarity = str(card.get("rarity", RARITY_COMMON_NAME))
         if rarity not in counts:
             counts[rarity] = {"unique": 0, "total": 0}
         counts[rarity]["unique"] += 1
