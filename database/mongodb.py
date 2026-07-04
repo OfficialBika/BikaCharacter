@@ -70,6 +70,13 @@ async def ensure_indexes() -> None:
     await db.daily_claim_limits.create_index([("userId", ASCENDING), ("date", ASCENDING)], unique=True)
     await db.daily_claim_limits.create_index([("date", ASCENDING), ("count", DESCENDING)])
 
+    # Owner control system.
+    await db.user_bans.create_index([("userId", ASCENDING)], unique=True)
+    await db.user_bans.create_index([("active", ASCENDING), ("expiresAt", ASCENDING)])
+
+    await db.owner_action_logs.create_index([("userId", ASCENDING), ("createdAt", DESCENDING)])
+    await db.owner_action_logs.create_index([("action", ASCENDING), ("createdAt", DESCENDING)])
+
 
 async def close_db() -> None:
     global _client, _db
