@@ -52,25 +52,25 @@ async def hydrate_card_media(card: dict | None) -> dict | None:
     return merged
 
 
-async def reply_profile_media(message, cover: dict, text: str) -> None:
+async def reply_profile_media(message, cover: dict, text: str, reply_markup=None) -> None:
     media_type = detect_card_media_type(cover)
     file_id = str(cover.get("fileId") or "")
     if not file_id:
-        await message.reply_text(text, parse_mode="HTML")
+        await message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
         return
 
     try:
         if media_type == "video":
-            await message.reply_video(file_id, caption=text, parse_mode="HTML")
+            await message.reply_video(file_id, caption=text, parse_mode="HTML", reply_markup=reply_markup)
         elif media_type == "animation":
-            await message.reply_animation(file_id, caption=text, parse_mode="HTML")
+            await message.reply_animation(file_id, caption=text, parse_mode="HTML", reply_markup=reply_markup)
         elif media_type == "document":
-            await message.reply_document(file_id, caption=text, parse_mode="HTML")
+            await message.reply_document(file_id, caption=text, parse_mode="HTML", reply_markup=reply_markup)
         else:
-            await message.reply_photo(file_id, caption=text, parse_mode="HTML")
+            await message.reply_photo(file_id, caption=text, parse_mode="HTML", reply_markup=reply_markup)
     except Exception as exc:
         print("PROFILE SEND MEDIA ERROR:", repr(exc))
-        await message.reply_text(text, parse_mode="HTML")
+        await message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
 
 
 def build_profile_text(user_doc: dict, total_photo_count: int) -> str:

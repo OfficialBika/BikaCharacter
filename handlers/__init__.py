@@ -16,9 +16,15 @@ from handlers.rankings import register_ranking_handlers
 from handlers.search import register_search_handlers
 from handlers.start import register_start_handlers
 from handlers.checkgp import register_checkgp_handlers
+from handlers.ban_guard import register_ban_guard_handlers
+from handlers.owner_tools import register_owner_tools_handlers
 
 
 def register_handlers(app: Application) -> None:
+    # Global ban guard runs before every normal bot handler.
+    register_ban_guard_handlers(app)
+    register_owner_tools_handlers(app)
+
     # Bot group join/leave events.
     register_group_event_handlers(app)
     register_checkgp_handlers(app)
