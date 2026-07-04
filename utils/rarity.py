@@ -2,7 +2,22 @@ from __future__ import annotations
 
 import random
 
-from config import LIMITED_FALLBACK_EMOJI, LIMITED_RARITY_NAME, RARITY_EMOJI, RARITY_EXP, RARITY_ORDER
+from config import (
+    DROP_20_RARITY,
+    DROP_100_RARITY,
+    DROP_300_RARITY,
+    DROP_400_RARITY,
+    DROP_500_PRIMARY_RARITY,
+    DROP_500_SECONDARY_CHANCE,
+    DROP_500_SECONDARY_RARITY,
+    DROP_BASE_RARITIES,
+    LIMITED_FALLBACK_EMOJI,
+    LIMITED_RARITY_NAME,
+    RARITY_COMMON_NAME,
+    RARITY_EMOJI,
+    RARITY_EXP,
+    RARITY_ORDER,
+)
 
 
 def get_rarity_emoji(rarity: str | None) -> str:
@@ -10,7 +25,7 @@ def get_rarity_emoji(rarity: str | None) -> str:
 
 
 def get_rarity_exp(rarity: str | None) -> int:
-    return int(RARITY_EXP.get(str(rarity or "Common"), 1))
+    return int(RARITY_EXP.get(str(rarity or RARITY_COMMON_NAME), 1))
 
 
 def get_rarity_button_emoji(rarity: str | None) -> str:
@@ -36,22 +51,18 @@ def normalize_rarity(raw: str | None) -> str | None:
     return None
 
 
-DROP_BASE_RARITIES = ("Common", "Uncommon", "Rare")
-
-
 def get_scheduled_drop_rarity(drop_number: int) -> str:
     """Return the rarity that should spawn for a group drop number.
 
-    Schedule:
-    - Normal drops: random Common / Uncommon / Rare
-    - Every 20 drops: Legendary
-    - Every 100 drops: Mystical
-    - Every 300 drops: Divine
-    - Every 400 drops: CrossVerse
-    - Every 500 drops: Cataphract 70% / Supreme 30%
+    Schedule is config-driven:
+    - Normal drops: random from DROP_BASE_RARITIES
+    - Every 20 drops : DROP_20_RARITY
+    - Every 100 drops: DROP_100_RARITY
+    - Every 300 drops: DROP_300_RARITY
+    - Every 400 drops: DROP_400_RARITY
+    - Every 500 drops: DROP_500_PRIMARY_RARITY / DROP_500_SECONDARY_RARITY
 
     Higher milestones take priority when a drop number matches multiple rules.
-    Example: 100 => Mystical, 300 => Divine, 500 => Cataphract/Supreme.
     """
     try:
         n = max(1, int(drop_number or 1))
@@ -59,13 +70,17 @@ def get_scheduled_drop_rarity(drop_number: int) -> str:
         n = 1
 
     if n % 500 == 0:
-        return "Supreme" if random.random() < 0.30 else "Cataphract"
+        return (
+            DROP_500_SECONDARY_RARITY
+            if random.random() < float(DROP_500_SECONDARY_CHANCE)
+            else DROP_500_PRIMARY_RARITY
+        )
     if n % 400 == 0:
-        return "CrossVerse"
+        return DROP_400_RARITY
     if n % 300 == 0:
-        return "Divine"
+        return DROP_300_RARITY
     if n % 100 == 0:
-        return "Mystical"
+        return DROP_100_RARITY
     if n % 20 == 0:
-        return "Legendary"
-    return random.choice(DROP_BASE_RARITIES)
+        return DROP_20_RARITY
+    return random.choice(tuple(DROP_BASE_RARITIES))
