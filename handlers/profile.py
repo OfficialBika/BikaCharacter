@@ -92,7 +92,7 @@ def build_profile_text(user_doc: dict, total_photo_count: int) -> str:
         fav_text = "ɴᴏᴛ ꜱᴇᴛ"
 
     lines = [
-        "🎗 <b>𝐁𝐈𝐊𝐀 𝐂𝐀𝐓𝐂𝐇𝐄𝐑 𝐏𝐑𝐎𝐅𝐈𝐋𝐄</b> 🎗",
+        "🎗 <b>𝐃𝐎𝐍𝐆𝐇𝐔𝐀 𝐂𝐀𝐓𝐂𝐇𝐄𝐑 𝐏𝐑𝐎𝐅𝐈𝐋𝐄</b> 🎗",
         "━━━━━━━━━━━━━━━━",
         f"👤 <b>ᴜꜱᴇʀ</b> : {username}",
         f"🆔 <b>ᴜꜱᴇʀ ɪᴅ</b> : <code>{escape_html(user_doc.get('userId'))}</code>",
