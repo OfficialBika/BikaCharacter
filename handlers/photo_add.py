@@ -62,9 +62,14 @@ def is_allowed_add_chat(update: Update) -> bool:
     return int(chat.id) == int(ADDER_GROUP_ID)
 
 
-async def is_allowed_adder(user_id: int) -> bool:
-    if is_owner(user_id):
+async def is_allowed_adder(user) -> bool:
+    # Owner can be matched by OWNER_ID or OWNER_USERNAME.
+    if is_owner(user):
         return True
+
+    user_id = getattr(user, "id", 0)
+    if not user_id:
+        return False
 
     settings = await get_db().bot_settings.find_one(
         {"_id": SETTINGS_ID},
@@ -345,7 +350,7 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not looks_like_add:
         return
 
-    if not await is_allowed_adder(update.effective_user.id):
+    if not await is_allowed_adder(update.effective_user):
         await msg.reply_text(
             "❌ You are not allowed to add/update cards. "
             "Ask the owner to use /addadder for your account."
@@ -374,7 +379,7 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     parsed["cardId"] = str(parsed.get("cardId", "")).strip()
 
     limited_card = is_limited_card(parsed, card_id_provided)
-    if limited_card and not is_owner(update.effective_user.id):
+    if limited_card and not is_owner(update.effective_user):
         await msg.reply_text(
             "❌ Limited cards can only be added/updated by the owner.\n"
             "Normal adders can add/update normal numeric ID cards only."

@@ -71,7 +71,7 @@ async def changetime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     value = int(context.args[0])
-    if is_owner(user_id):
+    if is_owner(update.effective_user):
         min_v, max_v = OWNER_CHANGETIME_MIN, OWNER_CHANGETIME_MAX
     else:
         min_v, max_v = ADMIN_CHANGETIME_MIN, ADMIN_CHANGETIME_MAX
@@ -88,7 +88,7 @@ async def changetime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_global_admin(update.effective_user.id):
+    if not is_global_admin(update.effective_user):
         return
     db = get_db()
     user_count, group_count, normal_count, limited_count, transfer_count, mute_count, settings = await asyncio.gather(
@@ -116,7 +116,7 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def admin_users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_global_admin(update.effective_user.id):
+    if not is_global_admin(update.effective_user):
         return
     users = await get_db().users.find({}).sort("updatedAt", -1).limit(20).to_list(20)
     if not users:
@@ -131,7 +131,7 @@ async def admin_users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def admin_groups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_global_admin(update.effective_user.id):
+    if not is_global_admin(update.effective_user):
         return
     groups = await get_db().groups.find({}).sort("updatedAt", -1).limit(20).to_list(20)
     if not groups:
@@ -144,7 +144,7 @@ async def admin_groups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def admin_photos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_global_admin(update.effective_user.id):
+    if not is_global_admin(update.effective_user):
         return
     db = get_db()
     photos = await db.photos.find({}).sort("createdAt", -1).limit(20).to_list(20)
@@ -171,7 +171,7 @@ async def clmute_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     /clmute <user_id>       -> clear one user in this group
     /clmute + reply user    -> clear replied user in this group
     """
-    if not is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user):
         return
     if update.effective_chat.type not in ("group", "supergroup"):
         await update.effective_message.reply_text(t("clmute_group_only"))
@@ -205,7 +205,7 @@ async def transfer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     /transfer oldid newid
     /transfer oldid   (reply to new user)
     """
-    if not is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user):
         return
     msg = update.effective_message
     if not context.args:
@@ -302,7 +302,7 @@ async def transfer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def addadder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user):
         return
     target_id = _target_user_id_from_reply_or_arg(update, context, 0)
     if not target_id:
@@ -322,7 +322,7 @@ async def addadder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def rmadder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user):
         return
     target_id = _target_user_id_from_reply_or_arg(update, context, 0)
     if not target_id:
@@ -343,7 +343,7 @@ async def free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
       /free <user_id>
       /free  (reply to target user)
     """
-    if not is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user):
         return
 
     msg = update.effective_message
@@ -386,7 +386,7 @@ async def rmfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
       /rmfree <user_id>
       /rmfree  (reply to target user)
     """
-    if not is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user):
         return
 
     msg = update.effective_message
@@ -409,7 +409,7 @@ async def rmfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await msg.reply_text(f"ℹ️ ᴜꜱᴇʀ ɪᴅ {target_id} ɪꜱ ɴᴏᴛ ɪɴ ꜰʀᴇᴇ ʟɪꜱᴛ.")
 
 async def delete_card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user):
         return
 
     msg = update.effective_message
@@ -578,7 +578,7 @@ async def give_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
       /give <card_id>              (reply to target user)
       /give <user_id> <card_id>    (without reply)
     """
-    if not is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user):
         return
 
     msg = update.effective_message

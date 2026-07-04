@@ -195,7 +195,7 @@ async def approve_group_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     Approved groups bypass the 40-member auto-leave rule.
     """
-    if not update.effective_user or not is_owner(update.effective_user.id):
+    if not update.effective_user or not is_owner(update.effective_user):
         return
 
     msg = update.effective_message

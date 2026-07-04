@@ -1370,7 +1370,7 @@ async def send_spawn_card(
 
 async def owner_drop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Owner-only manual drop: /drop <card_id> <chat_id>."""
-    if not update.effective_user or not is_owner(update.effective_user.id):
+    if not update.effective_user or not is_owner(update.effective_user):
         return
 
     msg = update.effective_message
