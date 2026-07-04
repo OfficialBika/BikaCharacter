@@ -34,12 +34,27 @@ def env_float(name: str, default: float, min_value: float | None = None, max_val
         value = min(float(max_value), value)
     return value
 
+
+
+def env_command(name: str, default: str = "bika") -> str:
+    """Read and validate one Telegram bot command name.
+
+    The environment value may be written as either ``dao`` or ``/dao``.
+    Invalid/blank values safely fall back to the supplied default.
+    """
+    value = str(os.getenv(name, default) or "").strip().lower().lstrip("/")
+    allowed = set("abcdefghijklmnopqrstuvwxyz0123456789_")
+    if not (1 <= len(value) <= 32) or any(ch not in allowed for ch in value):
+        return str(default).strip().lower().lstrip("/") or "bika"
+    return value
+
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 MONGODB_URI = os.getenv("MONGODB_URI", os.getenv("MONGO_URI", "")).strip()
 DB_NAME = os.getenv("DATABASE_NAME", os.getenv("DB_NAME", "bika_character_bot")).strip()
 OWNER_ID = int(os.getenv("OWNER_ID", "0") or 0)
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "@Official_Bika").strip()
 BOT_USERNAME = os.getenv("BOT_USERNAME", "").replace("@", "").strip()
+CLAIM_COMMAND = env_command("CLAIM_COMMAND", "bika")
 
 
 # /start page buttons.
