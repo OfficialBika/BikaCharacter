@@ -43,7 +43,7 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'harem_no_cards_alert': 'ɴᴏ ᴄᴀʀᴅꜱ.',
         'harem_button_back': '« ʙᴀᴄᴋ',
         'harem_button_next': 'ɴᴇxᴛ »',
-        'profile_header': '🎗𝐃𝐎𝐍𝐆𝐇𝐔𝐀 𝐂𝐀𝐓𝐂𝐇𝐄𝐑 𝐏𝐑𝐎𝐅𝐈𝐋𝐄🎗',
+        'profile_header': '🎗𝐂𝐀𝐓𝐂𝐇𝐄𝐑 𝐏𝐑𝐎𝐅𝐈𝐋𝐄🎗',
         'profile_user': '👤 ᴜꜱᴇʀ: {username}',
         'profile_user_id': '🆔 ᴜꜱᴇʀ ɪᴅ: {user_id}',
         'profile_total_character': '⚡ ᴛᴏᴛᴀʟ ᴄʜᴀʀᴀᴄᴛᴇʀ: {total_owned} ({unique_owned})',
@@ -87,7 +87,7 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'gift_cancelled': '❌ ɢɪꜰᴛ ᴄᴀɴᴄᴇʟʟᴇᴅ.',
         'rank_no_group': 'ɴᴏ ɢʀᴏᴜᴘ ᴄᴀᴛᴄʜ ʀᴀɴᴋɪɴɢ ʏᴇᴛ.',
         'rank_group_header': '🏆 <b>𝐓𝐎𝐏 𝐆𝐑𝐎𝐔𝐏 𝐑𝐀𝐍𝐊𝐈𝐍𝐆</b>',
-        'rank_group_subtitle': '<b>𝐁𝐲 /dao 𝐜𝐚𝐭𝐜𝐡𝐞𝐬 𝐫𝐚𝐧𝐤𝐢𝐧𝐠</b>',
+        'rank_group_subtitle': '<b>𝐂𝐚𝐭𝐜𝐡𝐞𝐬 𝐫𝐚𝐧𝐤𝐢𝐧𝐠</b>',
         'rank_group_row': '{rank} {group} — <b>{count}</b> ᴄᴀᴛᴄʜᴇꜱ',
         'rank_no_global': 'ɴᴏ ɢʟᴏʙᴀʟ ʜᴀʀᴇᴍ ʀᴀɴᴋɪɴɢ ʏᴇᴛ.',
         'rank_global_header': '🌍 <b>𝐆𝐋𝐎𝐁𝐀𝐋 𝐓𝐎𝐏 𝟏𝟎 𝐔𝐒𝐄𝐑𝐒</b>',
@@ -96,7 +96,7 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'rank_no_today': 'ɴᴏ ᴄᴀᴛᴄʜᴇꜱ ʏᴇᴛ ᴛᴏᴅᴀʏ.\nᴅᴀᴛᴇ: {date} ({timezone})',
         'rank_today_header': '📅 <b>𝐓𝐎𝐃𝐀𝐘 𝐆𝐋𝐎𝐁𝐀𝐋 𝐓𝐎𝐏 𝟏𝟎</b>',
         'rank_today_date': 'ᴅᴀᴛᴇ: <b>{date}</b> ({timezone})',
-        'rank_today_subtitle': '<b>𝐁𝐲 /dao 𝐜𝐚𝐭𝐜𝐡𝐞𝐬 𝐭𝐨𝐝𝐚𝐲</b>',
+        'rank_today_subtitle': '<b>𝐂𝐚𝐭𝐜𝐡𝐞𝐬 𝐓𝐨𝐝𝐚𝐲</b>',
         'rank_today_row': '{rank} {user} — <b>{count}</b> ᴄᴀᴛᴄʜᴇꜱ',
         'mylimit': '🎯 ᴅᴀɪʟʏ ᴄᴀᴛᴄʜ ʟɪᴍɪᴛ\n\nᴅᴀᴛᴇ: {date} ({timezone})\nᴜꜱᴇᴅ: {used}/{limit}\nʀᴇᴍᴀɪɴɪɴɢ: {remaining}',
         'bot_muted': '🤐 {name}, ʏᴏᴜ ꜱᴇɴᴛ ᴛᴏᴏ ᴍᴀɴʏ ᴍᴇꜱꜱᴀɢᴇꜱ ɪɴ ᴀ ʀᴏᴡ. ʙᴏᴛ ᴡɪʟʟ ɪɢɴᴏʀᴇ ʏᴏᴜ ꜰᴏʀ {minutes} ᴍɪɴᴜᴛᴇꜱ.',
@@ -121,7 +121,7 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'spawn_no_card': '❌ ɴᴏ ᴄᴀʀᴅ ꜰᴏᴜɴᴅ ꜰᴏʀ ᴛʜɪꜱ ꜱᴄʜᴇᴅᴜʟᴇᴅ ʀᴀʀɪᴛʏ. ꜱᴘᴀᴡɴ ʟᴏꜱᴛ.',
         'spawn_caption': '{emoji} ᴀ ɴᴇᴡ ᴄʜᴀʀᴀᴄᴛᴇʀ ʜᴀꜱ ꜱᴘᴀᴡɴᴇᴅ ɪɴ {group_name} .\n'
                          '\n'
-                         'ᴛᴏ ᴏᴡɴ ᴛʜɪꜱ ᴄʜᴀʀᴀᴄᴛᴇʀ, ꜱᴇɴᴅ ᴛʜᴇ ᴄʜᴀʀᴀᴄᴛᴇʀ ɴᴀᴍᴇ ǫᴜɪᴄᴋʟʏ ᴜꜱɪɴɢ /dao ɴᴀᴍᴇ .',
+                         'ᴛᴏ ᴏᴡɴ ᴛʜɪꜱ ᴄʜᴀʀᴀᴄᴛᴇʀ, ꜱᴇɴᴅ ᴛʜᴇ ᴄʜᴀʀᴀᴄᴛᴇʀ ɴᴀᴍᴇ ǫᴜɪᴄᴋʟʏ ᴜꜱɪɴɢ /bika ɴᴀᴍᴇ .',
         'claim_captcha_timeout': '⌛ <b>𝐂𝐀𝐏𝐓𝐂𝐇𝐀 𝐓𝐈𝐌𝐄𝐎𝐔𝐓</b>\n'
                                  '\n'
                                  '120 ꜱᴇᴄᴏɴᴅꜱ ꜰɪɴɪꜱʜᴇᴅ. ᴛʜɪꜱ ʜɪɢʜ-ʀᴀʀɪᴛʏ ᴄᴀʀᴅ ʜᴀꜱ ʙᴇᴇɴ ʟᴏꜱᴛ.',
