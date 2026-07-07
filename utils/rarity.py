@@ -75,12 +75,12 @@ def get_scheduled_drop_rarity(drop_number: int) -> str:
             if random.random() < float(DROP_500_SECONDARY_CHANCE)
             else DROP_500_PRIMARY_RARITY
         )
-    if n % 400 == 0:
-        return DROP_400_RARITY
     if n % 300 == 0:
+        return DROP_400_RARITY
+    if n % 200 == 0:
         return DROP_300_RARITY
-    if n % 100 == 0:
+    if n % 80 == 0:
         return DROP_100_RARITY
-    if n % 20 == 0:
+    if n % 15 == 0:
         return DROP_20_RARITY
     return random.choice(tuple(DROP_BASE_RARITIES))
