@@ -35,16 +35,11 @@ def _compact(text: str = "") -> str:
 
 
 def is_character_name_match(guess_text: str = "", target_name: str = "", min_length: int = 3) -> bool:
-    """Return True when a /bika guess is a valid full-name or hint match.
+    """Return True when a claim guess is a valid full-name or hint match.
 
-    Supported examples:
-      Yae Miko              -> /bika yae, /bika miko, /bika yae miko
-      Yorha No.2 Type B     -> /bika yorha, /bika no.2, /bika no 2, /bika type
-      Roronoa zoro [💠]     -> /bika roronoa, /bika zoro
-
-    To avoid accidental claims, the compact guess must have at least min_length
-    characters. With default min_length=3, "/bika b" and "/bika no" will not win,
-    but "/bika no.2" will win because it normalizes to "no 2" -> "no2".
+    Exact normalized full-name matches are accepted before the minimum hint-length
+    rule. This allows genuinely short names such as "C.c." / "CC" while keeping
+    one- or two-character partial hints blocked when min_length=3.
     """
     guess = normalized_search_name(guess_text)
     target = normalized_search_name(target_name)
@@ -55,12 +50,13 @@ def is_character_name_match(guess_text: str = "", target_name: str = "", min_len
     compact_guess = _compact(guess)
     compact_target = _compact(target)
 
-    if len(compact_guess) < int(min_length):
-        return False
-
-    # Exact full-name match.
+    # Exact full-name match MUST be checked before min_length.
     if guess == target or compact_guess == compact_target:
         return True
+
+    # Minimum length applies only to partial/prefix/hint matching.
+    if len(compact_guess) < int(min_length):
+        return False
 
     # Prefix from the beginning of the full name.
     if target.startswith(guess) or compact_target.startswith(compact_guess):
