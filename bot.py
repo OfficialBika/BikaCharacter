@@ -14,6 +14,7 @@ from config import (
     MONGODB_URI,
     PORT,
     RUN_MODE,
+    CLAIM_COMMAND,
     ENABLE_HEALTH_SERVER,
     BOT_ALLOWED_UPDATES,
     RESET_GROUP_MESSAGE_COUNT_ON_STARTUP,
@@ -46,7 +47,7 @@ async def register_commands(app: Application) -> None:
             BotCommand("profile", "See your profile"),
             BotCommand("fav", "Set or show favourite character"),
             BotCommand("check", "Check character by ID"),
-            BotCommand("bika", "Claim spawned character"),
+            BotCommand("CLAIM_COMMAND", "Claim spawned character"),
             BotCommand("hmode", "Change harem view"),
             BotCommand("topgroup", "Top groups by catches"),
             BotCommand("gtop", "Global top harem users"),
@@ -54,6 +55,7 @@ async def register_commands(app: Application) -> None:
             BotCommand("mtop", "Monthly top 10 collectors"),
             BotCommand("wtop", "Weekly top 10 collectors"),
             BotCommand("mylimit", "Check daily catch limit"),
+            BotCommand("gift", "Gift to other user")
         ]
     )
 
