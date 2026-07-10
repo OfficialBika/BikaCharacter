@@ -270,7 +270,7 @@ async def _best_profile_cover(user_doc: dict) -> dict | None:
     return merged
 
 
-async def reply_profile_media(message, cover: dict | None, text: str) -> None:
+async def reply_public_profile_media(message, cover: dict | None, text: str) -> None:
     if not cover:
         await message.reply_text(text, parse_mode="HTML")
         return
@@ -296,7 +296,7 @@ async def reply_profile_media(message, cover: dict | None, text: str) -> None:
         await message.reply_text(text, parse_mode="HTML")
 
 
-def build_profile_text(user_doc: dict, total_photo_count: int) -> str:
+def build_public_profile_text(user_doc: dict, total_photo_count: int) -> str:
     cards = list(user_doc.get("cards", []))
     total_owned = sum(int(c.get("count", 0) or 0) for c in cards)
     unique_owned = len(cards)
@@ -406,11 +406,19 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     profile_id = await ensure_profile_id(int(update.effective_user.id))
     global_rank = await get_global_unique_rank(unique_cards)
     rank = collector_rank(unique_cards)
-    avatar_bytes = await get_profile_avatar_bytes(context, user_doc, update.effective_user)
-    full_name = _full_name(user_doc)
 
     image_on = profile_image_enabled()
     table_on = profile_table_enabled()
+    full_name = _full_name(user_doc)
+
+    # Avoid unnecessary Telegram file/profile-photo requests when image mode is disabled.
+    avatar_bytes = None
+    if image_on:
+        avatar_bytes = await get_profile_avatar_bytes(
+            context,
+            user_doc,
+            update.effective_user,
+        )
 
     caption = build_profile_caption(
         profile_id=profile_id,
@@ -450,9 +458,9 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     # IMAGE OFF -> use old normal style.
-    legacy_text = build_profile_text(user_doc, total_photo_count)
+    legacy_text = build_public_profile_text(user_doc, total_photo_count)
     cover = await _best_profile_cover(user_doc)
-    await reply_profile_media(update.effective_message, cover, legacy_text)
+    await reply_public_profile_media(update.effective_message, cover, legacy_text)
 
     if table_on:
         await send_profile_rich_message(update, context, rich_html)
