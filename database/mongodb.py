@@ -46,6 +46,7 @@ async def ensure_indexes() -> None:
     await db.users.create_index([("userId", ASCENDING)], unique=True)
     await db.users.create_index([("updatedAt", DESCENDING)])
     await db.users.create_index([("cards.cardId", ASCENDING)])
+    await db.users.create_index([("profileId", ASCENDING)], unique=True, sparse=True)
 
     await db.groups.create_index([("groupId", ASCENDING)], unique=True)
     await db.groups.create_index([("isApproved", ASCENDING)])
@@ -66,16 +67,11 @@ async def ensure_indexes() -> None:
     await db.claim_logs.create_index([("groupId", ASCENDING), ("createdAt", DESCENDING)])
     await db.claim_logs.create_index([("yangonDate", ASCENDING), ("userId", ASCENDING)])
     await db.claim_logs.create_index([("yangonDate", ASCENDING), ("groupId", ASCENDING)])
+    await db.claim_logs.create_index([("createdAt", DESCENDING), ("userId", ASCENDING), ("cardId", ASCENDING)])
+    await db.claim_logs.create_index([("userId", ASCENDING), ("cardId", ASCENDING), ("createdAt", DESCENDING)])
 
     await db.daily_claim_limits.create_index([("userId", ASCENDING), ("date", ASCENDING)], unique=True)
     await db.daily_claim_limits.create_index([("date", ASCENDING), ("count", DESCENDING)])
-
-    # Owner control system.
-    await db.user_bans.create_index([("userId", ASCENDING)], unique=True)
-    await db.user_bans.create_index([("active", ASCENDING), ("expiresAt", ASCENDING)])
-
-    await db.owner_action_logs.create_index([("userId", ASCENDING), ("createdAt", DESCENDING)])
-    await db.owner_action_logs.create_index([("action", ASCENDING), ("createdAt", DESCENDING)])
 
 
 async def close_db() -> None:
