@@ -53,7 +53,6 @@ async def ensure_indexes() -> None:
 
     await db.transfers.create_index([("fromUserId", ASCENDING), ("createdAt", DESCENDING)])
     await db.transfers.create_index([("toUserId", ASCENDING), ("createdAt", DESCENDING)])
-    await db.transfers.create_index([("_id", ASCENDING)], unique=True)
     await db.gift_requests.create_index([("senderId", ASCENDING), ("createdAt", DESCENDING)])
     await db.gift_requests.create_index([("status", ASCENDING), ("updatedAt", DESCENDING)])
 
