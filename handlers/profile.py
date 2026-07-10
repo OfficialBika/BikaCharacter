@@ -15,9 +15,16 @@ from utils.db_helpers import ensure_user, get_photo_by_card_id, rarity_counts
 from utils.profile_renderer import render_profile_card, normalize_name_for_render
 from utils.rarity import get_rarity_emoji, get_rarity_button_emoji
 from utils.text import escape_html, level_from_exp, progress_bar
+from web.app import store_profile_image
 
 
 PROFILE_COUNTER_ID = "profile_id"
+
+PROFILE_PUBLIC_URL = str(
+    os.getenv("PROFILE_PUBLIC_URL")
+    or os.getenv("WEBHOOK_URL")
+    or ""
+).strip().rstrip("/")
 
 
 RANKS = (
@@ -199,42 +206,140 @@ def _rich_emoji(rarity: str) -> str:
     return escape_html(emoji)
 
 
-def build_profile_rich_html(cards: list[dict]) -> str:
+def build_profile_rich_html(
+    *,
+    cards: list[dict],
+    full_name: str,
+    user_id: int,
+    image_url: str | None,
+    include_table: bool,
+) -> str:
     counts = rarity_counts(cards)
+    blocks: list[str] = []
 
-    rows = [
-        "<tr>"
-        '<th align="left">Rarity</th>'
-        '<th align="center">Unique</th>'
-        '<th align="center">Total</th>'
-        "</tr>"
-    ]
-
-    for rarity in RARITY_ORDER:
-        data = counts.get(rarity, {"unique": 0, "total": 0})
-        unique_count = int(data.get("unique", 0) or 0)
-        total_count = int(data.get("total", 0) or 0)
-
-        rows.append(
-            "<tr>"
-            f'<td align="left">{_rich_emoji(rarity)} <b>{escape_html(rarity)}</b></td>'
-            f'<td align="center">{unique_count:,}</td>'
-            f'<td align="center">{total_count:,}</td>'
-            "</tr>"
+    if image_url:
+        blocks.append(
+            f'<img src="{escape_html(image_url)}"/>'
         )
 
-    total_unique = len(cards)
-    total_owned = sum(int(card.get("count", 0) or 0) for card in cards)
-
-    return (
-        "<h2>🏷 𝐑𝐀𝐑𝐈𝐓𝐘 𝐒𝐓𝐀𝐓𝐒</h2>"
-        "<table bordered striped>"
-        + "".join(rows)
-        + "</table>"
-        "<p>"
-        f"🎴 <b>Collection:</b> {total_unique:,} unique · {total_owned:,} total"
-        "</p>"
+    blocks.extend(
+        [
+            "<h2>🎗 𝐏𝐑𝐎𝐅𝐈𝐋𝐄 🎗</h2>",
+            (
+                "<p>"
+                f"👤 ᴜꜱᴇʀ : <b>{escape_html(full_name)}</b><br>"
+                f"🆔 ᴜꜱᴇʀ ɪᴅ : <code>{int(user_id)}</code>"
+                "</p>"
+            ),
+        ]
     )
+
+    if include_table:
+        rows = [
+            "<tr>"
+            '<th align="left">Rarity</th>'
+            '<th align="center">Unique</th>'
+            '<th align="center">Total</th>'
+            "</tr>"
+        ]
+
+        for rarity in RARITY_ORDER:
+            data = counts.get(rarity, {"unique": 0, "total": 0})
+            unique_count = int(data.get("unique", 0) or 0)
+            total_count = int(data.get("total", 0) or 0)
+
+            rows.append(
+                "<tr>"
+                f'<td align="left">{_rich_emoji(rarity)} '
+                f'<b>{escape_html(rarity)}</b></td>'
+                f'<td align="center">{unique_count:,}</td>'
+                f'<td align="center">{total_count:,}</td>'
+                "</tr>"
+            )
+
+        total_unique = len(cards)
+        total_owned = sum(
+            int(card.get("count", 0) or 0)
+            for card in cards
+        )
+
+        blocks.extend(
+            [
+                "<hr/>",
+                "<h2>🏷 𝐑𝐀𝐑𝐈𝐓𝐘 𝐒𝐓𝐀𝐓𝐒</h2>",
+                (
+                    "<table bordered striped>"
+                    + "".join(rows)
+                    + "</table>"
+                ),
+                (
+                    "<p>"
+                    f"🎴 <b>Collection:</b> "
+                    f"{total_unique:,} unique · {total_owned:,} total"
+                    "</p>"
+                ),
+            ]
+        )
+
+    return "".join(blocks)
+
+
+def build_profile_fallback_caption(
+    *,
+    cards: list[dict],
+    full_name: str,
+    user_id: int,
+    include_table: bool,
+) -> str:
+    lines = [
+        "🎗  <b>𝐏𝐑𝐎𝐅𝐈𝐋𝐄</b> 🎗",
+        "━━━━━━━━━━━━━━",
+        f"👤 ᴜꜱᴇʀ : {escape_html(full_name)}",
+        f"🆔 ᴜꜱᴇʀ ɪᴅ : <code>{int(user_id)}</code>",
+    ]
+
+    if include_table:
+        counts = rarity_counts(cards)
+        lines.extend(["", "🏷 <b>𝐑𝐀𝐑𝐈𝐓𝐘 𝐒𝐓𝐀𝐓𝐒</b>"])
+
+        for rarity in RARITY_ORDER:
+            data = counts.get(rarity, {"unique": 0, "total": 0})
+            unique_count = int(data.get("unique", 0) or 0)
+            total_count = int(data.get("total", 0) or 0)
+            lines.append(
+                f"{get_rarity_button_emoji(rarity)} "
+                f"<b>{escape_html(rarity)}</b> · "
+                f"{unique_count:,} / {total_count:,}"
+            )
+
+        total_unique = len(cards)
+        total_owned = sum(
+            int(card.get("count", 0) or 0)
+            for card in cards
+        )
+        lines.extend(
+            [
+                "",
+                f"🎴 <b>Collection:</b> "
+                f"{total_unique:,} unique · {total_owned:,} total",
+            ]
+        )
+
+    return "\n".join(lines)
+
+
+def make_profile_image_url(image) -> str:
+    if not PROFILE_PUBLIC_URL:
+        raise RuntimeError(
+            "PROFILE_PUBLIC_URL is missing. "
+            "Example: https://bikaprofile.duckdns.org"
+        )
+
+    path = store_profile_image(
+        image,
+        content_type="image/png",
+    )
+    return f"{PROFILE_PUBLIC_URL}{path}"
 
 
 def detect_card_media_type(card: dict) -> str:
@@ -375,34 +480,35 @@ def build_public_profile_text(user_doc: dict, total_photo_count: int) -> str:
     return "\n".join(lines)
 
 
-async def send_profile_rich_message(
-    update: Update,
+async def edit_loading_to_rich_message(
+    loading_message,
     context: ContextTypes.DEFAULT_TYPE,
     rich_html: str,
 ) -> bool:
     payload = {
-        "chat_id": int(update.effective_chat.id),
+        "chat_id": int(loading_message.chat_id),
+        "message_id": int(loading_message.message_id),
         "rich_message": {
             "html": rich_html,
             "skip_entity_detection": True,
         },
     }
-    if update.effective_message and getattr(update.effective_message, "message_thread_id", None):
-        payload["message_thread_id"] = int(update.effective_message.message_thread_id)
 
-    url = f"https://api.telegram.org/bot{context.bot.token}/sendRichMessage"
+    url = f"https://api.telegram.org/bot{context.bot.token}/editMessageText"
+
     try:
-        timeout = aiohttp.ClientTimeout(total=20)
+        timeout = aiohttp.ClientTimeout(total=30)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(url, json=payload) as response:
                 data = await response.json(content_type=None)
                 if response.status != 200 or not data.get("ok"):
                     raise RuntimeError(
-                        f"sendRichMessage HTTP={response.status}: {data.get('description')}"
+                        f"editMessageText rich_message "
+                        f"HTTP={response.status}: {data.get('description')}"
                     )
         return True
     except Exception as exc:
-        print("PROFILE RICH MESSAGE ERROR:", repr(exc), flush=True)
+        print("PROFILE RICH EDIT ERROR:", repr(exc), flush=True)
         return False
 
 
@@ -410,70 +516,109 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if await should_ignore_update(update):
         return
 
-    user_doc = await ensure_user(update.effective_user)
-    if not user_doc:
-        return
-
-    cards = list(user_doc.get("cards", []))
-    unique_cards = len(cards)
-    total_photo_count = await get_db().photos.count_documents({})
-
-    profile_id = await ensure_profile_id(int(update.effective_user.id))
-    global_rank = await get_global_unique_rank(unique_cards)
-    rank = collector_rank(unique_cards)
-
-    image_on = profile_image_enabled()
-    table_on = profile_table_enabled()
-    full_name = _full_name(user_doc)
-
-    # Avoid unnecessary Telegram file/profile-photo requests when image mode is disabled.
-    avatar_bytes = None
-    if image_on:
-        avatar_bytes = await get_profile_avatar_bytes(
-            context,
-            user_doc,
-            update.effective_user,
-        )
-
-    caption = build_profile_caption(
-        full_name=full_name,
-        user_id=int(update.effective_user.id),
+    loading_message = await update.effective_message.reply_text(
+        "⏳ Loading Your Data Please Wait."
     )
 
-    rich_html = build_profile_rich_html(cards)
+    image = None
 
-    if image_on:
-        image = render_profile_card(
-            full_name=full_name,
-            profile_id=profile_id,
-            unique_cards=unique_cards,
-            global_rank=global_rank,
-            collector_rank=rank["name"],
-            collector_emoji=rank["emoji"],
-            avatar_bytes=avatar_bytes,
-            next_rank_name=rank["nextName"],
-            next_rank_target=rank["nextTarget"],
-        )
-
-        if table_on:
-            await update.effective_message.reply_photo(
-                photo=image,
-                caption=caption,
-                parse_mode="HTML",
+    try:
+        user_doc = await ensure_user(update.effective_user)
+        if not user_doc:
+            await loading_message.edit_text(
+                "⚠️ Unable to load your profile data."
             )
-            rich_ok = await send_profile_rich_message(update, context, rich_html)
-            if not rich_ok:
-                await update.effective_message.reply_html(caption)
             return
 
-        await update.effective_message.reply_photo(photo=image, caption=caption, parse_mode="HTML")
-        return
+        cards = list(user_doc.get("cards", []))
+        unique_cards = len(cards)
 
-    # IMAGE OFF -> compact normal profile text.
-    await update.effective_message.reply_html(caption)
+        profile_id = await ensure_profile_id(
+            int(update.effective_user.id)
+        )
+        global_rank = await get_global_unique_rank(unique_cards)
+        rank = collector_rank(unique_cards)
 
-    if table_on:
-        await send_profile_rich_message(update, context, rich_html)
+        image_on = profile_image_enabled()
+        table_on = profile_table_enabled()
+        full_name = _full_name(user_doc)
+
+        avatar_bytes = None
+        if image_on:
+            avatar_bytes = await get_profile_avatar_bytes(
+                context,
+                user_doc,
+                update.effective_user,
+            )
+
+            image = render_profile_card(
+                full_name=full_name,
+                profile_id=profile_id,
+                unique_cards=unique_cards,
+                global_rank=global_rank,
+                collector_rank=rank["name"],
+                collector_emoji=rank["emoji"],
+                avatar_bytes=avatar_bytes,
+                next_rank_name=rank["nextName"],
+                next_rank_target=rank["nextTarget"],
+            )
+
+        image_url = (
+            make_profile_image_url(image)
+            if image_on and image is not None
+            else None
+        )
+
+        rich_html = build_profile_rich_html(
+            cards=cards,
+            full_name=full_name,
+            user_id=int(update.effective_user.id),
+            image_url=image_url,
+            include_table=table_on,
+        )
+
+        rich_ok = await edit_loading_to_rich_message(
+            loading_message,
+            context,
+            rich_html,
+        )
+        if rich_ok:
+            return
+
+        # Safe one-message fallback if Rich Message editing fails.
+        fallback = build_profile_fallback_caption(
+            cards=cards,
+            full_name=full_name,
+            user_id=int(update.effective_user.id),
+            include_table=table_on,
+        )
+
+        if image_on and image is not None:
+            try:
+                await loading_message.delete()
+            except Exception:
+                pass
+
+            await update.effective_message.reply_photo(
+                photo=image,
+                caption=fallback[:1024],
+                parse_mode="HTML",
+            )
+            return
+
+        await loading_message.edit_text(
+            fallback,
+            parse_mode="HTML",
+        )
+
+    except Exception:
+        try:
+            await loading_message.edit_text(
+                "⚠️ Something went wrong. Please try again."
+            )
+        except Exception:
+            pass
+        raise
 
 
 def register_profile_handlers(app: Application) -> None:
