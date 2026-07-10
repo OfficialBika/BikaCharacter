@@ -6,6 +6,7 @@ import json
 import math
 import os
 import random
+import re
 import urllib.error
 import urllib.request
 from collections import defaultdict
@@ -366,12 +367,33 @@ def _rich_escape(value: object) -> str:
     return html.escape(str(value if value is not None else ""), quote=True)
 
 
+def _rich_rarity_html(rarity: object) -> str:
+    """Return a Rich Message-safe rarity emoji.
+
+    Normal Unicode emoji are escaped as text. A configured Telegram custom emoji
+    is passed through only when it is a well-formed <tg-emoji emoji-id="..."> tag;
+    this prevents the tag from appearing as literal text inside the table.
+    """
+    value = str(get_rarity_emoji(rarity) or "🎴").strip()
+    match = re.fullmatch(
+        r'<tg-emoji\s+emoji-id="(\d+)">(.*?)</tg-emoji>',
+        value,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        emoji_id = match.group(1)
+        fallback = _rich_escape(match.group(2) or "🎴")
+        return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+    return _rich_escape(value)
+
+
 async def build_rich_harem_html(user_doc: dict, page: int = 1) -> tuple[str, int, int]:
     view_cards, sort_mode, selected_rarity = get_harem_cards_for_view(user_doc)
     grouped = group_cards_by_anime(view_cards)
     anime_names = [anime for anime, _cards in grouped]
     totals = await get_database_anime_totals(anime_names)
 
+    # Keep structured anime sections so each page can render one shared table.
     sections: list[tuple[str, list[dict], int]] = []
     for anime, cards in grouped:
         sorted_cards = sorted(cards, key=_card_id_sort_value)
@@ -442,7 +464,7 @@ async def build_rich_harem_html(user_doc: dict, page: int = 1) -> tuple[str, int
 
     if sort_mode == "rarity" and selected_rarity:
         parts.append(
-            f"<p><b>Mode:</b> {_rich_escape(get_rarity_emoji(selected_rarity))} "
+            f"<p><b>Mode:</b> {_rich_rarity_html(selected_rarity)} "
             f"{_rich_escape(selected_rarity)}</p>"
         )
     else:
@@ -456,33 +478,37 @@ async def build_rich_harem_html(user_doc: dict, page: int = 1) -> tuple[str, int
 
     if not grouped:
         parts.append("<p>No cards found.</p>")
-    else:
-        grouped_lookup = {anime: cards for anime, cards in grouped}
-        for anime, cards, database_total in page_sections:
-            owned_unique = len(grouped_lookup.get(anime, cards))
-            rows = [
-                "<tr>"
-                "<th align=\"center\">ID</th>"
-                "<th align=\"center\">Rarity</th>"
-                "<th align=\"left\">Character</th>"
-                "</tr>"
-            ]
-            for card in cards:
-                count = int(card.get("count", 1) or 1)
-                rows.append(
-                    "<tr>"
-                    f"<td align=\"center\">🍀 {_rich_escape(card.get('cardId'))}</td>"
-                    f"<td align=\"center\">{_rich_escape(get_rarity_emoji(card.get('rarity')))}</td>"
-                    f"<td align=\"left\">{_rich_escape(card.get('name'))} (x{count})</td>"
-                    "</tr>"
-                )
-            parts.append(
-                "<table bordered striped>"
-                f"<caption>⚜️ {_rich_escape(anime)} ({owned_unique}/{database_total})</caption>"
-                + "".join(rows)
-                + "</table>"
+        return "\n".join(parts), safe_page, total_pages
+
+    # One shared table header per page. Anime titles are full-width divider rows.
+    grouped_lookup = {anime: cards for anime, cards in grouped}
+    rows = [
+        '<tr>'
+        '<th align="center">ID</th>'
+        '<th align="center">Rarity</th>'
+        '<th align="left">Character</th>'
+        '</tr>'
+    ]
+
+    for anime, cards, database_total in page_sections:
+        owned_unique = len(grouped_lookup.get(anime, cards))
+        rows.append(
+            '<tr>'
+            f'<th colspan="3" align="left">⚜️ {_rich_escape(anime)} '
+            f'({owned_unique}/{database_total})</th>'
+            '</tr>'
+        )
+        for card in cards:
+            count = int(card.get("count", 1) or 1)
+            rows.append(
+                '<tr>'
+                f'<td align="center">🍀 {_rich_escape(card.get("cardId"))}</td>'
+                f'<td align="center">{_rich_rarity_html(card.get("rarity"))}</td>'
+                f'<td align="left">{_rich_escape(card.get("name"))} (x{count})</td>'
+                '</tr>'
             )
 
+    parts.append('<table bordered striped>' + ''.join(rows) + '</table>')
     return "\n".join(parts), safe_page, total_pages
 
 
