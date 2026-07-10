@@ -178,47 +178,62 @@ async def get_profile_avatar_bytes(
 
 def build_profile_caption(
     *,
-    profile_id: int,
-    unique_cards: int,
-    global_rank: int,
-    rank: dict,
+    full_name: str,
+    user_id: int,
 ) -> str:
     return (
-        f"🎗 <b>{escape_html(PROFILE_TITLE)}</b>\n"
+        "🎗  <b>𝐏𝐑𝐎𝐅𝐈𝐋𝐄</b> 🎗\n"
         "━━━━━━━━━━━━━━\n"
-        f"🪪 <b>Profile ID</b> - <code>{profile_id}</code>\n"
-        f"🎴 <b>Total Cards</b> - <code>{unique_cards}</code> unique\n"
-        f"🌍 <b>Global</b> - <code>#{global_rank}</code>\n"
-        f"🏆 <b>Rank</b> - {rank['emoji']} <b>{escape_html(rank['name'])}</b>"
+        f"👤 ᴜꜱᴇʀ : {escape_html(full_name)}\n"
+        f"🆔 ᴜꜱᴇʀ ɪᴅ : <code>{int(user_id)}</code>"
     )
 
 
-def build_profile_rich_html(
-    *,
-    profile_id: int,
-    unique_cards: int,
-    global_rank: int,
-    rank: dict,
-) -> str:
+def _rich_emoji(rarity: str) -> str:
+    emoji = str(get_rarity_emoji(rarity) or "🎴").strip()
+
+    # Keep valid custom-emoji markup raw for Rich Message.
+    if emoji.startswith("<tg-emoji ") and emoji.endswith("</tg-emoji>"):
+        return emoji
+
+    return escape_html(emoji)
+
+
+def build_profile_rich_html(cards: list[dict]) -> str:
+    counts = rarity_counts(cards)
+
+    rows = [
+        "<tr>"
+        '<th align="left">Rarity</th>'
+        '<th align="center">Unique</th>'
+        '<th align="center">Total</th>'
+        "</tr>"
+    ]
+
+    for rarity in RARITY_ORDER:
+        data = counts.get(rarity, {"unique": 0, "total": 0})
+        unique_count = int(data.get("unique", 0) or 0)
+        total_count = int(data.get("total", 0) or 0)
+
+        rows.append(
+            "<tr>"
+            f'<td align="left">{_rich_emoji(rarity)} <b>{escape_html(rarity)}</b></td>'
+            f'<td align="center">{unique_count:,}</td>'
+            f'<td align="center">{total_count:,}</td>'
+            "</tr>"
+        )
+
+    total_unique = len(cards)
+    total_owned = sum(int(card.get("count", 0) or 0) for card in cards)
+
     return (
-        f"<h2>🎗 {escape_html(PROFILE_TITLE)}</h2>"
+        "<h2>🏷 𝐑𝐀𝐑𝐈𝐓𝐘 𝐒𝐓𝐀𝐓𝐒</h2>"
         "<table bordered striped>"
-        "<tr><th align=\"left\">Field</th><th align=\"left\">Value</th></tr>"
-        f"<tr><td>🪪 Profile ID</td><td>{profile_id}</td></tr>"
-        f"<tr><td>🎴 Total Cards</td><td>{unique_cards} unique</td></tr>"
-        f"<tr><td>🌍 Global</td><td>#{global_rank}</td></tr>"
-        f"<tr><td>🏆 Rank</td><td>{rank['emoji']} {escape_html(rank['name'])}</td></tr>"
-        "</table>"
-        "<h3>Collector Rank System</h3>"
-        "<table bordered striped>"
-        "<tr><th align=\"left\">Card Count</th><th align=\"left\">Rank Name</th></tr>"
-        "<tr><td>1 - 100</td><td>🌱 Novice Collector</td></tr>"
-        "<tr><td>101 - 500</td><td>🀄 Card Hunter</td></tr>"
-        "<tr><td>501 - 1,000</td><td>⚔️ Elite Collector</td></tr>"
-        "<tr><td>1,001 - 2,000</td><td>💎 Master Collector</td></tr>"
-        "<tr><td>2,001 - 3,000</td><td>👑 Grand Collector</td></tr>"
-        "<tr><td>3,000+</td><td>✨ Legendary Monarch</td></tr>"
-        "</table>"
+        + "".join(rows)
+        + "</table>"
+        "<p>"
+        f"🎴 <b>Collection:</b> {total_unique:,} unique · {total_owned:,} total"
+        "</p>"
     )
 
 
@@ -421,18 +436,11 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
     caption = build_profile_caption(
-        profile_id=profile_id,
-        unique_cards=unique_cards,
-        global_rank=global_rank,
-        rank=rank,
+        full_name=full_name,
+        user_id=int(update.effective_user.id),
     )
 
-    rich_html = build_profile_rich_html(
-        profile_id=profile_id,
-        unique_cards=unique_cards,
-        global_rank=global_rank,
-        rank=rank,
-    )
+    rich_html = build_profile_rich_html(cards)
 
     if image_on:
         image = render_profile_card(
@@ -448,7 +456,11 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
         if table_on:
-            await update.effective_message.reply_photo(photo=image)
+            await update.effective_message.reply_photo(
+                photo=image,
+                caption=caption,
+                parse_mode="HTML",
+            )
             rich_ok = await send_profile_rich_message(update, context, rich_html)
             if not rich_ok:
                 await update.effective_message.reply_html(caption)
@@ -457,10 +469,8 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.effective_message.reply_photo(photo=image, caption=caption, parse_mode="HTML")
         return
 
-    # IMAGE OFF -> use old normal style.
-    legacy_text = build_public_profile_text(user_doc, total_photo_count)
-    cover = await _best_profile_cover(user_doc)
-    await reply_public_profile_media(update.effective_message, cover, legacy_text)
+    # IMAGE OFF -> compact normal profile text.
+    await update.effective_message.reply_html(caption)
 
     if table_on:
         await send_profile_rich_message(update, context, rich_html)
