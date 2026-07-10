@@ -520,8 +520,6 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         "⏳ Loading Your Data Please Wait."
     )
 
-    image = None
-
     try:
         user_doc = await ensure_user(update.effective_user)
         if not user_doc:
@@ -531,19 +529,61 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
 
         cards = list(user_doc.get("cards", []))
-        unique_cards = len(cards)
+        image_on = profile_image_enabled()
+        table_on = profile_table_enabled()
+        full_name = _full_name(user_doc)
 
+        # ------------------------------------------------------------
+        # MODE 4: IMAGE OFF + TABLE OFF
+        # Restore the original normal profile flow.
+        # Do not call Rich Message APIs, public image URLs, renderer,
+        # avatar download, profile rank queries, or image cache.
+        # ------------------------------------------------------------
+        if not image_on and not table_on:
+            total_photo_count = await get_db().photos.count_documents({})
+            legacy_text = build_public_profile_text(
+                user_doc,
+                total_photo_count,
+            )
+            cover = await _best_profile_cover(user_doc)
+
+            # Text-only result can reuse the loading message.
+            if not cover or not str(cover.get("fileId") or ""):
+                await loading_message.edit_text(
+                    legacy_text,
+                    parse_mode="HTML",
+                )
+                return
+
+            # Telegram cannot edit a text message into media, so remove the
+            # placeholder and send the original media profile response.
+            try:
+                await loading_message.delete()
+            except Exception as exc:
+                print(
+                    "PROFILE LOADING DELETE ERROR:",
+                    repr(exc),
+                    flush=True,
+                )
+
+            await reply_public_profile_media(
+                update.effective_message,
+                cover,
+                legacy_text,
+            )
+            return
+
+        # The remaining three modes use the new compact/Rich profile system.
+        unique_cards = len(cards)
         profile_id = await ensure_profile_id(
             int(update.effective_user.id)
         )
         global_rank = await get_global_unique_rank(unique_cards)
         rank = collector_rank(unique_cards)
 
-        image_on = profile_image_enabled()
-        table_on = profile_table_enabled()
-        full_name = _full_name(user_doc)
+        image = None
+        image_url = None
 
-        avatar_bytes = None
         if image_on:
             avatar_bytes = await get_profile_avatar_bytes(
                 context,
@@ -563,11 +603,7 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 next_rank_target=rank["nextTarget"],
             )
 
-        image_url = (
-            make_profile_image_url(image)
-            if image_on and image is not None
-            else None
-        )
+            image_url = make_profile_image_url(image)
 
         rich_html = build_profile_rich_html(
             cards=cards,
@@ -585,7 +621,7 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if rich_ok:
             return
 
-        # Safe one-message fallback if Rich Message editing fails.
+        # One-message fallback for Rich Message failures.
         fallback = build_profile_fallback_caption(
             cards=cards,
             full_name=full_name,
@@ -596,8 +632,12 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if image_on and image is not None:
             try:
                 await loading_message.delete()
-            except Exception:
-                pass
+            except Exception as exc:
+                print(
+                    "PROFILE LOADING DELETE ERROR:",
+                    repr(exc),
+                    flush=True,
+                )
 
             await update.effective_message.reply_photo(
                 photo=image,
