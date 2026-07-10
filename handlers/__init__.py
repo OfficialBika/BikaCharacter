@@ -1,6 +1,7 @@
 from telegram.ext import Application
 
 from handlers.admin import register_admin_handlers
+from handlers.broadcast import register_broadcast_handlers
 from handlers.check import register_check_handlers
 from handlers.claim import register_claim_handlers
 from handlers.drop import register_drop_handlers
@@ -49,6 +50,7 @@ def register_handlers(app: Application) -> None:
     register_start_handlers(app)
     register_search_handlers(app)
     register_admin_handlers(app)
+    register_broadcast_handlers(app)
     register_photo_add_handlers(app)
     register_claim_handlers(app)
     register_check_handlers(app)
