@@ -13,7 +13,7 @@ from database.mongodb import get_db
 from utils.cooldown import should_ignore_update
 from utils.db_helpers import ensure_user, get_photo_by_card_id, rarity_counts
 from utils.profile_renderer import render_profile_card, normalize_name_for_render
-from utils.rarity import get_rarity_emoji
+from utils.rarity import get_rarity_emoji, get_rarity_button_emoji
 from utils.text import escape_html, level_from_exp, progress_bar
 
 
@@ -351,7 +351,7 @@ def build_profile_text(user_doc: dict, total_photo_count: int) -> str:
     for rarity in RARITY_ORDER:
         data = counts.get(rarity, {"unique": 0, "total": 0})
         lines.append(
-            f"{get_rarity_emoji(rarity)} <b>{escape_html(rarity)}</b> · "
+            f"{get_rarity_button_emoji(rarity)} <b>{escape_html(rarity)}</b> · "
             f"<code>{int(data.get('unique', 0) or 0)}</code> unique / "
             f"<code>{int(data.get('total', 0) or 0)}</code> total"
         )
