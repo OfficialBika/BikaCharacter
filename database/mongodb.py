@@ -46,7 +46,6 @@ async def ensure_indexes() -> None:
     await db.users.create_index([("userId", ASCENDING)], unique=True)
     await db.users.create_index([("updatedAt", DESCENDING)])
     await db.users.create_index([("cards.cardId", ASCENDING)])
-    await db.users.create_index([("profileId", ASCENDING)], unique=True, sparse=True)
 
     await db.groups.create_index([("groupId", ASCENDING)], unique=True)
     await db.groups.create_index([("isApproved", ASCENDING)])
@@ -54,6 +53,9 @@ async def ensure_indexes() -> None:
 
     await db.transfers.create_index([("fromUserId", ASCENDING), ("createdAt", DESCENDING)])
     await db.transfers.create_index([("toUserId", ASCENDING), ("createdAt", DESCENDING)])
+    await db.transfers.create_index([("_id", ASCENDING)], unique=True)
+    await db.gift_requests.create_index([("senderId", ASCENDING), ("createdAt", DESCENDING)])
+    await db.gift_requests.create_index([("status", ASCENDING), ("updatedAt", DESCENDING)])
 
     await db.bot_mutes.create_index([("groupId", ASCENDING), ("userId", ASCENDING)], unique=True)
     await db.bot_mutes.create_index([("mutedUntil", ASCENDING)], expireAfterSeconds=0)
@@ -67,8 +69,6 @@ async def ensure_indexes() -> None:
     await db.claim_logs.create_index([("groupId", ASCENDING), ("createdAt", DESCENDING)])
     await db.claim_logs.create_index([("yangonDate", ASCENDING), ("userId", ASCENDING)])
     await db.claim_logs.create_index([("yangonDate", ASCENDING), ("groupId", ASCENDING)])
-    await db.claim_logs.create_index([("createdAt", DESCENDING), ("userId", ASCENDING), ("cardId", ASCENDING)])
-    await db.claim_logs.create_index([("userId", ASCENDING), ("cardId", ASCENDING), ("createdAt", DESCENDING)])
 
     await db.daily_claim_limits.create_index([("userId", ASCENDING), ("date", ASCENDING)], unique=True)
     await db.daily_claim_limits.create_index([("date", ASCENDING), ("count", DESCENDING)])
