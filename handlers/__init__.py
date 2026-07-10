@@ -11,7 +11,23 @@ from handlers.inline import register_inline_handlers
 from handlers.harem import register_harem_handlers
 from handlers.hmode import register_hmode_handlers
 from handlers.photo_add import register_photo_add_handlers
+
+# Public /profile uses the new generated-image implementation.
 from handlers.profile import register_profile_handlers
+
+# Backward compatibility for owner_tools.py, which still imports the old profile
+# helper functions. Install these attributes before importing owner_tools.
+import handlers.profile as _profile_module
+from handlers.profile_legacy_compat import (
+    build_profile_text as _legacy_build_profile_text,
+    hydrate_card_media as _legacy_hydrate_card_media,
+    reply_profile_media as _legacy_reply_profile_media,
+)
+
+_profile_module.build_profile_text = _legacy_build_profile_text
+_profile_module.hydrate_card_media = _legacy_hydrate_card_media
+_profile_module.reply_profile_media = _legacy_reply_profile_media
+
 from handlers.rankings import register_ranking_handlers
 from handlers.search import register_search_handlers
 from handlers.start import register_start_handlers
