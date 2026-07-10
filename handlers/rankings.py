@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -29,15 +32,13 @@ def _rank_emoji(index: int) -> str:
     return f"{index}."
 
 
-def _time_sort_value(value) -> float:
-    try:
-        return float(value.timestamp())
-    except Exception:
-        return 4102444800.0
-
-
-def _name_sort_value(row: dict) -> str:
-    return str(row.get("firstName") or row.get("username") or "").lower()
+def _user_doc_from_row(row: dict) -> dict:
+    return {
+        "userId": int(row.get("_id", 0) or 0),
+        "username": row.get("username", ""),
+        "firstName": row.get("firstName", ""),
+        "lastName": row.get("lastName", ""),
+    }
 
 
 async def topgroup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -64,7 +65,14 @@ async def topgroup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     lines = [t("rank_group_header"), "", t("rank_group_subtitle"), ""]
     for i, row in enumerate(rows, start=1):
-        lines.append(t("rank_group_row", rank=_rank_emoji(i), group=_group_link_from_doc(row), count=int(row.get("count", 0))))
+        lines.append(
+            t(
+                "rank_group_row",
+                rank=_rank_emoji(i),
+                group=_group_link_from_doc(row),
+                count=int(row.get("count", 0)),
+            )
+        )
     await update.effective_message.reply_html("\n".join(lines), disable_web_page_preview=True)
 
 
@@ -72,96 +80,47 @@ async def gtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await should_ignore_update(update):
         return
 
-    db = get_db()
-
-    # Fetch more than 10 first, then sort with time-based tie breaker.
-    rows = await db.users.aggregate(
+    rows = await get_db().users.aggregate(
         [
-            {"$unwind": "$cards"},
             {
-                "$group": {
+                "$project": {
                     "_id": "$userId",
-                    "total": {"$sum": "$cards.count"},
-                    "unique": {"$sum": 1},
-                    "username": {"$last": "$username"},
-                    "firstName": {"$last": "$firstName"},
-                    "lastName": {"$last": "$lastName"},
+                    "unique": {"$size": {"$ifNull": ["$cards", []]}},
+                    "total": {
+                        "$sum": {
+                            "$map": {
+                                "input": {"$ifNull": ["$cards", []]},
+                                "as": "c",
+                                "in": {"$ifNull": ["$$c.count", 0]},
+                            }
+                        }
+                    },
+                    "username": 1,
+                    "firstName": 1,
+                    "lastName": 1,
                 }
             },
-            {"$sort": {"total": -1, "unique": -1}},
-            {"$limit": 100},
+            {"$sort": {"unique": -1, "total": -1, "firstName": 1}},
+            {"$limit": 10},
         ]
-    ).to_list(100)
+    ).to_list(10)
 
     if not rows:
         await update.effective_message.reply_text(t("rank_no_global"))
         return
 
-    user_ids = [int(row.get("_id", 0) or 0) for row in rows]
-
-    log_rows = await db.claim_logs.aggregate(
-        [
-            {"$match": {"userId": {"$in": user_ids}}},
-            {"$sort": {"createdAt": 1}},
-            {
-                "$group": {
-                    "_id": "$userId",
-                    "claimTimes": {"$push": "$createdAt"},
-                }
-            },
-        ]
-    ).to_list(None)
-
-    claim_times_by_user = {
-        int(row.get("_id", 0) or 0): list(row.get("claimTimes", []))
-        for row in log_rows
-    }
-
-    for row in rows:
-        user_id = int(row.get("_id", 0) or 0)
-        total = int(row.get("total", 0) or 0)
-        times = claim_times_by_user.get(user_id, [])
-
-        if times and len(times) >= total:
-            row["reachedTotalAt"] = times[total - 1]
-        elif times:
-            row["reachedTotalAt"] = times[-1]
-        else:
-            row["reachedTotalAt"] = None
-
-    rows.sort(
-        key=lambda row: (
-            -int(row.get("total", 0) or 0),
-            -int(row.get("unique", 0) or 0),
-            _time_sort_value(row.get("reachedTotalAt")),
-            _name_sort_value(row),
-        )
-    )
-
-    rows = rows[:10]
-
     lines = [t("rank_global_header"), "", t("rank_global_subtitle"), ""]
     for i, row in enumerate(rows, start=1):
-        user_doc = {
-            "userId": int(row.get("_id", 0) or 0),
-            "username": row.get("username", ""),
-            "firstName": row.get("firstName", ""),
-            "lastName": row.get("lastName", ""),
-        }
         lines.append(
             t(
                 "rank_global_row",
                 rank=_rank_emoji(i),
-                user=mention_user_doc(user_doc),
+                user=mention_user_doc(_user_doc_from_row(row)),
                 total=int(row.get("total", 0) or 0),
                 unique=int(row.get("unique", 0) or 0),
             )
         )
-
-    await update.effective_message.reply_html(
-        "\n".join(lines),
-        disable_web_page_preview=True,
-    )
+    await update.effective_message.reply_html("\n".join(lines), disable_web_page_preview=True)
 
 
 async def todaygtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -170,14 +129,10 @@ async def todaygtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     today = yangon_date_key()
     daily_limit = int(CLAIM_DAILY_LIMIT)
-
     rows = await get_db().claim_logs.aggregate(
         [
             {"$match": {"yangonDate": today}},
-
-            
             {"$sort": {"createdAt": 1}},
-
             {
                 "$group": {
                     "_id": "$userId",
@@ -188,8 +143,6 @@ async def todaygtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     "lastName": {"$last": "$lastName"},
                 }
             },
-
-        
             {
                 "$addFields": {
                     "limitReached": {"$gte": ["$count", daily_limit]},
@@ -203,7 +156,6 @@ async def todaygtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     "lastClaimAt": {"$arrayElemAt": ["$claimTimes", -1]},
                 }
             },
-
             {
                 "$sort": {
                     "limitReached": -1,
@@ -213,7 +165,6 @@ async def todaygtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     "firstName": 1,
                 }
             },
-
             {"$limit": 10},
         ]
     ).to_list(10)
@@ -231,28 +182,112 @@ async def todaygtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         t("rank_today_subtitle"),
         "",
     ]
-
     for i, row in enumerate(rows, start=1):
-        user_doc = {
-            "userId": int(row.get("_id", 0) or 0),
-            "username": row.get("username", ""),
-            "firstName": row.get("firstName", ""),
-            "lastName": row.get("lastName", ""),
-        }
-
         lines.append(
             t(
                 "rank_today_row",
                 rank=_rank_emoji(i),
-                user=mention_user_doc(user_doc),
+                user=mention_user_doc(_user_doc_from_row(row)),
                 count=int(row.get("count", 0) or 0),
             )
+        )
+    await update.effective_message.reply_html("\n".join(lines), disable_web_page_preview=True)
+
+
+def _period_bounds(period: str) -> tuple[datetime, datetime, str]:
+    tz = ZoneInfo(CLAIM_TIMEZONE)
+    now_local = datetime.now(tz)
+
+    if period == "month":
+        start_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if start_local.month == 12:
+            end_local = start_local.replace(year=start_local.year + 1, month=1)
+        else:
+            end_local = start_local.replace(month=start_local.month + 1)
+        label = start_local.strftime("%B %Y")
+    else:
+        start_local = (now_local - timedelta(days=now_local.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        end_local = start_local + timedelta(days=7)
+        label = f"{start_local:%d %b} - {(end_local - timedelta(days=1)):%d %b %Y}"
+
+    return (
+        start_local.astimezone(timezone.utc),
+        end_local.astimezone(timezone.utc),
+        label,
+    )
+
+
+async def _period_top_rows(period: str) -> tuple[list[dict], str]:
+    start_utc, end_utc, label = _period_bounds(period)
+
+    # Unique cards only: repeated catches of the same card by the same user count once.
+    pipeline = [
+        {"$match": {"createdAt": {"$gte": start_utc, "$lt": end_utc}}},
+        {"$sort": {"createdAt": 1}},
+        {
+            "$group": {
+                "_id": {"userId": "$userId", "cardId": "$cardId"},
+                "firstClaimAt": {"$first": "$createdAt"},
+                "username": {"$last": "$username"},
+                "firstName": {"$last": "$firstName"},
+                "lastName": {"$last": "$lastName"},
+            }
+        },
+        {
+            "$group": {
+                "_id": "$_id.userId",
+                "unique": {"$sum": 1},
+                "reachedAt": {"$max": "$firstClaimAt"},
+                "username": {"$last": "$username"},
+                "firstName": {"$last": "$firstName"},
+                "lastName": {"$last": "$lastName"},
+            }
+        },
+        {"$sort": {"unique": -1, "reachedAt": 1, "firstName": 1}},
+        {"$limit": 10},
+    ]
+    rows = await get_db().claim_logs.aggregate(pipeline).to_list(10)
+    return rows, label
+
+
+async def _period_top_cmd(update: Update, period: str) -> None:
+    if await should_ignore_update(update):
+        return
+
+    rows, label = await _period_top_rows(period)
+    title = "📅 𝐌𝐎𝐍𝐓𝐇𝐋𝐘 𝐓𝐎𝐏 𝟏𝟎" if period == "month" else "🗓 𝐖𝐄𝐄𝐊𝐋𝐘 𝐓𝐎𝐏 𝟏𝟎"
+
+    if not rows:
+        await update.effective_message.reply_text(
+            f"{title}\n\nNo claim data for {label}."
+        )
+        return
+
+    lines = [
+        f"<b>{title}</b>",
+        f"<i>{escape_html(label)} • Unique claimed cards only</i>",
+        "",
+    ]
+    for i, row in enumerate(rows, start=1):
+        lines.append(
+            f"{_rank_emoji(i)} {mention_user_doc(_user_doc_from_row(row))} — "
+            f"<b>{int(row.get('unique', 0) or 0)}</b> unique"
         )
 
     await update.effective_message.reply_html(
         "\n".join(lines),
         disable_web_page_preview=True,
     )
+
+
+async def mtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _period_top_cmd(update, "month")
+
+
+async def wtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _period_top_cmd(update, "week")
 
 
 async def mylimit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -264,7 +299,14 @@ async def mylimit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     used = await get_daily_claim_count(update.effective_user.id, today)
     remaining = max(0, CLAIM_DAILY_LIMIT - used)
     await update.effective_message.reply_text(
-        t("mylimit", date=today, timezone=CLAIM_TIMEZONE, used=used, limit=CLAIM_DAILY_LIMIT, remaining=remaining)
+        t(
+            "mylimit",
+            date=today,
+            timezone=CLAIM_TIMEZONE,
+            used=used,
+            limit=CLAIM_DAILY_LIMIT,
+            remaining=remaining,
+        )
     )
 
 
@@ -272,4 +314,6 @@ def register_ranking_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("topgroup", topgroup_cmd))
     app.add_handler(CommandHandler("gtop", gtop_cmd))
     app.add_handler(CommandHandler("todaygtop", todaygtop_cmd))
+    app.add_handler(CommandHandler("mtop", mtop_cmd))
+    app.add_handler(CommandHandler("wtop", wtop_cmd))
     app.add_handler(CommandHandler("mylimit", mylimit_cmd))

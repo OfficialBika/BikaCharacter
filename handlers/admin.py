@@ -4,8 +4,8 @@ import asyncio
 import time
 from typing import Optional
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 from config import (
     ADMIN_CHANGETIME_MAX,
@@ -14,6 +14,7 @@ from config import (
     OWNER_CHANGETIME_MAX,
     OWNER_CHANGETIME_MIN,
     LIMITED_CARDS_COLLECTION,
+    RARITY_ORDER,
 )
 from database.mongodb import get_db
 from utils.db_helpers import add_card_to_user_id, ensure_group, ensure_user, ensure_user_by_id, get_photo_by_card_id
@@ -408,53 +409,54 @@ async def rmfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     else:
         await msg.reply_text(f"ℹ️ ᴜꜱᴇʀ ɪᴅ {target_id} ɪꜱ ɴᴏᴛ ɪɴ ꜰʀᴇᴇ ʟɪꜱᴛ.")
 
-async def _find_delete_card(card_id: str) -> tuple[dict | None, str]:
-    """Find a normal or limited card and return (document, collection_name)."""
+
+async def _is_owner_or_adder(user) -> bool:
+    if is_owner(user):
+        return True
+    user_id = int(getattr(user, "id", 0) or 0)
+    if not user_id:
+        return False
+    settings = await get_db().bot_settings.find_one(
+        {"_id": SETTINGS_ID},
+        {"adderIds": 1},
+    )
+    return user_id in {int(x) for x in (settings or {}).get("adderIds", [])}
+
+
+async def raritylist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner/adder-only database rarity inventory stats."""
+    if not await _is_owner_or_adder(update.effective_user):
+        return
+
     db = get_db()
+    counts = {str(rarity): 0 for rarity in RARITY_ORDER}
 
-    photo = await db.photos.find_one({"cardId": str(card_id)})
-    if photo:
-        return photo, "photos"
-
-    photo = await db[LIMITED_CARDS_COLLECTION].find_one({"cardId": str(card_id)})
-    if photo:
-        return photo, LIMITED_CARDS_COLLECTION
-
-    return None, ""
-
-
-def _delete_confirm_keyboard(card_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
+    for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
+        rows = await db[collection_name].aggregate(
             [
-                InlineKeyboardButton(
-                    "✅ Confirm",
-                    callback_data=f"delete_card:confirm:{card_id}",
-                ),
-                InlineKeyboardButton(
-                    "❌ Cancel",
-                    callback_data=f"delete_card:cancel:{card_id}",
-                ),
+                {"$group": {"_id": "$rarity", "count": {"$sum": 1}}},
             ]
-        ]
-    )
+        ).to_list(None)
+        for row in rows:
+            rarity = str(row.get("_id") or "")
+            counts[rarity] = counts.get(rarity, 0) + int(row.get("count", 0) or 0)
 
+    lines = ["🏷 <b>𝐑𝐀𝐑𝐈𝐓𝐘 𝐒𝐓𝐀𝐓𝐒</b>", ""]
+    total = 0
+    for rarity in RARITY_ORDER:
+        count = int(counts.get(str(rarity), 0) or 0)
+        total += count
+        lines.append(
+            f"{get_rarity_emoji(rarity)} <b>{escape_html(rarity)}</b> - "
+            f"<code>{count:,}</code>"
+        )
 
-def _delete_confirm_text(photo: dict) -> str:
-    return (
-        "⚠️ <b>𝐂𝐀𝐑𝐃 𝐃𝐄𝐋𝐄𝐓𝐄 𝐂𝐎𝐍𝐅𝐈𝐑𝐌𝐀𝐓𝐈𝐎𝐍</b>\n\n"
-        f"🆔 ID: <code>{escape_html(photo.get('cardId', ''))}</code>\n"
-        f"👤 Name: <b>{escape_html(photo.get('name', 'Unknown'))}</b>\n"
-        f"🏷 Rarity: <b>{escape_html(photo.get('rarity', 'Unknown'))}</b>\n"
-        f"🌴 Anime: <b>{escape_html(photo.get('anime', 'Unknown'))}</b>\n\n"
-        "⚠️ This action will permanently remove the card from the database, "
-        "all user harems, favourites, and active drops.\n\n"
-        "Are you sure?"
-    )
+    lines.extend(["", f"🎴 <b>Total Database Cards</b> - <code>{total:,}</code>"])
+    await update.effective_message.reply_html("\n".join(lines))
+
 
 
 async def delete_card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Owner-only delete command with Confirm / Cancel protection."""
     if not is_owner(update.effective_user):
         return
 
@@ -469,47 +471,26 @@ async def delete_card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await msg.reply_text(t("delete_invalid"))
         return
 
-    photo, _ = await _find_delete_card(card_id)
+    db = get_db()
+    photo = await db.photos.find_one({"cardId": card_id})
+    collection_name = "photos"
+    if not photo:
+        photo = await db[LIMITED_CARDS_COLLECTION].find_one({"cardId": card_id})
+        collection_name = LIMITED_CARDS_COLLECTION
+
     if not photo:
         await msg.reply_text(t("delete_not_found", card_id=card_id))
         return
 
-    await msg.reply_html(
-        _delete_confirm_text(photo),
-        reply_markup=_delete_confirm_keyboard(card_id),
-    )
+    name = photo.get("name", "Unknown")
+    anime = photo.get("anime", "Unknown")
+    rarity = photo.get("rarity", "Unknown")
 
-
-async def _perform_confirmed_card_delete(
-    context: ContextTypes.DEFAULT_TYPE,
-    card_id: str,
-    photo: dict,
-    collection_name: str,
-) -> dict:
-    """Delete one card and clean every related reference.
-
-    The source card deletion is atomic. If another confirm already deleted the
-    same card, no second cleanup run is started.
-    """
-    db = get_db()
-
-    # Atomic source-card delete first. This makes double Confirm safe.
-    deleted_photo = await db[collection_name].find_one_and_delete(
-        {"cardId": str(card_id)}
-    )
-    if not deleted_photo:
-        return {
-            "already_deleted": True,
-            "photo_deleted": 0,
-            "users_modified": 0,
-            "fav_modified": 0,
-            "drop_modified": 0,
-            "channel_status": t("delete_status_skipped"),
-        }
-
+    # Try to delete archived media message from Bika Database channel.
+    # If bot has no delete permission, this will fail safely.
     channel_delete_status = t("delete_status_skipped")
-    storage_chat_id = deleted_photo.get("storageChatId")
-    storage_message_id = deleted_photo.get("storageMessageId")
+    storage_chat_id = photo.get("storageChatId")
+    storage_message_id = photo.get("storageMessageId")
 
     if storage_chat_id and storage_message_id:
         try:
@@ -521,148 +502,54 @@ async def _perform_confirmed_card_delete(
         except Exception as exc:
             channel_delete_status = t("delete_status_failed", error=exc)
 
-    users_result, fav_result, drop_result = await asyncio.gather(
-        db.users.update_many(
-            {"cards.cardId": str(card_id)},
-            {
-                "$pull": {"cards": {"cardId": str(card_id)}},
-                "$set": {"updatedAt": utcnow()},
-            },
-        ),
-        db.users.update_many(
-            {"favoriteCardId": str(card_id)},
-            {
-                "$set": {
-                    "favoriteCardId": "",
-                    "updatedAt": utcnow(),
-                }
-            },
-        ),
-        db.groups.update_many(
-            {"activeDrop.cardId": str(card_id)},
-            {
-                "$set": {
-                    "activeDrop": None,
-                    "updatedAt": utcnow(),
-                }
-            },
-        ),
+    # Delete card from its source database collection.
+    photo_result = await db[collection_name].delete_one({"cardId": card_id})
+
+    # Remove this card from all users' harem.
+    users_result = await db.users.update_many(
+        {"cards.cardId": card_id},
+        {
+            "$pull": {"cards": {"cardId": card_id}},
+            "$set": {"updatedAt": utcnow()},
+        },
     )
 
-    return {
-        "already_deleted": False,
-        "photo_deleted": 1,
-        "users_modified": users_result.modified_count,
-        "fav_modified": fav_result.modified_count,
-        "drop_modified": drop_result.modified_count,
-        "channel_status": channel_delete_status,
-    }
-
-
-async def delete_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle owner-only Confirm / Cancel buttons for /delete."""
-    query = update.callback_query
-    if not query or not query.data:
-        return
-
-    # Only the configured owner can confirm or cancel a destructive delete action.
-    if not is_owner(query.from_user):
-        await query.answer("Owner only.", show_alert=True)
-        return
-
-    parts = query.data.split(":", 2)
-    if len(parts) != 3:
-        await query.answer("Invalid delete action.", show_alert=True)
-        return
-
-    _, action, card_id = parts
-    card_id = str(card_id).strip()
-
-    if action == "cancel":
-        await query.answer("Cancelled.")
-        try:
-            await query.edit_message_text(
-                f"❌ <b>Card deletion cancelled.</b>\n\n"
-                f"🆔 ID: <code>{escape_html(card_id)}</code>",
-                parse_mode="HTML",
-                reply_markup=None,
-            )
-        except Exception:
-            try:
-                await query.edit_message_reply_markup(reply_markup=None)
-            except Exception:
-                pass
-        return
-
-    if action != "confirm":
-        await query.answer("Invalid delete action.", show_alert=True)
-        return
-
-    photo, collection_name = await _find_delete_card(card_id)
-    if not photo or not collection_name:
-        await query.answer("Card not found or already deleted.", show_alert=True)
-        try:
-            await query.edit_message_text(
-                f"ℹ️ <b>Card ID {escape_html(card_id)} is not available anymore.</b>",
-                parse_mode="HTML",
-                reply_markup=None,
-            )
-        except Exception:
-            try:
-                await query.edit_message_reply_markup(reply_markup=None)
-            except Exception:
-                pass
-        return
-
-    await query.answer("Deleting...")
-
-    try:
-        await query.edit_message_text(
-            f"⏳ <b>Deleting card {escape_html(card_id)}...</b>",
-            parse_mode="HTML",
-            reply_markup=None,
-        )
-    except Exception:
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-
-    result = await _perform_confirmed_card_delete(
-        context=context,
-        card_id=card_id,
-        photo=photo,
-        collection_name=collection_name,
+    # Clear favourite if this card was set as favourite.
+    fav_result = await db.users.update_many(
+        {"favoriteCardId": card_id},
+        {
+            "$set": {
+                "favoriteCardId": "",
+                "updatedAt": utcnow(),
+            }
+        },
     )
 
-    if result.get("already_deleted"):
-        final_text = (
-            f"ℹ️ <b>Card ID {escape_html(card_id)} was already deleted.</b>"
-        )
-    else:
-        final_text = t(
+    # Clear active drop if this deleted card is currently spawned.
+    drop_result = await db.groups.update_many(
+        {"activeDrop.cardId": card_id},
+        {
+            "$set": {
+                "activeDrop": None,
+                "updatedAt": utcnow(),
+            }
+        },
+    )
+
+    await msg.reply_html(
+        t(
             "delete_success",
             card_id=escape_html(card_id),
-            name=escape_html(photo.get("name", "Unknown")),
-            rarity=escape_html(photo.get("rarity", "Unknown")),
-            anime=escape_html(photo.get("anime", "Unknown")),
-            photo_deleted=result.get("photo_deleted", 0),
-            users_modified=result.get("users_modified", 0),
-            fav_modified=result.get("fav_modified", 0),
-            drop_modified=result.get("drop_modified", 0),
-            channel_status=escape_html(result.get("channel_status", "")),
+            name=escape_html(name),
+            rarity=escape_html(rarity),
+            anime=escape_html(anime),
+            photo_deleted=photo_result.deleted_count,
+            users_modified=users_result.modified_count,
+            fav_modified=fav_result.modified_count,
+            drop_modified=drop_result.modified_count,
+            channel_status=escape_html(channel_delete_status),
         )
-
-    try:
-        await query.edit_message_text(
-            final_text,
-            parse_mode="HTML",
-            reply_markup=None,
-        )
-    except Exception:
-        if query.message:
-            await query.message.reply_html(final_text)
-
+    )
 
 def _give_usage_text() -> str:
     return (
@@ -815,8 +702,8 @@ def register_admin_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("transfer", transfer_cmd))
     app.add_handler(CommandHandler("addadder", addadder_cmd))
     app.add_handler(CommandHandler("rmadder", rmadder_cmd))
+    app.add_handler(CommandHandler("raritylist", raritylist_cmd))
     app.add_handler(CommandHandler("delete", delete_card_cmd))
-    app.add_handler(CallbackQueryHandler(delete_card_callback, pattern=r"^delete_card:(confirm|cancel):"))
     app.add_handler(CommandHandler("give", give_cmd))
     app.add_handler(CommandHandler("free", free_cmd))
     app.add_handler(CommandHandler("rmfree", rmfree_cmd))
