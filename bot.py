@@ -42,12 +42,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 async def register_commands(app: Application) -> None:
     await app.bot.set_my_commands(
         [
+            BotCommand("start", "Start to bot")
             BotCommand("harem", "Display your harem"),
             BotCommand("search", "Search characters"),
             BotCommand("profile", "See your profile"),
             BotCommand("fav", "Set or show favourite character"),
             BotCommand("check", "Check character by ID"),
-            BotCommand("CLAIM_COMMAND", "Claim spawned character"),
+            BotCommand(CLAIM_COMMAND, "Claim spawned character"),
             BotCommand("hmode", "Change harem view"),
             BotCommand("topgroup", "Top groups by catches"),
             BotCommand("gtop", "Global top harem users"),
