@@ -23,6 +23,10 @@ from config import (
     CAPTCHA_IMAGE_WIDTH,
     CAPTCHA_IMAGE_HEIGHT,
     CAPTCHA_JPEG_QUALITY,
+    RARITY_DIVINE_NAME,
+    RARITY_CROSSVERSE_NAME,
+    RARITY_CATAPHRACT_NAME,
+    RARITY_SUPREME_NAME,
 )
 from database.mongodb import get_db
 from utils.cooldown import is_bot_muted, record_message_and_maybe_mute
@@ -37,7 +41,12 @@ CAPTCHA_FONT_PATH = BASE_DIR / "assets" / "fonts" / "DejaVuSans.ttf"
 # For these rarity milestones, captcha appears BEFORE the card/photo spawns.
 # If solved correctly within CLAIM_CAPTCHA_SECONDS, then the card spawns normally.
 # If a wrong button is pressed or timeout happens, that scheduled drop is lost.
-PRE_SPAWN_CAPTCHA_RARITIES = {"Divine", "CrossVerse", "Cataphract", "Supreme"}
+PRE_SPAWN_CAPTCHA_RARITIES = {
+    RARITY_DIVINE_NAME,
+    RARITY_CROSSVERSE_NAME,
+    RARITY_CATAPHRACT_NAME,
+    RARITY_SUPREME_NAME,
+}
 
 # When the bot is offline, Telegram may keep pending updates and deliver them
 # after PM2 restarts the process. Without this guard, old group messages can

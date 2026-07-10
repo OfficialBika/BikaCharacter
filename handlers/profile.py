@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-from io import BytesIO
-from typing import Optional
+import os
+import unicodedata
 
 import aiohttp
 from pymongo import ReturnDocument
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from config import PROFILE_TABLE, PROFILE_TITLE
+from config import PROFILE_TABLE as CONFIG_PROFILE_TABLE, PROFILE_TITLE, RARITY_ORDER
 from database.mongodb import get_db
 from utils.cooldown import should_ignore_update
-from utils.db_helpers import ensure_user, get_photo_by_card_id
-from utils.profile_renderer import render_profile_card
-from utils.text import escape_html
+from utils.db_helpers import ensure_user, get_photo_by_card_id, rarity_counts
+from utils.profile_renderer import render_profile_card, normalize_name_for_render
+from utils.rarity import get_rarity_emoji
+from utils.text import escape_html, level_from_exp, progress_bar
 
 
 PROFILE_COUNTER_ID = "profile_id"
@@ -28,6 +29,21 @@ RANKS = (
     (1, "🌱", "Novice Collector", 101, "Card Hunter"),
     (0, "🌑", "New Collector", 1, "Novice Collector"),
 )
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "enable", "enabled"}
+
+
+def profile_image_enabled() -> bool:
+    return _env_flag("PROFILE_IMAGE", True)
+
+
+def profile_table_enabled() -> bool:
+    return _env_flag("PROFILE_TABLE", bool(CONFIG_PROFILE_TABLE))
 
 
 def collector_rank(unique_cards: int) -> dict:
@@ -50,12 +66,15 @@ async def ensure_profile_id(user_id: int) -> int:
     if current > 0:
         return current
 
+    text_mod = __import__("utils.text", fromlist=["utcnow"])
+    now = text_mod.utcnow()
+
     counter = await db.counters.find_one_and_update(
         {"_id": PROFILE_COUNTER_ID},
         {
             "$inc": {"seq": 1},
-            "$set": {"updatedAt": __import__("utils.text", fromlist=["utcnow"]).utcnow()},
-            "$setOnInsert": {"createdAt": __import__("utils.text", fromlist=["utcnow"]).utcnow()},
+            "$set": {"updatedAt": now},
+            "$setOnInsert": {"createdAt": now},
         },
         upsert=True,
         return_document=ReturnDocument.AFTER,
@@ -82,7 +101,6 @@ async def ensure_profile_id(user_id: int) -> int:
 
 
 async def get_global_unique_rank(unique_cards: int) -> int:
-    """Competition rank by unique-card count; duplicates do not count."""
     higher = await get_db().users.count_documents(
         {
             "$expr": {
@@ -97,7 +115,7 @@ async def get_global_unique_rank(unique_cards: int) -> int:
 
 
 def _full_name(user_doc: dict) -> str:
-    return (
+    raw = (
         " ".join(
             [
                 str(user_doc.get("firstName", "") or ""),
@@ -107,6 +125,7 @@ def _full_name(user_doc: dict) -> str:
         or str(user_doc.get("username", "") or "")
         or f"User {user_doc.get('userId')}"
     )
+    return normalize_name_for_render(raw)
 
 
 async def _download_telegram_file_bytes(context: ContextTypes.DEFAULT_TYPE, file_id: str) -> bytes | None:
@@ -126,7 +145,6 @@ async def get_profile_avatar_bytes(
     user_doc: dict,
     tg_user,
 ) -> bytes | None:
-    """Favourite photo first; otherwise Telegram profile photo; otherwise renderer initials."""
     fav_id = str(user_doc.get("favoriteCardId", "") or "")
     if fav_id:
         fav = next(
@@ -141,7 +159,6 @@ async def get_profile_avatar_bytes(
                 if data:
                     return data
 
-            # Old user snapshot may not contain fresh media metadata.
             doc = await get_photo_by_card_id(fav_id)
             if doc and str(doc.get("mediaType") or "photo").lower() == "photo":
                 data = await _download_telegram_file_bytes(context, str(doc.get("fileId") or ""))
@@ -205,6 +222,144 @@ def build_profile_rich_html(
     )
 
 
+def detect_card_media_type(card: dict) -> str:
+    media_type = str(card.get("mediaType") or "").strip().lower()
+    if media_type in {"photo", "video", "animation", "document"}:
+        return media_type
+    if media_type == "gif":
+        return "animation"
+
+    mime_type = str(card.get("mimeType") or "").strip().lower()
+    file_name = str(card.get("fileName") or "").strip().lower()
+
+    if mime_type.startswith("video/") or file_name.endswith((".mp4", ".mov", ".mkv", ".webm")):
+        return "video"
+    if mime_type == "image/gif" or file_name.endswith(".gif"):
+        return "animation"
+    if mime_type and not mime_type.startswith("image/"):
+        return "document"
+    return "photo"
+
+
+async def _best_profile_cover(user_doc: dict) -> dict | None:
+    cards = list(user_doc.get("cards", []))
+    if not cards:
+        return None
+
+    fav_id = str(user_doc.get("favoriteCardId", "") or "")
+    target = None
+
+    if fav_id:
+        target = next((c for c in cards if str(c.get("cardId")) == fav_id), None)
+
+    if not target:
+        target = cards[0]
+
+    if not target:
+        return None
+
+    merged = dict(target)
+    card_id = str(merged.get("cardId", "") or "")
+    if card_id:
+        doc = await get_photo_by_card_id(card_id)
+        if doc:
+            for key in ("fileId", "fileUniqueId", "mediaType", "mimeType", "fileName"):
+                value = doc.get(key)
+                if value:
+                    merged[key] = value
+    return merged
+
+
+async def reply_profile_media(message, cover: dict | None, text: str) -> None:
+    if not cover:
+        await message.reply_text(text, parse_mode="HTML")
+        return
+
+    media_type = detect_card_media_type(cover)
+    file_id = str(cover.get("fileId") or "")
+
+    if not file_id:
+        await message.reply_text(text, parse_mode="HTML")
+        return
+
+    try:
+        if media_type == "video":
+            await message.reply_video(file_id, caption=text, parse_mode="HTML")
+        elif media_type == "animation":
+            await message.reply_animation(file_id, caption=text, parse_mode="HTML")
+        elif media_type == "document":
+            await message.reply_document(file_id, caption=text, parse_mode="HTML")
+        else:
+            await message.reply_photo(file_id, caption=text, parse_mode="HTML")
+    except Exception as exc:
+        print("PROFILE MEDIA FALLBACK ERROR:", repr(exc), flush=True)
+        await message.reply_text(text, parse_mode="HTML")
+
+
+def build_profile_text(user_doc: dict, total_photo_count: int) -> str:
+    cards = list(user_doc.get("cards", []))
+    total_owned = sum(int(c.get("count", 0) or 0) for c in cards)
+    unique_owned = len(cards)
+    harem_percent = (
+        unique_owned / int(total_photo_count) * 100
+        if int(total_photo_count or 0) > 0
+        else 0
+    )
+    level = level_from_exp(user_doc.get("exp", 0))
+    counts = rarity_counts(cards)
+
+    username = _full_name(user_doc)
+    username = escape_html(username)
+
+    fav = next(
+        (
+            c
+            for c in cards
+            if str(c.get("cardId")) == str(user_doc.get("favoriteCardId", ""))
+        ),
+        None,
+    )
+    if fav:
+        fav_text = (
+            f'{escape_html(normalize_name_for_render(str(fav.get("name", "Unknown"))))} '
+            f'<code>[{escape_html(fav.get("cardId", ""))}]</code>'
+        )
+    else:
+        fav_text = "ɴᴏᴛ ꜱᴇᴛ"
+
+    lines = [
+        "🎗 <b>𝐂𝐀𝐓𝐂𝐇𝐄𝐑 𝐏𝐑𝐎𝐅𝐈𝐋𝐄</b> 🎗",
+        "━━━━━━━━━━━━━━",
+        f"👤 <b>ᴜꜱᴇʀ</b> : {username}",
+        f"🆔 <b>ᴜꜱᴇʀ ɪᴅ</b> : <code>{escape_html(user_doc.get('userId'))}</code>",
+        "",
+        "🎴 <b>𝐂𝐎𝐋𝐋𝐄𝐂𝐓𝐈𝐎𝐍</b>",
+        f"├ ᴛᴏᴛᴀʟ : <b>{total_owned}</b> ᴄᴀʀᴅꜱ",
+        f"├ ᴜɴɪǫᴜᴇ : <b>{unique_owned}</b>/<b>{int(total_photo_count or 0)}</b>",
+        f"└ ʜᴀʀᴇᴍ : <b>{harem_percent:.3f}%</b>",
+        "",
+        "⚡ <b>𝐋𝐄𝐕𝐄𝐋</b>",
+        f"├ ʟᴠʟ : <b>{level['level']}</b>",
+        f"└ ᴘʀᴏɢʀᴇꜱꜱ : {progress_bar(level['percent'])}",
+        "",
+        "💖 <b>𝐅𝐀𝐕𝐎𝐔𝐑𝐈𝐓𝐄</b>",
+        f"└ {fav_text}",
+        "",
+        "🏷 <b>𝐑𝐀𝐑𝐈𝐓𝐘 𝐒𝐓𝐀𝐓𝐒</b>",
+    ]
+
+    for rarity in RARITY_ORDER:
+        data = counts.get(rarity, {"unique": 0, "total": 0})
+        lines.append(
+            f"{get_rarity_emoji(rarity)} <b>{escape_html(rarity)}</b> · "
+            f"<code>{int(data.get('unique', 0) or 0)}</code> unique / "
+            f"<code>{int(data.get('total', 0) or 0)}</code> total"
+        )
+
+    lines.append("━━━━━━━━━━━━━━")
+    return "\n".join(lines)
+
+
 async def send_profile_rich_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -244,24 +399,18 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not user_doc:
         return
 
-    unique_cards = len(list(user_doc.get("cards", [])))
+    cards = list(user_doc.get("cards", []))
+    unique_cards = len(cards)
+    total_photo_count = await get_db().photos.count_documents({})
+
     profile_id = await ensure_profile_id(int(update.effective_user.id))
     global_rank = await get_global_unique_rank(unique_cards)
     rank = collector_rank(unique_cards)
     avatar_bytes = await get_profile_avatar_bytes(context, user_doc, update.effective_user)
     full_name = _full_name(user_doc)
 
-    image = render_profile_card(
-        full_name=full_name,
-        profile_id=profile_id,
-        unique_cards=unique_cards,
-        global_rank=global_rank,
-        collector_rank=rank["name"],
-        collector_emoji=rank["emoji"],
-        avatar_bytes=avatar_bytes,
-        next_rank_name=rank["nextName"],
-        next_rank_target=rank["nextTarget"],
-    )
+    image_on = profile_image_enabled()
+    table_on = profile_table_enabled()
 
     caption = build_profile_caption(
         profile_id=profile_id,
@@ -270,27 +419,43 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         rank=rank,
     )
 
-    if PROFILE_TABLE:
-        # Message 1: generated profile image only.
-        await update.effective_message.reply_photo(photo=image)
+    rich_html = build_profile_rich_html(
+        profile_id=profile_id,
+        unique_cards=unique_cards,
+        global_rank=global_rank,
+        rank=rank,
+    )
 
-        # Message 2: native Rich Message profile table.
-        rich_ok = await send_profile_rich_message(
-            update,
-            context,
-            build_profile_rich_html(
-                profile_id=profile_id,
-                unique_cards=unique_cards,
-                global_rank=global_rank,
-                rank=rank,
-            ),
+    if image_on:
+        image = render_profile_card(
+            full_name=full_name,
+            profile_id=profile_id,
+            unique_cards=unique_cards,
+            global_rank=global_rank,
+            collector_rank=rank["name"],
+            collector_emoji=rank["emoji"],
+            avatar_bytes=avatar_bytes,
+            next_rank_name=rank["nextName"],
+            next_rank_target=rank["nextTarget"],
         )
-        if not rich_ok:
-            await update.effective_message.reply_html(caption)
+
+        if table_on:
+            await update.effective_message.reply_photo(photo=image)
+            rich_ok = await send_profile_rich_message(update, context, rich_html)
+            if not rich_ok:
+                await update.effective_message.reply_html(caption)
+            return
+
+        await update.effective_message.reply_photo(photo=image, caption=caption, parse_mode="HTML")
         return
 
-    # PROFILE_TABLE=false: generated image + normal HTML caption.
-    await update.effective_message.reply_photo(photo=image, caption=caption, parse_mode="HTML")
+    # IMAGE OFF -> use old normal style.
+    legacy_text = build_profile_text(user_doc, total_photo_count)
+    cover = await _best_profile_cover(user_doc)
+    await reply_profile_media(update.effective_message, cover, legacy_text)
+
+    if table_on:
+        await send_profile_rich_message(update, context, rich_html)
 
 
 def register_profile_handlers(app: Application) -> None:
