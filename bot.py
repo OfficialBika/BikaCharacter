@@ -18,7 +18,6 @@ from config import (
     BOT_ALLOWED_UPDATES,
     RESET_GROUP_MESSAGE_COUNT_ON_STARTUP,
     CLEAR_ACTIVE_DROP_ON_STARTUP,
-    CLAIM_COMMAND,
     WEBHOOK_DROP_PENDING_UPDATES,
     WEBHOOK_PATH,
     WEBHOOK_SECRET_TOKEN,
@@ -47,11 +46,13 @@ async def register_commands(app: Application) -> None:
             BotCommand("profile", "See your profile"),
             BotCommand("fav", "Set or show favourite character"),
             BotCommand("check", "Check character by ID"),
-            BotCommand(CLAIM_COMMAND, "Claim spawned character"),
+            BotCommand("bika", "Claim spawned character"),
             BotCommand("hmode", "Change harem view"),
             BotCommand("topgroup", "Top groups by catches"),
             BotCommand("gtop", "Global top harem users"),
             BotCommand("todaygtop", "Today top catchers"),
+            BotCommand("mtop", "Monthly top 10 collectors"),
+            BotCommand("wtop", "Weekly top 10 collectors"),
             BotCommand("mylimit", "Check daily catch limit"),
         ]
     )
