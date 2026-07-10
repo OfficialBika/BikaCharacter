@@ -42,7 +42,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 async def register_commands(app: Application) -> None:
     await app.bot.set_my_commands(
         [
-            BotCommand("start", "Start to bot")
+            BotCommand("start", "Start the bot")
             BotCommand("harem", "Display your harem"),
             BotCommand("search", "Search characters"),
             BotCommand("profile", "See your profile"),
