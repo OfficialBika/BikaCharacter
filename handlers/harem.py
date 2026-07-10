@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import html
+import json
 import math
+import os
 import random
+import urllib.error
+import urllib.request
 from collections import defaultdict
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaAnimation, InputMediaDocument, InputMediaPhoto, InputMediaVideo, Update
@@ -22,6 +28,13 @@ from utils.i18n import t
 MAX_HAREM_CAPTION_CHARS = 900
 MAX_CARD_ROWS_PER_PAGE = 12
 MAX_ANIME_GROUPS_PER_PAGE = max(1, int(HAREM_PAGE_SIZE or 5))
+
+# TABLE=true  -> Message 1: cover media, Message 2: rich table + buttons.
+# TABLE=false -> original single media + caption + buttons behavior.
+TABLE_ENABLED = str(os.getenv("TABLE", "false") or "false").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+RICH_API_TIMEOUT_SECONDS = 20
 
 MEDIA_FIELDS = ("fileId", "fileUniqueId", "mediaType", "mimeType", "fileName")
 
@@ -93,6 +106,19 @@ async def _reply_card_media(message, card: dict, caption: str, reply_markup=None
     if media_type == "document":
         return await message.reply_document(file_id, caption=caption, parse_mode="HTML", reply_markup=reply_markup)
     return await message.reply_photo(file_id, caption=caption, parse_mode="HTML", reply_markup=reply_markup)
+
+
+async def _reply_cover_media_only(message, card: dict):
+    """Send only the harem cover media; no caption and no buttons."""
+    media_type = _media_type(card)
+    file_id = card["fileId"]
+    if media_type == "video":
+        return await message.reply_video(file_id)
+    if media_type == "animation":
+        return await message.reply_animation(file_id)
+    if media_type == "document":
+        return await message.reply_document(file_id)
+    return await message.reply_photo(file_id)
 
 
 def _card_id_sort_value(card: dict) -> tuple[int, int | str]:
@@ -335,6 +361,207 @@ async def build_harem_caption(user_doc: dict, page: int = 1) -> tuple[str, int, 
     return caption, page, total_pages, view_cards
 
 
+
+def _rich_escape(value: object) -> str:
+    return html.escape(str(value if value is not None else ""), quote=True)
+
+
+async def build_rich_harem_html(user_doc: dict, page: int = 1) -> tuple[str, int, int]:
+    view_cards, sort_mode, selected_rarity = get_harem_cards_for_view(user_doc)
+    grouped = group_cards_by_anime(view_cards)
+    anime_names = [anime for anime, _cards in grouped]
+    totals = await get_database_anime_totals(anime_names)
+
+    sections: list[tuple[str, list[dict], int]] = []
+    for anime, cards in grouped:
+        sorted_cards = sorted(cards, key=_card_id_sort_value)
+        total = int(totals.get(str(anime).strip(), 0) or 0) or len(sorted_cards)
+        sections.append((anime, sorted_cards, total))
+
+    pages: list[list[tuple[str, list[dict], int]]] = []
+    current: list[tuple[str, list[dict], int]] = []
+    row_count = 0
+
+    for anime, cards, total in sections:
+        index = 0
+        while index < len(cards):
+            if current and (
+                len(current) >= MAX_ANIME_GROUPS_PER_PAGE
+                or row_count >= MAX_CARD_ROWS_PER_PAGE
+            ):
+                pages.append(current)
+                current = []
+                row_count = 0
+
+            remaining = max(1, MAX_CARD_ROWS_PER_PAGE - row_count)
+            chunk = cards[index:index + remaining]
+            current.append((anime, chunk, total))
+            row_count += len(chunk)
+            index += len(chunk)
+
+            if index < len(cards):
+                pages.append(current)
+                current = []
+                row_count = 0
+
+    if current:
+        pages.append(current)
+    if not pages:
+        pages = [[]]
+
+    total_pages = len(pages)
+    safe_page = max(1, min(int(page or 1), total_pages))
+    page_sections = pages[safe_page - 1]
+
+    all_cards = list(user_doc.get("cards", []))
+    display_name = (
+        " ".join([
+            str(user_doc.get("firstName", "") or ""),
+            str(user_doc.get("lastName", "") or ""),
+        ]).strip()
+        or str(user_doc.get("username", "") or "")
+        or f"User {user_doc.get('userId')}"
+    )
+    total_cards = sum(int(c.get("count", 0) or 0) for c in all_cards)
+    fav = next(
+        (
+            c for c in all_cards
+            if str(c.get("cardId")) == str(user_doc.get("favoriteCardId", ""))
+        ),
+        None,
+    )
+
+    parts = [
+        f"<h2>📘 {_rich_escape(display_name)}'s Characters</h2>",
+        (
+            f"<p><b>Page:</b> {safe_page}/{total_pages}<br/>"
+            f"<b>Total Cards:</b> {total_cards}<br/>"
+            f"<b>Total Series:</b> {len(grouped)}</p>"
+        ),
+    ]
+
+    if sort_mode == "rarity" and selected_rarity:
+        parts.append(
+            f"<p><b>Mode:</b> {_rich_escape(get_rarity_emoji(selected_rarity))} "
+            f"{_rich_escape(selected_rarity)}</p>"
+        )
+    else:
+        parts.append("<p><b>Mode:</b> Anime</p>")
+
+    if fav:
+        parts.append(
+            f"<p><b>💖 Favourite:</b> {_rich_escape(fav.get('name'))} "
+            f"[{_rich_escape(fav.get('cardId'))}]</p>"
+        )
+
+    if not grouped:
+        parts.append("<p>No cards found.</p>")
+    else:
+        grouped_lookup = {anime: cards for anime, cards in grouped}
+        for anime, cards, database_total in page_sections:
+            owned_unique = len(grouped_lookup.get(anime, cards))
+            rows = [
+                "<tr>"
+                "<th align=\"center\">ID</th>"
+                "<th align=\"center\">Rarity</th>"
+                "<th align=\"left\">Character</th>"
+                "</tr>"
+            ]
+            for card in cards:
+                count = int(card.get("count", 1) or 1)
+                rows.append(
+                    "<tr>"
+                    f"<td align=\"center\">🍀 {_rich_escape(card.get('cardId'))}</td>"
+                    f"<td align=\"center\">{_rich_escape(get_rarity_emoji(card.get('rarity')))}</td>"
+                    f"<td align=\"left\">{_rich_escape(card.get('name'))} (x{count})</td>"
+                    "</tr>"
+                )
+            parts.append(
+                "<table bordered striped>"
+                f"<caption>⚜️ {_rich_escape(anime)} ({owned_unique}/{database_total})</caption>"
+                + "".join(rows)
+                + "</table>"
+            )
+
+    return "\n".join(parts), safe_page, total_pages
+
+
+def _bot_api_json_sync(token: str, method: str, payload: dict) -> dict:
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=RICH_API_TIMEOUT_SECONDS) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"{method} HTTP {exc.code}: {detail}") from exc
+    if not result.get("ok"):
+        raise RuntimeError(f"{method}: {result.get('description')}")
+    return result
+
+
+async def _bot_api_json(context: ContextTypes.DEFAULT_TYPE, method: str, payload: dict) -> dict:
+    return await asyncio.to_thread(
+        _bot_api_json_sync,
+        str(context.bot.token),
+        method,
+        payload,
+    )
+
+
+async def _send_or_edit_rich_harem(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_doc: dict,
+    user_id: int,
+    page: int,
+    edit: bool,
+) -> bool:
+    rich_html, safe_page, total_pages = await build_rich_harem_html(user_doc, page)
+    keyboard = harem_keyboard(user_id, safe_page, total_pages).to_dict()
+    rich_message = {
+        "html": rich_html,
+        "skip_entity_detection": True,
+    }
+
+    try:
+        if edit and update.callback_query and update.callback_query.message:
+            query = update.callback_query
+            await _bot_api_json(
+                context,
+                "editMessageText",
+                {
+                    "chat_id": int(query.message.chat.id),
+                    "message_id": int(query.message.message_id),
+                    "rich_message": rich_message,
+                    "reply_markup": keyboard,
+                },
+            )
+            await query.answer()
+            return True
+
+        message = update.effective_message
+        payload = {
+            "chat_id": int(update.effective_chat.id),
+            "rich_message": rich_message,
+            "reply_markup": keyboard,
+        }
+        if message and getattr(message, "message_thread_id", None):
+            payload["message_thread_id"] = int(message.message_thread_id)
+
+        await _bot_api_json(context, "sendRichMessage", payload)
+        return True
+    except Exception as exc:
+        print("HAREM RICH MESSAGE ERROR:", repr(exc), flush=True)
+        return False
+
+
 def harem_keyboard(user_id: int, page: int, total_pages: int) -> InlineKeyboardMarkup:
     prev_page = page - 1 if page > 1 else total_pages
     next_page = page + 1 if page < total_pages else 1
@@ -366,6 +593,53 @@ async def send_harem(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
         return
 
     user_doc = await hydrate_user_card_media(user_doc)
+
+    if TABLE_ENABLED:
+        # Pagination callbacks come from Message 2, so only the rich message is edited.
+        if edit and update.callback_query:
+            sent = await _send_or_edit_rich_harem(
+                update, context, user_doc, user_id, page, edit=True
+            )
+            if not sent:
+                await update.callback_query.answer(
+                    "Rich table update failed.",
+                    show_alert=True,
+                )
+            return
+
+        view_cards, _sort_mode, _selected_rarity = get_harem_cards_for_view(user_doc)
+        cover = choose_cover(user_doc, view_cards)
+        if not cover:
+            await update.effective_message.reply_text(t("harem_no_cards_user"))
+            return
+
+        cover_message = None
+        try:
+            # Message 1: cover media only.
+            cover_message = await _reply_cover_media_only(
+                update.effective_message,
+                cover,
+            )
+
+            # Message 2: rich message + pagination buttons.
+            sent = await _send_or_edit_rich_harem(
+                update, context, user_doc, user_id, page, edit=False
+            )
+            if sent:
+                return
+        except Exception as exc:
+            print("HAREM TABLE MODE ERROR:", repr(exc), flush=True)
+
+        # Rich send failed after the cover was sent. Remove that standalone cover
+        # before falling back to the original one-message harem when possible.
+        if cover_message:
+            try:
+                await cover_message.delete()
+            except Exception:
+                pass
+
+    # TABLE=false, or automatic fallback after a rich-message failure:
+    # preserve the original single media + caption + buttons format.
     caption, safe_page, total_pages, view_cards = await build_harem_caption(user_doc, page)
     cover = choose_cover(user_doc, view_cards)
     keyboard = harem_keyboard(user_id, safe_page, total_pages)
@@ -386,18 +660,30 @@ async def send_harem(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
             )
         except Exception:
             try:
-                await query.edit_message_caption(caption=caption, parse_mode="HTML", reply_markup=keyboard)
+                await query.edit_message_caption(
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
             except Exception:
-                # If Telegram refuses the edit, at least answer the callback cleanly.
                 pass
         await query.answer()
         return
 
     try:
-        await _reply_card_media(update.effective_message, cover, caption, reply_markup=keyboard)
+        await _reply_card_media(
+            update.effective_message,
+            cover,
+            caption,
+            reply_markup=keyboard,
+        )
     except Exception as exc:
         print("HAREM SEND MEDIA ERROR:", repr(exc))
-        await update.effective_message.reply_text(caption, parse_mode="HTML", reply_markup=keyboard)
+        await update.effective_message.reply_text(
+            caption,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
 
 
 async def harem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
