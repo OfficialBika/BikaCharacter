@@ -60,7 +60,7 @@ def _to_bytes(data: Any) -> bytes:
 def store_profile_image(
     image: Any,
     *,
-    content_type: str = "image/png",
+    content_type: str = "image/jpeg",
     ttl_seconds: int | None = None,
 ) -> str:
     """Store a generated profile image and return its public route path."""
@@ -80,11 +80,11 @@ def store_profile_image(
     _PROFILE_IMAGE_CACHE[token] = (
         image_bytes,
         expires_at,
-        str(content_type or "image/png"),
+        str(content_type or "image/jpeg"),
     )
     _PROFILE_IMAGE_CACHE.move_to_end(token)
 
-    return f"/profile-image/{token}.png"
+    return f"/profile-image/{token}.jpg"
 
 
 async def profile_image(request: web.Request) -> web.Response:
@@ -108,6 +108,7 @@ async def profile_image(request: web.Request) -> web.Response:
         content_type=content_type,
         headers={
             "Cache-Control": f"public, max-age={PROFILE_IMAGE_TTL_SECONDS}, immutable",
+            "Content-Disposition": 'inline; filename="profile.jpg"',
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -131,5 +132,5 @@ def create_health_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
-    app.router.add_get("/profile-image/{token}.png", profile_image)
+    app.router.add_get("/profile-image/{token}.jpg", profile_image)
     return app
