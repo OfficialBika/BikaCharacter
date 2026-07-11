@@ -337,7 +337,7 @@ def make_profile_image_url(image) -> str:
 
     path = store_profile_image(
         image,
-        content_type="image/png",
+        content_type="image/jpeg",
     )
     return f"{PROFILE_PUBLIC_URL}{path}"
 
@@ -620,6 +620,7 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             )
 
             image_url = make_profile_image_url(image)
+            print(f"PROFILE IMAGE URL: {image_url}", flush=True)
 
             rich_html = build_profile_rich_html(
                 cards=cards,
@@ -693,6 +694,7 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             )
 
             image_url = make_profile_image_url(image)
+            print(f"PROFILE IMAGE URL: {image_url}", flush=True)
 
             rich_html = build_profile_rich_html(
                 cards=cards,
