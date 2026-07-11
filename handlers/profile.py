@@ -512,6 +512,56 @@ async def edit_loading_to_rich_message(
         return False
 
 
+async def send_profile_rich_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    rich_html: str,
+) -> bool:
+    payload = {
+        "chat_id": int(update.effective_chat.id),
+        "rich_message": {
+            "html": rich_html,
+            "skip_entity_detection": True,
+        },
+    }
+
+    if (
+        update.effective_message
+        and getattr(update.effective_message, "message_thread_id", None)
+    ):
+        payload["message_thread_id"] = int(
+            update.effective_message.message_thread_id
+        )
+
+    url = f"https://api.telegram.org/bot{context.bot.token}/sendRichMessage"
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json=payload) as response:
+                data = await response.json(content_type=None)
+                if response.status != 200 or not data.get("ok"):
+                    raise RuntimeError(
+                        "sendRichMessage "
+                        f"HTTP={response.status}: {data.get('description')}"
+                    )
+        return True
+    except Exception as exc:
+        print("PROFILE RICH SEND ERROR:", repr(exc), flush=True)
+        return False
+
+
+async def _delete_loading_message(message) -> None:
+    try:
+        await message.delete()
+    except Exception as exc:
+        print(
+            "PROFILE LOADING DELETE ERROR:",
+            repr(exc),
+            flush=True,
+        )
+
+
 async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await should_ignore_update(update):
         return
@@ -533,58 +583,24 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         table_on = profile_table_enabled()
         full_name = _full_name(user_doc)
 
-        # ------------------------------------------------------------
-        # MODE 4: IMAGE OFF + TABLE OFF
-        # Restore the original normal profile flow.
-        # Do not call Rich Message APIs, public image URLs, renderer,
-        # avatar download, profile rank queries, or image cache.
-        # ------------------------------------------------------------
-        if not image_on and not table_on:
-            total_photo_count = await get_db().photos.count_documents({})
-            legacy_text = build_public_profile_text(
-                user_doc,
-                total_photo_count,
-            )
-            cover = await _best_profile_cover(user_doc)
-
-            # Text-only result can reuse the loading message.
-            if not cover or not str(cover.get("fileId") or ""):
-                await loading_message.edit_text(
-                    legacy_text,
-                    parse_mode="HTML",
-                )
-                return
-
-            # Telegram cannot edit a text message into media, so remove the
-            # placeholder and send the original media profile response.
-            try:
-                await loading_message.delete()
-            except Exception as exc:
-                print(
-                    "PROFILE LOADING DELETE ERROR:",
-                    repr(exc),
-                    flush=True,
-                )
-
-            await reply_public_profile_media(
-                update.effective_message,
-                cover,
-                legacy_text,
-            )
-            return
-
-        # The remaining three modes use the new compact/Rich profile system.
-        unique_cards = len(cards)
-        profile_id = await ensure_profile_id(
-            int(update.effective_user.id)
+        print(
+            f"PROFILE MODE: image={image_on} table={table_on}",
+            flush=True,
         )
-        global_rank = await get_global_unique_rank(unique_cards)
-        rank = collector_rank(unique_cards)
 
-        image = None
-        image_url = None
+        # ============================================================
+        # MODE 1: IMAGE TRUE + TABLE TRUE
+        # Keep the complete Rich Message output:
+        # image + profile info + actual rarity table.
+        # ============================================================
+        if image_on and table_on:
+            unique_cards = len(cards)
+            profile_id = await ensure_profile_id(
+                int(update.effective_user.id)
+            )
+            global_rank = await get_global_unique_rank(unique_cards)
+            rank = collector_rank(unique_cards)
 
-        if image_on:
             avatar_bytes = await get_profile_avatar_bytes(
                 context,
                 user_doc,
@@ -605,40 +621,40 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
             image_url = make_profile_image_url(image)
 
-        rich_html = build_profile_rich_html(
-            cards=cards,
-            full_name=full_name,
-            user_id=int(update.effective_user.id),
-            image_url=image_url,
-            include_table=table_on,
-        )
+            rich_html = build_profile_rich_html(
+                cards=cards,
+                full_name=full_name,
+                user_id=int(update.effective_user.id),
+                image_url=image_url,
+                include_table=True,
+            )
 
-        rich_ok = await edit_loading_to_rich_message(
-            loading_message,
-            context,
-            rich_html,
-        )
-        if rich_ok:
-            return
+            # Preferred path: edit the loading message in place.
+            if await edit_loading_to_rich_message(
+                loading_message,
+                context,
+                rich_html,
+            ):
+                return
 
-        # One-message fallback for Rich Message failures.
-        fallback = build_profile_fallback_caption(
-            cards=cards,
-            full_name=full_name,
-            user_id=int(update.effective_user.id),
-            include_table=table_on,
-        )
+            # Second Rich Message path: if editing fails, send a real
+            # Rich Message, then remove the temporary loading message.
+            if await send_profile_rich_message(
+                update,
+                context,
+                rich_html,
+            ):
+                await _delete_loading_message(loading_message)
+                return
 
-        if image_on and image is not None:
-            try:
-                await loading_message.delete()
-            except Exception as exc:
-                print(
-                    "PROFILE LOADING DELETE ERROR:",
-                    repr(exc),
-                    flush=True,
-                )
-
+            # Last-resort fallback only if both Rich Message APIs fail.
+            fallback = build_profile_fallback_caption(
+                cards=cards,
+                full_name=full_name,
+                user_id=int(update.effective_user.id),
+                include_table=True,
+            )
+            await _delete_loading_message(loading_message)
             await update.effective_message.reply_photo(
                 photo=image,
                 caption=fallback[:1024],
@@ -646,9 +662,140 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             )
             return
 
-        await loading_message.edit_text(
-            fallback,
-            parse_mode="HTML",
+        # ============================================================
+        # MODE 2: IMAGE TRUE + TABLE FALSE
+        # Rich Message with image + compact profile only.
+        # ============================================================
+        if image_on and not table_on:
+            unique_cards = len(cards)
+            profile_id = await ensure_profile_id(
+                int(update.effective_user.id)
+            )
+            global_rank = await get_global_unique_rank(unique_cards)
+            rank = collector_rank(unique_cards)
+
+            avatar_bytes = await get_profile_avatar_bytes(
+                context,
+                user_doc,
+                update.effective_user,
+            )
+
+            image = render_profile_card(
+                full_name=full_name,
+                profile_id=profile_id,
+                unique_cards=unique_cards,
+                global_rank=global_rank,
+                collector_rank=rank["name"],
+                collector_emoji=rank["emoji"],
+                avatar_bytes=avatar_bytes,
+                next_rank_name=rank["nextName"],
+                next_rank_target=rank["nextTarget"],
+            )
+
+            image_url = make_profile_image_url(image)
+
+            rich_html = build_profile_rich_html(
+                cards=cards,
+                full_name=full_name,
+                user_id=int(update.effective_user.id),
+                image_url=image_url,
+                include_table=False,
+            )
+
+            if await edit_loading_to_rich_message(
+                loading_message,
+                context,
+                rich_html,
+            ):
+                return
+
+            if await send_profile_rich_message(
+                update,
+                context,
+                rich_html,
+            ):
+                await _delete_loading_message(loading_message)
+                return
+
+            fallback = build_profile_fallback_caption(
+                cards=cards,
+                full_name=full_name,
+                user_id=int(update.effective_user.id),
+                include_table=False,
+            )
+            await _delete_loading_message(loading_message)
+            await update.effective_message.reply_photo(
+                photo=image,
+                caption=fallback[:1024],
+                parse_mode="HTML",
+            )
+            return
+
+        # ============================================================
+        # MODE 3: IMAGE FALSE + TABLE TRUE
+        # Rich Message with profile info + actual rarity table.
+        # No renderer, avatar download, public image URL, or image cache.
+        # ============================================================
+        if not image_on and table_on:
+            rich_html = build_profile_rich_html(
+                cards=cards,
+                full_name=full_name,
+                user_id=int(update.effective_user.id),
+                image_url=None,
+                include_table=True,
+            )
+
+            if await edit_loading_to_rich_message(
+                loading_message,
+                context,
+                rich_html,
+            ):
+                return
+
+            if await send_profile_rich_message(
+                update,
+                context,
+                rich_html,
+            ):
+                await _delete_loading_message(loading_message)
+                return
+
+            fallback = build_profile_fallback_caption(
+                cards=cards,
+                full_name=full_name,
+                user_id=int(update.effective_user.id),
+                include_table=True,
+            )
+            await loading_message.edit_text(
+                fallback,
+                parse_mode="HTML",
+            )
+            return
+
+        # ============================================================
+        # MODE 4: IMAGE FALSE + TABLE FALSE
+        # Restore the original normal profile flow.
+        # No Rich Message API and no generated image pipeline.
+        # ============================================================
+        total_photo_count = await get_db().photos.count_documents({})
+        legacy_text = build_public_profile_text(
+            user_doc,
+            total_photo_count,
+        )
+        cover = await _best_profile_cover(user_doc)
+
+        if not cover or not str(cover.get("fileId") or ""):
+            await loading_message.edit_text(
+                legacy_text,
+                parse_mode="HTML",
+            )
+            return
+
+        await _delete_loading_message(loading_message)
+        await reply_public_profile_media(
+            update.effective_message,
+            cover,
+            legacy_text,
         )
 
     except Exception:
