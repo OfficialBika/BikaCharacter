@@ -222,30 +222,22 @@ def _period_bounds(period: str) -> tuple[datetime, datetime, str]:
 async def _period_top_rows(period: str) -> tuple[list[dict], str]:
     start_utc, end_utc, label = _period_bounds(period)
 
-    # Unique cards only: repeated catches of the same card by the same user count once.
+    # Monthly/weekly top should count every successful claim log.
+    # Re-claiming the same card again must add another point.
     pipeline = [
         {"$match": {"createdAt": {"$gte": start_utc, "$lt": end_utc}}},
         {"$sort": {"createdAt": 1}},
         {
             "$group": {
-                "_id": {"userId": "$userId", "cardId": "$cardId"},
-                "firstClaimAt": {"$first": "$createdAt"},
+                "_id": "$userId",
+                "count": {"$sum": 1},
+                "lastClaimAt": {"$last": "$createdAt"},
                 "username": {"$last": "$username"},
                 "firstName": {"$last": "$firstName"},
                 "lastName": {"$last": "$lastName"},
             }
         },
-        {
-            "$group": {
-                "_id": "$_id.userId",
-                "unique": {"$sum": 1},
-                "reachedAt": {"$max": "$firstClaimAt"},
-                "username": {"$last": "$username"},
-                "firstName": {"$last": "$firstName"},
-                "lastName": {"$last": "$lastName"},
-            }
-        },
-        {"$sort": {"unique": -1, "reachedAt": 1, "firstName": 1}},
+        {"$sort": {"count": -1, "lastClaimAt": 1, "firstName": 1}},
         {"$limit": 10},
     ]
     rows = await get_db().claim_logs.aggregate(pipeline).to_list(10)
@@ -267,13 +259,13 @@ async def _period_top_cmd(update: Update, period: str) -> None:
 
     lines = [
         f"<b>{title}</b>",
-        f"<i>{escape_html(label)} • Unique claimed cards only</i>",
+        f"<i>{escape_html(label)} • Total claimed cards</i>",
         "",
     ]
     for i, row in enumerate(rows, start=1):
         lines.append(
             f"{_rank_emoji(i)} {mention_user_doc(_user_doc_from_row(row))} — "
-            f"<b>{int(row.get('unique', 0) or 0)}</b> unique"
+            f"<b>{int(row.get('count', 0) or 0)}</b> catches"
         )
 
     await update.effective_message.reply_html(
