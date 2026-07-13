@@ -66,6 +66,7 @@ async def ensure_indexes() -> None:
 
     await db.claim_logs.create_index([("userId", ASCENDING), ("createdAt", DESCENDING)])
     await db.claim_logs.create_index([("groupId", ASCENDING), ("createdAt", DESCENDING)])
+    await db.claim_logs.create_index([("createdAt", ASCENDING)])
     await db.claim_logs.create_index([("yangonDate", ASCENDING), ("userId", ASCENDING)])
     await db.claim_logs.create_index([("yangonDate", ASCENDING), ("groupId", ASCENDING)])
 
