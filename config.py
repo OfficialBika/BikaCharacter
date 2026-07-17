@@ -149,6 +149,16 @@ CLAIM_PREFIX_MIN_LENGTH = int(os.getenv("CLAIM_PREFIX_MIN_LENGTH", "3") or 3)
 CLAIM_CAPTCHA_SECONDS = int(os.getenv("CLAIM_CAPTCHA_SECONDS", "120") or 120)
 INLINE_PAGE_SIZE = env_int("INLINE_PAGE_SIZE", 50, 1, 50)
 INLINE_CACHE_TIME = env_int("INLINE_CACHE_TIME", 60, 0, 300)
+
+# ---------------------------------------------------------------------------
+# BROADCAST SETTINGS
+# ---------------------------------------------------------------------------
+ENABLE_BROADCAST = env_bool("ENABLE_BROADCAST", "true")
+BROADCAST_WORKERS = env_int("BROADCAST_WORKERS", 20, 1, 50)
+BROADCAST_DELAY = env_float("BROADCAST_DELAY", 0.05, 0.0, 5.0)
+BROADCAST_MAX_RETRY = env_int("BROADCAST_MAX_RETRY", 3, 1, 10)
+ENABLE_BROADCAST_LOG = env_bool("ENABLE_BROADCAST_LOG", "true")
+
 # Daily claim limit uses Myanmar/Yangon date.
 CLAIM_DAILY_LIMIT = int(os.getenv("CLAIM_DAILY_LIMIT", "25") or 25)
 CLAIM_TIMEZONE = os.getenv("CLAIM_TIMEZONE", "Asia/Yangon").strip() or "Asia/Yangon"
