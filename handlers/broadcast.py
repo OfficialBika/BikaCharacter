@@ -311,7 +311,7 @@ async def broadcast_cmd(
 
         finally:
             _BROADCAST_ACTIVE = False
-_BROADCAST_SEMAPHORE = asyncio.Semaphore(BROADCAST_WORKERS)
+            _BROADCAST_SEMAPHORE = asyncio.Semaphore(BROADCAST_WORKERS)
             _BROADCAST_STOP.clear()
 
 
