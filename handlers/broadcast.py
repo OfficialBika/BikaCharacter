@@ -7,6 +7,13 @@ from telegram import Update
 from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+from config import (
+    ENABLE_BROADCAST,
+    BROADCAST_DELAY,
+    BROADCAST_MAX_RETRY,
+    BROADCAST_WORKERS,
+    ENABLE_BROADCAST_LOG,
+)
 from database.mongodb import get_db
 from utils.permissions import is_owner
 from utils.text import escape_html, utcnow
@@ -15,6 +22,7 @@ from utils.text import escape_html, utcnow
 _BROADCAST_LOCK = asyncio.Lock()
 _BROADCAST_STOP = asyncio.Event()
 _BROADCAST_ACTIVE = False
+_BROADCAST_SEMAPHORE = asyncio.Semaphore(BROADCAST_WORKERS)
 
 
 def _flag_set(args: list[str]) -> set[str]:
@@ -60,20 +68,21 @@ async def _deliver(
     target_id: int,
     copy_mode: bool,
 ) -> None:
-    if copy_mode:
-        await context.bot.copy_message(
+    async with _BROADCAST_SEMAPHORE:
+        if copy_mode:
+            await context.bot.copy_message(
+                chat_id=int(target_id),
+                from_chat_id=int(source.chat_id),
+                message_id=int(source.message_id),
+                reply_markup=source.reply_markup,
+            )
+            return
+
+        await context.bot.forward_message(
             chat_id=int(target_id),
             from_chat_id=int(source.chat_id),
             message_id=int(source.message_id),
-            reply_markup=source.reply_markup,
         )
-        return
-
-    await context.bot.forward_message(
-        chat_id=int(target_id),
-        from_chat_id=int(source.chat_id),
-        message_id=int(source.message_id),
-    )
 
 
 def _status_text(
@@ -107,6 +116,13 @@ async def broadcast_cmd(
 
     if not user or not msg or not is_owner(user):
         return
+
+    if not ENABLE_BROADCAST:
+        await msg.reply_text(
+            "⚠️ Broadcast system is currently disabled."
+        )
+        return
+
 
     if not msg.reply_to_message:
         await msg.reply_text(
@@ -184,7 +200,7 @@ async def broadcast_cmd(
                 delivered = False
                 retry_attempts = 0
 
-                while not delivered and retry_attempts < 3:
+                while not delivered and retry_attempts < BROADCAST_MAX_RETRY:
                     try:
                         await _deliver(
                             context=context,
@@ -224,7 +240,7 @@ async def broadcast_cmd(
                     failed += 1
 
                 # Gentle pacing; RetryAfter remains authoritative.
-                await asyncio.sleep(0.08)
+                await asyncio.sleep(BROADCAST_DELAY)
 
                 if processed % 25 == 0 or processed == len(targets):
                     try:
@@ -295,6 +311,7 @@ async def broadcast_cmd(
 
         finally:
             _BROADCAST_ACTIVE = False
+_BROADCAST_SEMAPHORE = asyncio.Semaphore(BROADCAST_WORKERS)
             _BROADCAST_STOP.clear()
 
 
@@ -307,6 +324,13 @@ async def stop_broadcast_cmd(
 
     if not user or not msg or not is_owner(user):
         return
+
+    if not ENABLE_BROADCAST:
+        await msg.reply_text(
+            "⚠️ Broadcast system is currently disabled."
+        )
+        return
+
 
     if not _BROADCAST_ACTIVE:
         await msg.reply_text("ℹ️ No broadcast is currently running.")
