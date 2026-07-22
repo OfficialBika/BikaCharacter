@@ -6,7 +6,11 @@ from telegram import Update
 from telegram.constants import ChatMemberStatus
 from telegram.ext import ContextTypes
 
-from config import OWNER_ID, OWNER_USERNAME
+from config import (
+    OWNER_ID,
+    OWNER_USERNAME,
+    ADDER_GROUP_IDS,
+)
 
 
 def _normalize_username(value: str | None) -> str:
