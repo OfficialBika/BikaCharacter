@@ -19,8 +19,11 @@ LIMITED_RARITY_NAME = getattr(config, "LIMITED_RARITY_NAME", "Limited")
 # Adder Group ထဲကနေ /add သုံးချင်တဲ့ group ID.
 # config.py ထဲမှာ ADDER_GROUP_ID ရှိရင် အဲဒါကိုသုံးမယ်။
 # မရှိရင် default group ID ကိုသုံးမယ်။
-ADDER_GROUP_ID = int(getattr(config, "ADDER_GROUP_ID", -1003983636133) or -1003983636133)
-
+ADDER_GROUP_IDS = getattr(
+    config,
+    "ADDER_GROUP_IDS",
+    [-1003983636133]
+)
 SETTINGS_ID = "config"
 CARD_COUNTER_ID = "photo_card_id"
 CARD_RESERVATIONS_COLLECTION = "card_id_reservations"
@@ -59,7 +62,10 @@ def is_allowed_add_chat(update: Update) -> bool:
         return False
 
     # သတ်မှတ်ထားတဲ့ Adder Group ထဲမှာ add ခွင့်ပြု
-    return int(chat.id) == int(ADDER_GROUP_ID)
+    return int(chat.id) in {
+    int(x)
+    for x in ADDER_GROUP_IDS
+    }
 
 
 async def is_allowed_adder(user) -> bool:
