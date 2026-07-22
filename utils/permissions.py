@@ -62,6 +62,12 @@ def is_owner(user_or_id: Any = None, username: str | None = None) -> bool:
 
     return False
 
+def is_adder_group(update: Update) -> bool:
+    if not update.effective_chat:
+        return False
+
+    return int(update.effective_chat.id) in ADDER_GROUP_IDS
+
 
 def is_global_admin(user_or_id: Any = None, username: str | None = None) -> bool:
     # Global bot-management permissions are owner-only.
