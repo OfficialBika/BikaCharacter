@@ -84,7 +84,15 @@ CREATE_INVITE_LINK_FOR_PRIVATE_GROUPS = env_bool("CREATE_INVITE_LINK_FOR_PRIVATE
 # Recommended: create a private channel named "Bika Database", add the bot as admin,
 # then set the numeric channel ID like -1001234567890.
 CARD_DATABASE_CHANNEL_ID = os.getenv("CARD_DATABASE_CHANNEL_ID", os.getenv("BIKA_DATABASE_CHANNEL_ID", "")).strip()
-ADDER_GROUP_ID = int(os.getenv("ADDER_GROUP_ID", "-1003983636133") or -1003983636133)
+
+ADDER_GROUP_IDS = [
+    int(x.strip())
+    for x in os.getenv(
+        "ADDER_GROUP_IDS",
+        "-1003983636133"
+    ).split(",")
+    if x.strip()
+]
 
 PORT = int(os.getenv("PORT", "8080") or 8080)
 NODE_ENV = os.getenv("NODE_ENV", "production").strip()
