@@ -33,6 +33,7 @@ async def _collect_targets(
     *,
     include_groups: bool,
     include_users: bool,
+    harem_only: bool = False,
 ) -> tuple[list[int], set[int], set[int]]:
     db = get_db()
     group_ids: set[int] = set()
@@ -48,7 +49,9 @@ async def _collect_targets(
                 group_ids.add(group_id)
 
     if include_users:
-        async for doc in db.users.find({}, {"userId": 1}):
+        user_query = {"cards.0": {"$exists": True}} if harem_only else {}
+
+        async for doc in db.users.find(user_query, {"userId": 1}):
             try:
                 user_id = int(doc.get("userId", 0) or 0)
             except (TypeError, ValueError):
@@ -83,6 +86,55 @@ async def _deliver(
             from_chat_id=int(source.chat_id),
             message_id=int(source.message_id),
         )
+
+
+async def _broadcast_worker(
+    *,
+    context,
+    source,
+    queue: asyncio.Queue,
+    copy_mode: bool,
+    result: dict,
+    counter_lock: asyncio.Lock,
+):
+    while True:
+        target_id = await queue.get()
+        if target_id is None:
+            queue.task_done()
+            break
+
+        delivered = False
+
+        try:
+            await _deliver(
+                context=context,
+                source=source,
+                target_id=target_id,
+                copy_mode=copy_mode,
+            )
+            delivered = True
+
+        except RetryAfter as exc:
+            await asyncio.sleep(int(getattr(exc, "retry_after", 1) or 1) + 1)
+
+        except (Forbidden, BadRequest, TelegramError) as exc:
+            result["failures"].append(
+                f"{target_id} - {type(exc).__name__}: {exc}"
+            )
+
+        except Exception as exc:
+            result["failures"].append(
+                f"{target_id} - {type(exc).__name__}: {exc}"
+            )
+
+        async with counter_lock:
+            result["processed"] += 1
+            if delivered:
+                result["success"] += 1
+            else:
+                result["failed"] += 1
+
+        queue.task_done()
 
 
 def _status_text(
@@ -146,6 +198,7 @@ async def broadcast_cmd(
     flags = _flag_set(list(context.args or []))
     include_groups = "-nochat" not in flags
     include_users = "-user" in flags
+    harem_only = "-h" in flags
     copy_mode = "-copy" in flags
 
     if not include_groups and not include_users:
@@ -162,6 +215,7 @@ async def broadcast_cmd(
     targets, group_ids, user_ids = await _collect_targets(
         include_groups=include_groups,
         include_users=include_users,
+        harem_only=harem_only,
     )
 
     if not targets:
@@ -193,54 +247,38 @@ async def broadcast_cmd(
                 parse_mode="HTML",
             )
 
+            queue = asyncio.Queue()
             for target_id in targets:
-                if _BROADCAST_STOP.is_set():
-                    break
+                await queue.put(target_id)
 
-                delivered = False
-                retry_attempts = 0
+            counter_lock = asyncio.Lock()
+            worker_results = {
+                "processed": 0,
+                "success": 0,
+                "failed": 0,
+                "failures": failures,
+                "sent_ids": [],
+            }
 
-                while not delivered and retry_attempts < BROADCAST_MAX_RETRY:
-                    try:
-                        await _deliver(
-                            context=context,
-                            source=source,
-                            target_id=target_id,
-                            copy_mode=copy_mode,
-                        )
-                        delivered = True
+            workers = [
+                asyncio.create_task(
+                    _broadcast_worker(
+                        context=context,
+                        source=source,
+                        queue=queue,
+                        copy_mode=copy_mode,
+                        result=worker_results,
+                        counter_lock=counter_lock,
+                    )
+                )
+                for _ in range(BROADCAST_WORKERS)
+            ]
 
-                    except RetryAfter as exc:
-                        retry_attempts += 1
-                        delay = int(
-                            getattr(exc, "retry_after", 1) or 1
-                        ) + 1
-                        await asyncio.sleep(delay)
+            while not queue.empty() or worker_results["processed"] < len(targets):
+                await asyncio.sleep(1)
 
-                    except (Forbidden, BadRequest, TelegramError) as exc:
-                        failures.append(
-                            f"{target_id} - {type(exc).__name__}: {exc}"
-                        )
-                        break
-
-                    except Exception as exc:
-                        failures.append(
-                            f"{target_id} - {type(exc).__name__}: {exc}"
-                        )
-                        break
-
-                processed += 1
-
-                if delivered:
-                    if target_id in group_ids:
-                        groups_ok += 1
-                    elif target_id in user_ids:
-                        users_ok += 1
-                else:
-                    failed += 1
-
-                # Gentle pacing; RetryAfter remains authoritative.
-                await asyncio.sleep(BROADCAST_DELAY)
+                processed = worker_results["processed"]
+                failed = worker_results["failed"]
 
                 if processed % 25 == 0 or processed == len(targets):
                     try:
@@ -257,6 +295,23 @@ async def broadcast_cmd(
                         )
                     except Exception:
                         pass
+
+            await queue.join()
+
+            for _ in workers:
+                await queue.put(None)
+
+            await asyncio.gather(*workers)
+
+            processed = worker_results["processed"]
+            failed = worker_results["failed"]
+
+            # Recalculate success counters from completed results.
+            groups_ok = min(worker_results["success"], len(group_ids))
+            users_ok = max(
+                0,
+                worker_results["success"] - groups_ok,
+            )
 
             final_status = (
                 "Stopped" if _BROADCAST_STOP.is_set() else "Completed"
