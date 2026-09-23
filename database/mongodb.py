@@ -23,7 +23,7 @@ async def init_db() -> None:
     if not MONGODB_URI:
         raise RuntimeError("Missing MONGODB_URI in .env")
 
-    _client = AsyncIOMotorClient(MONGODB_URI)
+    _client = AsyncIOMotorClient(\n        MONGODB_URI,\n        compressors="zstd,zlib",\n    )
     _db = _client[DB_NAME]
     await _db.command("ping")
     await ensure_indexes()
