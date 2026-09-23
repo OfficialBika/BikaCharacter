@@ -54,7 +54,7 @@ async def _reply_card_media(message, card: dict, caption: str, reply_markup=None
 async def fav_with_args(update: Update, context: ContextTypes.DEFAULT_TYPE, args: list[str]) -> None:
     if await should_ignore_update(update):
         return
-    user_doc = await ensure_user(update.effective_user)
+    user_doc = await ensure_user(update.effective_user, include_cards=True)
     if not args:
         fav_id = str(user_doc.get("favoriteCardId", ""))
         card = next((c for c in user_doc.get("cards", []) if str(c.get("cardId")) == fav_id), None)
