@@ -239,9 +239,11 @@ async def transfer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     if reply_user and int(reply_user.id) == int(new_id):
-        target = await ensure_user(reply_user)
+        await ensure_user(reply_user)
+        target = await db.users.find_one({"userId": int(reply_user.id)}, {"_id": 0})
     else:
-        target = await ensure_user_by_id(int(new_id))
+        await ensure_user_by_id(int(new_id))
+        target = await db.users.find_one({"userId": int(new_id)}, {"_id": 0})
 
     source_cards = list(source.get("cards", []))
     target_cards = list((target or {}).get("cards", []))
