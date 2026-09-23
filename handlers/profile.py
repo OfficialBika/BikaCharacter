@@ -563,6 +563,12 @@ async def _delete_loading_message(message) -> None:
 
 
 async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show the user's favourite card media with the normal profile text.
+
+    This intentionally avoids generated profile images, avatar downloads, Rich
+    Message image URLs, and the Render /profile-image endpoint. Telegram receives
+    the already stored card file_id directly.
+    """
     if await should_ignore_update(update):
         return
 
@@ -572,234 +578,63 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     try:
         await ensure_user(update.effective_user)
-        user_doc = await get_db().users.find_one({"userId": int(update.effective_user.id)}, {"_id": 0})
+        user_doc = await get_db().users.find_one(
+            {"userId": int(update.effective_user.id)},
+            {"_id": 0},
+        )
         if not user_doc:
             await loading_message.edit_text(
                 "⚠️ Unable to load your profile data."
             )
             return
 
-        cards = list(user_doc.get("cards", []))
-        image_on = profile_image_enabled()
-        table_on = profile_table_enabled()
-        full_name = _full_name(user_doc)
-
-        print(
-            f"PROFILE MODE: image={image_on} table={table_on}",
-            flush=True,
-        )
-
-        # ============================================================
-        # MODE 1: IMAGE TRUE + TABLE TRUE
-        # Keep the complete Rich Message output:
-        # image + profile info + actual rarity table.
-        # ============================================================
-        if image_on and table_on:
-            unique_cards = len(cards)
-            profile_id = await ensure_profile_id(
-                int(update.effective_user.id)
-            )
-            global_rank = await get_global_unique_rank(unique_cards)
-            rank = collector_rank(unique_cards)
-
-            avatar_bytes = await get_profile_avatar_bytes(
-                context,
-                user_doc,
-                update.effective_user,
-            )
-
-            image = render_profile_card(
-                full_name=full_name,
-                profile_id=profile_id,
-                unique_cards=unique_cards,
-                global_rank=global_rank,
-                collector_rank=rank["name"],
-                collector_emoji=rank["emoji"],
-                avatar_bytes=avatar_bytes,
-                next_rank_name=rank["nextName"],
-                next_rank_target=rank["nextTarget"],
-            )
-
-            image_url = make_profile_image_url(image)
-            print(f"PROFILE IMAGE URL: {image_url}", flush=True)
-
-            rich_html = build_profile_rich_html(
-                cards=cards,
-                full_name=full_name,
-                user_id=int(update.effective_user.id),
-                image_url=image_url,
-                include_table=True,
-            )
-
-            # Preferred path: edit the loading message in place.
-            if await edit_loading_to_rich_message(
-                loading_message,
-                context,
-                rich_html,
-            ):
-                return
-
-            # Second Rich Message path: if editing fails, send a real
-            # Rich Message, then remove the temporary loading message.
-            if await send_profile_rich_message(
-                update,
-                context,
-                rich_html,
-            ):
-                await _delete_loading_message(loading_message)
-                return
-
-            # Last-resort fallback only if both Rich Message APIs fail.
-            fallback = build_profile_fallback_caption(
-                cards=cards,
-                full_name=full_name,
-                user_id=int(update.effective_user.id),
-                include_table=True,
-            )
-            await _delete_loading_message(loading_message)
-            await update.effective_message.reply_photo(
-                photo=image,
-                caption=fallback[:1024],
-                parse_mode="HTML",
-            )
-            return
-
-        # ============================================================
-        # MODE 2: IMAGE TRUE + TABLE FALSE
-        # Rich Message with image + compact profile only.
-        # ============================================================
-        if image_on and not table_on:
-            unique_cards = len(cards)
-            profile_id = await ensure_profile_id(
-                int(update.effective_user.id)
-            )
-            global_rank = await get_global_unique_rank(unique_cards)
-            rank = collector_rank(unique_cards)
-
-            avatar_bytes = await get_profile_avatar_bytes(
-                context,
-                user_doc,
-                update.effective_user,
-            )
-
-            image = render_profile_card(
-                full_name=full_name,
-                profile_id=profile_id,
-                unique_cards=unique_cards,
-                global_rank=global_rank,
-                collector_rank=rank["name"],
-                collector_emoji=rank["emoji"],
-                avatar_bytes=avatar_bytes,
-                next_rank_name=rank["nextName"],
-                next_rank_target=rank["nextTarget"],
-            )
-
-            image_url = make_profile_image_url(image)
-            print(f"PROFILE IMAGE URL: {image_url}", flush=True)
-
-            rich_html = build_profile_rich_html(
-                cards=cards,
-                full_name=full_name,
-                user_id=int(update.effective_user.id),
-                image_url=image_url,
-                include_table=False,
-            )
-
-            if await edit_loading_to_rich_message(
-                loading_message,
-                context,
-                rich_html,
-            ):
-                return
-
-            if await send_profile_rich_message(
-                update,
-                context,
-                rich_html,
-            ):
-                await _delete_loading_message(loading_message)
-                return
-
-            fallback = build_profile_fallback_caption(
-                cards=cards,
-                full_name=full_name,
-                user_id=int(update.effective_user.id),
-                include_table=False,
-            )
-            await _delete_loading_message(loading_message)
-            await update.effective_message.reply_photo(
-                photo=image,
-                caption=fallback[:1024],
-                parse_mode="HTML",
-            )
-            return
-
-        # ============================================================
-        # MODE 3: IMAGE FALSE + TABLE TRUE
-        # Rich Message with profile info + actual rarity table.
-        # No renderer, avatar download, public image URL, or image cache.
-        # ============================================================
-        if not image_on and table_on:
-            rich_html = build_profile_rich_html(
-                cards=cards,
-                full_name=full_name,
-                user_id=int(update.effective_user.id),
-                image_url=None,
-                include_table=True,
-            )
-
-            if await edit_loading_to_rich_message(
-                loading_message,
-                context,
-                rich_html,
-            ):
-                return
-
-            if await send_profile_rich_message(
-                update,
-                context,
-                rich_html,
-            ):
-                await _delete_loading_message(loading_message)
-                return
-
-            fallback = build_profile_fallback_caption(
-                cards=cards,
-                full_name=full_name,
-                user_id=int(update.effective_user.id),
-                include_table=True,
-            )
-            await loading_message.edit_text(
-                fallback,
-                parse_mode="HTML",
-            )
-            return
-
-        # ============================================================
-        # MODE 4: IMAGE FALSE + TABLE FALSE
-        # Restore the original normal profile flow.
-        # No Rich Message API and no generated image pipeline.
-        # ============================================================
         total_photo_count = await get_db().photos.count_documents({})
-        legacy_text = build_public_profile_text(
+        profile_text = build_public_profile_text(
             user_doc,
             total_photo_count,
         )
-        cover = await _best_profile_cover(user_doc)
 
-        if not cover or not str(cover.get("fileId") or ""):
-            await loading_message.edit_text(
-                legacy_text,
-                parse_mode="HTML",
+        # Profile cover is strictly the user's favourite card. Do not silently
+        # download Telegram avatars or fall back to another owned card.
+        fav_id = str(user_doc.get("favoriteCardId", "") or "")
+        cover = None
+        if fav_id:
+            cover = next(
+                (
+                    card for card in user_doc.get("cards", [])
+                    if str(card.get("cardId", "")) == fav_id
+                ),
+                None,
             )
-            return
+            if cover:
+                merged = dict(cover)
+                card_doc = await get_photo_by_card_id(fav_id)
+                if card_doc:
+                    for key in (
+                        "fileId",
+                        "fileUniqueId",
+                        "mediaType",
+                        "mimeType",
+                        "fileName",
+                    ):
+                        value = card_doc.get(key)
+                        if value:
+                            merged[key] = value
+                cover = merged
 
         await _delete_loading_message(loading_message)
-        await reply_public_profile_media(
-            update.effective_message,
-            cover,
-            legacy_text,
-        )
+
+        if cover and str(cover.get("fileId") or ""):
+            await reply_public_profile_media(
+                update.effective_message,
+                cover,
+                profile_text,
+            )
+        else:
+            await update.effective_message.reply_text(
+                profile_text,
+                parse_mode="HTML",
+            )
 
     except Exception:
         try:
@@ -810,7 +645,6 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             pass
         raise
 
-
 def register_profile_handlers(app: Application) -> None:
-    app.add_handler(CommandHandler("profile", profile_cmd))
-    app.add_handler(MessageHandler(filters.Regex(r"^\.profile$"), profile_cmd))
+    app.add_handler(CommandHandler("bprofile", profile_cmd))
+    app.add_handler(MessageHandler(filters.Regex(r"^\.bprofile$"), profile_cmd))
