@@ -14,11 +14,30 @@ from utils.rarity import get_rarity_exp
 from utils.text import safe_chat_title, utcnow
 
 
-async def ensure_user(tg_user: User | None) -> Optional[dict]:
+async def ensure_user(
+    tg_user: User | None,
+    *,
+    include_cards: bool = False,
+) -> Optional[dict]:
+    """Create/update a user without returning the large cards array by default."""
     if not tg_user or not tg_user.id:
         return None
     db = get_db()
     now = utcnow()
+    projection = {
+        "_id": 0,
+        "userId": 1,
+        "username": 1,
+        "firstName": 1,
+        "lastName": 1,
+        "favoriteCardId": 1,
+        "exp": 1,
+        "haremView": 1,
+        "updatedAt": 1,
+    }
+    if include_cards:
+        projection["cards"] = 1
+
     return await db.users.find_one_and_update(
         {"userId": int(tg_user.id)},
         {
@@ -36,41 +55,31 @@ async def ensure_user(tg_user: User | None) -> Optional[dict]:
                 "createdAt": now,
             },
         },
-        upsert=True,
-        return_document=ReturnDocument.AFTER,
-    )
-
-
-async def ensure_user_by_id(user_id: int, username: str = "", first_name: str = "", last_name: str = "") -> dict:
-    db = get_db()
-    now = utcnow()
-    return await db.users.find_one_and_update(
-        {"userId": int(user_id)},
-        {
-            "$set": {
-                "username": username or "",
-                "firstName": first_name or "",
-                "lastName": last_name or "",
-                "updatedAt": now,
-            },
-            "$setOnInsert": {
-                "exp": 0,
-                "favoriteCardId": "",
-                "haremView": "default",
-                "cards": [],
-                "createdAt": now,
-            },
-        },
+        projection=projection,
         upsert=True,
         return_document=ReturnDocument.AFTER,
     )
 
 
 async def ensure_group(chat: Chat | None) -> Optional[dict]:
+    """Create/update a group and return only fields used by hot-path callers."""
     if not chat or not chat.id:
         return None
     db = get_db()
     now = utcnow()
+    projection = {
+        "_id": 0,
+        "groupId": 1,
+        "title": 1,
+        "username": 1,
+        "changeTime": 1,
+        "activeDrop": 1,
+        "dropPaused": 1,
+        "dropPausedReason": 1,
+        "checkgpApproved": 1,
+        "checkgpPassed": 1,
+        "checkgpMinMembers": 1,
+    }
     return await db.groups.find_one_and_update(
         {"groupId": int(chat.id)},
         {
@@ -80,8 +89,6 @@ async def ensure_group(chat: Chat | None) -> Optional[dict]:
                 "updatedAt": now,
             },
             "$setOnInsert": {
-                # Approve system removed: every group can use the bot immediately.
-                # These legacy fields are kept only for old database compatibility.
                 "isApproved": True,
                 "approvedBy": 0,
                 "approvedAt": None,
@@ -94,18 +101,17 @@ async def ensure_group(chat: Chat | None) -> Optional[dict]:
                 "createdAt": now,
             },
         },
+        projection=projection,
         upsert=True,
         return_document=ReturnDocument.AFTER,
     )
 
 
-async def is_approved_group(chat_id: int) -> bool:
-    """Legacy compatibility helper. Approve system is removed; all groups are allowed."""
-    return True
-
-
 async def get_user_doc(user_id: int) -> Optional[dict]:
-    return await get_db().users.find_one({"userId": int(user_id)})
+    return await get_db().users.find_one(
+        {"userId": int(user_id)},
+        {"_id": 0},
+    )
 
 
 async def get_photo_by_card_id(card_id: str) -> Optional[dict]:
