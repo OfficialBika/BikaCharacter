@@ -628,15 +628,15 @@ async def process_claim_in_background(
         await edit_claim_progress_message(progress_message, "⏳")
 
         # Everything below is intentionally after the immediate emoji response.
-        user_doc = await ensure_user(user) or {}
-        existing_card = next(
-            (
-                c
-                for c in user_doc.get("cards", [])
-                if str(c.get("cardId")) == card_id
-            ),
-            None,
+        # Only fetch the one claimed card instead of the user's entire
+        # cards array. This preserves duplicate-claim accounting without the
+        # large MongoDB response that the lean user projection intentionally avoids.
+        existing_card_doc = await get_db().users.find_one(
+            {"userId": int(user.id), "cards.cardId": card_id},
+            {"_id": 0, "cards.$": 1},
         )
+        existing_cards = (existing_card_doc or {}).get("cards") or []
+        existing_card = existing_cards[0] if existing_cards else None
         before_card_count = int((existing_card or {}).get("count", 0) or 0)
 
         date_key = yangon_date_key()
