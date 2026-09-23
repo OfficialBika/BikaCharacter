@@ -70,7 +70,8 @@ async def _resolve_target(
         tg_user = msg.reply_to_message.from_user
         if tg_user.is_bot:
             return None
-        return await ensure_user(tg_user)
+        await ensure_user(tg_user)
+        return await db.users.find_one({"userId": int(tg_user.id)}, {"_id": 0})
 
     raw = str(token or "").strip()
     if not raw:
