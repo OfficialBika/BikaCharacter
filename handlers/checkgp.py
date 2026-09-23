@@ -169,11 +169,17 @@ async def check_group_requirements_on_message(update: Update, context: ContextTy
     if not _is_group_chat(chat):
         return
 
-    group = await ensure_group(chat)
+    # This handler runs for every group message. Do not call ensure_group()
+    # here because that helper performs a write and can return drop state.
+    # A tiny read is enough to decide whether the one-time membership check
+    # has already passed.
+    group = await get_db().groups.find_one(
+        {"groupId": int(chat.id)},
+        {"_id": 0, "checkgpPassed": 1, "checkgpMinMembers": 1},
+    )
     min_saved = int((group or {}).get("checkgpMinMembers", 0) or 0)
     already_passed = bool((group or {}).get("checkgpPassed") is True)
 
-    # Already checked with the current 40-member rule.
     if already_passed and min_saved >= MIN_GROUP_MEMBERS:
         return
 
