@@ -60,7 +60,10 @@ async def is_bot_muted(group_id: int, user_id: int) -> bool:
     if await is_free_user(group_id, user_id):
         return False
 
-    mute = await get_db().bot_mutes.find_one({"groupId": int(group_id), "userId": int(user_id)})
+    mute = await get_db().bot_mutes.find_one(
+        {"groupId": int(group_id), "userId": int(user_id)},
+        {"_id": 1, "mutedUntil": 1},
+    )
     if not mute:
         return False
 
