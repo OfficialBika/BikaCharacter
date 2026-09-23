@@ -257,7 +257,10 @@ async def add_card_to_user_id(user_id: int, card_doc: dict, qty: int = 1) -> dic
     card = public_card_snapshot(card_doc, qty)
     now = utcnow()
 
-    user = await db.users.find_one({"userId": int(user_id), "cards.cardId": card_id})
+    user = await db.users.find_one(
+        {"userId": int(user_id), "cards.cardId": card_id},
+        {"_id": 0, "cards.$": 1},
+    )
     exp_inc = get_rarity_exp(card.get("rarity")) * qty
     if user:
         await db.users.update_one(
@@ -270,7 +273,10 @@ async def add_card_to_user_id(user_id: int, card_doc: dict, qty: int = 1) -> dic
             {"$push": {"cards": card}, "$inc": {"exp": exp_inc}, "$set": {"updatedAt": now}},
             upsert=False,
         )
-    return await db.users.find_one({"userId": int(user_id)})
+    return await db.users.find_one(
+        {"userId": int(user_id)},
+        {"_id": 0, "userId": 1, "exp": 1},
+    )
 
 
 async def add_card_to_user(tg_user: User, card_doc: dict, qty: int = 1) -> dict:
