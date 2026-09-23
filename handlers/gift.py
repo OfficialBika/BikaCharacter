@@ -316,7 +316,7 @@ async def gift_with_args(
     if len(args) > 1 and args[1].isdigit():
         qty = max(1, int(args[1]))
 
-    sender_doc = await ensure_user(sender)
+    sender_doc = await ensure_user(sender, include_cards=True)
     await ensure_user(receiver)
 
     card = next(
