@@ -61,6 +61,48 @@ async def ensure_user(
     )
 
 
+async def ensure_user_by_id(
+    user_id: int,
+    username: str = "",
+    first_name: str = "",
+    last_name: str = "",
+) -> dict:
+    """Create/update a user by numeric ID without returning the cards array."""
+    db = get_db()
+    now = utcnow()
+    return await db.users.find_one_and_update(
+        {"userId": int(user_id)},
+        {
+            "$set": {
+                "username": username or "",
+                "firstName": first_name or "",
+                "lastName": last_name or "",
+                "updatedAt": now,
+            },
+            "$setOnInsert": {
+                "exp": 0,
+                "favoriteCardId": "",
+                "haremView": "default",
+                "cards": [],
+                "createdAt": now,
+            },
+        },
+        projection={
+            "_id": 0,
+            "userId": 1,
+            "username": 1,
+            "firstName": 1,
+            "lastName": 1,
+            "favoriteCardId": 1,
+            "exp": 1,
+            "haremView": 1,
+            "updatedAt": 1,
+        },
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+
+
 async def ensure_group(chat: Chat | None) -> Optional[dict]:
     """Create/update a group and return only fields used by hot-path callers."""
     if not chat or not chat.id:
