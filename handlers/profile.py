@@ -571,7 +571,8 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
     try:
-        user_doc = await ensure_user(update.effective_user)
+        await ensure_user(update.effective_user)
+        user_doc = await get_db().users.find_one({"userId": int(update.effective_user.id)}, {"_id": 0})
         if not user_doc:
             await loading_message.edit_text(
                 "⚠️ Unable to load your profile data."
