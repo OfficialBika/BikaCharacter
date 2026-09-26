@@ -14,7 +14,7 @@ from utils.cooldown import should_ignore_update
 from utils.db_helpers import ensure_user, get_photo_by_card_id, rarity_counts
 from utils.profile_renderer import render_profile_card, normalize_name_for_render
 from utils.rarity import get_rarity_emoji, get_rarity_button_emoji
-from utils.text import escape_html, level_from_exp, progress_bar
+from utils.text import escape_html
 from web.app import store_profile_image
 
 
@@ -425,7 +425,7 @@ def build_public_profile_text(user_doc: dict, total_photo_count: int) -> str:
         if int(total_photo_count or 0) > 0
         else 0
     )
-    level = level_from_exp(user_doc.get("exp", 0))
+    collector = collector_rank(unique_owned)
     counts = rarity_counts(cards)
 
     username = _full_name(user_doc)
@@ -458,9 +458,8 @@ def build_public_profile_text(user_doc: dict, total_photo_count: int) -> str:
         f"├ ᴜɴɪǫᴜᴇ : <b>{unique_owned}</b>/<b>{int(total_photo_count or 0)}</b>",
         f"└ ʜᴀʀᴇᴍ : <b>{harem_percent:.3f}%</b>",
         "",
-        "⚡ <b>𝐋𝐄𝐕𝐄𝐋</b>",
-        f"├ ʟᴠʟ : <b>{level['level']}</b>",
-        f"└ ᴘʀᴏɢʀᴇꜱꜱ : {progress_bar(level['percent'])}",
+        "🏆 <b>𝐂𝐎𝐋𝐋𝐄𝐂𝐓𝐎𝐑 𝐋𝐄𝐕𝐄𝐋</b>",
+        f"└ {collector['emoji']} <b>{escape_html(collector['name'])}</b>",
         "",
         "💖 <b>𝐅𝐀𝐕𝐎𝐔𝐑𝐈𝐓𝐄</b>",
         f"└ {fav_text}",
