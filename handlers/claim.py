@@ -13,6 +13,7 @@ from telegram.ext import Application, CallbackQueryHandler, ContextTypes, Messag
 
 from config import BOT_USERNAME, CLAIM_CAPTCHA_SECONDS, CLAIM_COMMAND, CLAIM_DAILY_LIMIT, CLAIM_PREFIX_MIN_LENGTH
 from database.mongodb import get_db
+from database import sqlite_hot
 from utils.cooldown import should_ignore_update
 from utils.claim_stats import get_daily_claim_count, log_claim_event, release_daily_claim, reserve_daily_claim, yangon_date_key
 from utils.db_helpers import add_card_to_user, ensure_user, get_photo_by_card_id
@@ -150,7 +151,7 @@ def captcha_keyboard(chat_id: int, user_id: int, nonce: str, options: list[int])
 
 
 async def mark_captcha_lost(chat_id: int, nonce: str, reason: str) -> dict | None:
-    return await get_db().groups.find_one_and_update(
+    updated = await get_db().groups.find_one_and_update(
         {
             "groupId": int(chat_id),
             "activeDrop.captcha.nonce": str(nonce),
@@ -169,6 +170,9 @@ async def mark_captcha_lost(chat_id: int, nonce: str, reason: str) -> dict | Non
         },
         return_document=ReturnDocument.AFTER,
     )
+    if updated:
+        await sqlite_hot.set_group_from_mongo(updated)
+    return updated
 
 
 async def captcha_timeout_task(bot, chat_id: int, nonce: str, seconds: int) -> None:
@@ -281,10 +285,13 @@ async def start_high_rarity_captcha(update: Update, context: ContextTypes.DEFAUL
         text,
         reply_markup=captcha_keyboard(int(chat.id), int(user.id), captcha["nonce"], captcha["options"]),
     )
-    await get_db().groups.update_one(
+    updated = await get_db().groups.find_one_and_update(
         {"groupId": int(chat.id), "activeDrop.captcha.nonce": captcha["nonce"]},
         {"$set": {"activeDrop.captcha.messageId": int(sent.message_id), "updatedAt": utcnow()}},
+        return_document=ReturnDocument.AFTER,
     )
+    if updated:
+        await sqlite_hot.set_group_from_mongo(updated)
     context.application.create_task(captcha_timeout_task(context.bot, int(chat.id), captcha["nonce"], CLAIM_CAPTCHA_SECONDS))
 
 
@@ -832,6 +839,12 @@ async def process_claim_in_background(
             )
 
     finally:
+        try:
+            latest_group = await get_db().groups.find_one({"groupId": chat_id})
+            if latest_group:
+                await sqlite_hot.set_group_from_mongo(latest_group)
+        except Exception as sync_exc:
+            print("CLAIM SQLITE SYNC ERROR:", repr(sync_exc), flush=True)
         await clear_fast_claim_reservation(chat_id, claim_token)
 
 
@@ -1019,6 +1032,8 @@ async def captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await release_daily_claim(query.from_user.id, reservation.get("date"))
         await query.answer(t("card_no_longer_available"), show_alert=True)
         return
+
+    await sqlite_hot.set_group_from_mongo(updated)
 
     photo_doc = await get_photo_by_card_id(active.get("cardId"))
     if not photo_doc:
