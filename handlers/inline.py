@@ -142,47 +142,73 @@ async def _hydrate_user_cards(cards: list[dict]) -> list[dict]:
 
 
 async def _fetch_inline_photos(raw_q: str, offset: int) -> tuple[list[dict], bool]:
-    """Search both normal photos and owner-only limited_cards for inline display.
+    """Fetch only the small page window needed by Telegram.
 
-    limited_cards are never used by auto-drop; this is display/search only.
+    The old implementation loaded every matching card from both collections into
+    Render memory before slicing. This version pushes filtering, sorting and
+    limiting into MongoDB and never downloads the whole catalog for one query.
     """
     db = get_db()
     search = normalized_search_name(raw_q) if raw_q else ""
     raw_id = str(raw_q or "").strip()
+    page_size = max(1, int(INLINE_PAGE_SIZE))
+    safe_offset = max(0, int(offset or 0))
+    # Offset pagination is retained for Telegram compatibility, but the database
+    # scan is bounded to the requested window rather than the entire collection.
+    window_limit = safe_offset + page_size + 1
 
     projection = _base_projection()
-    query: dict = {"fileId": {"$exists": True, "$ne": ""}}
+    base_query: dict = {"fileId": {"$exists": True, "$ne": ""}}
+
     if search:
-        contains_regex = re.compile(re.escape(search), re.IGNORECASE)
-        query = {
-            "$or": [
-                {"normalizedName": {"$regex": contains_regex}},
-                {"cardId": raw_id},
-            ],
-            "fileId": {"$exists": True, "$ne": ""},
+        escaped = re.escape(search)
+        # Prefix search is index-friendly and covers normal character-name usage.
+        # Card IDs remain exact-match searchable.
+        base_query = {
+            "$and": [
+                {"fileId": {"$exists": True, "$ne": ""}},
+                {
+                    "$or": [
+                        {"normalizedName": {"$regex": f"^{escaped}", "$options": "i"}},
+                        {"cardId": raw_id},
+                    ]
+                },
+            ]
         }
 
     docs: list[dict] = []
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
-        part = await db[collection_name].find(query, projection).to_list(None)
+        cursor = (
+            db[collection_name]
+            .find(base_query, projection)
+            .sort([("normalizedName", 1), ("cardId", 1)])
+            .limit(window_limit)
+        )
+        part = await cursor.to_list(window_limit)
         for doc in part:
-            doc = dict(doc)
-            doc["_sourceCollection"] = collection_name
-            docs.append(doc)
+            item = dict(doc)
+            item["_sourceCollection"] = collection_name
+            docs.append(item)
 
     if search:
         def rank(card: dict):
-            normalized = str(card.get("normalizedName") or normalized_search_name(card.get("name", "")))
-            exact = 0 if normalized == search or str(card.get("cardId", "")).strip().lower() == raw_id.lower() else 1
+            normalized = str(
+                card.get("normalizedName")
+                or normalized_search_name(card.get("name", ""))
+            )
+            exact = 0 if (
+                normalized == search
+                or str(card.get("cardId", "")).strip().lower() == raw_id.lower()
+            ) else 1
             prefix = 0 if normalized.startswith(search) else 1
             return (exact, prefix, _card_sort_key(card))
         docs.sort(key=rank)
     else:
         docs.sort(key=_card_sort_key)
 
-    chunk = docs[offset: offset + INLINE_PAGE_SIZE + 1]
-    has_more = len(chunk) > INLINE_PAGE_SIZE
-    return chunk[:INLINE_PAGE_SIZE], has_more
+    chunk = docs[safe_offset: safe_offset + page_size + 1]
+    has_more = len(chunk) > page_size
+    return chunk[:page_size], has_more
 
 
 async def _fetch_user_harem_photos(user_id: int, requester_id: int, search_q: str, offset: int) -> tuple[list[dict], bool]:

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 import random
+import time
+from collections import OrderedDict
 from datetime import timedelta
 from typing import Optional
 
@@ -14,12 +17,137 @@ from utils.rarity import get_rarity_exp
 from utils.text import safe_chat_title, utcnow
 
 
-async def ensure_user(tg_user: User | None) -> Optional[dict]:
+# Drop listener metadata is global per user and does not need a Mongo write on
+# every single chat message. Keep it fresh on a bounded TTL cache.
+_USER_TOUCH_TTL_SECONDS = max(
+    30,
+    int(os.getenv("USER_TOUCH_TTL_SECONDS", "300") or 300),
+)
+_USER_TOUCH_CACHE_MAX = max(
+    256,
+    int(os.getenv("USER_TOUCH_CACHE_MAX", "4096") or 4096),
+)
+_user_touch_cache: OrderedDict[int, tuple[float, dict]] = OrderedDict()
+
+
+def _user_touch_cache_put(user_id: int, doc: dict) -> None:
+    key = int(user_id)
+    _user_touch_cache[key] = (
+        time.monotonic() + _USER_TOUCH_TTL_SECONDS,
+        dict(doc or {}),
+    )
+    _user_touch_cache.move_to_end(key)
+    while len(_user_touch_cache) > _USER_TOUCH_CACHE_MAX:
+        _user_touch_cache.popitem(last=False)
+
+
+def _user_touch_cache_get(user_id: int) -> dict | None:
+    key = int(user_id)
+    cached = _user_touch_cache.get(key)
+    if not cached:
+        return None
+
+    expires_mono, doc = cached
+    if expires_mono <= time.monotonic():
+        _user_touch_cache.pop(key, None)
+        return None
+
+    _user_touch_cache.move_to_end(key)
+    return dict(doc)
+
+
+def _invalidate_user_touch_cache(user_id: int) -> None:
+    _user_touch_cache.pop(int(user_id), None)
+
+
+# Group state is read on every incoming group message. A very short cache removes
+# most repeated reads while the atomic messageCount update below still consults
+# MongoDB for the authoritative spawn/lock state.
+_GROUP_HOT_TTL_SECONDS = max(
+    0.5,
+    float(os.getenv("GROUP_HOT_TTL_SECONDS", "1.5") or 1.5),
+)
+_GROUP_HOT_CACHE_MAX = max(
+    128,
+    int(os.getenv("GROUP_HOT_CACHE_MAX", "2048") or 2048),
+)
+_group_hot_cache: OrderedDict[int, tuple[float, dict]] = OrderedDict()
+
+
+def _group_hot_cache_put(group_id: int, doc: dict | None) -> None:
+    if not doc:
+        return
+    key = int(group_id)
+    _group_hot_cache[key] = (
+        time.monotonic() + _GROUP_HOT_TTL_SECONDS,
+        dict(doc),
+    )
+    _group_hot_cache.move_to_end(key)
+    while len(_group_hot_cache) > _GROUP_HOT_CACHE_MAX:
+        _group_hot_cache.popitem(last=False)
+
+
+def _group_hot_cache_get(group_id: int) -> dict | None:
+    key = int(group_id)
+    cached = _group_hot_cache.get(key)
+    if not cached:
+        return None
+
+    expires_mono, doc = cached
+    if expires_mono <= time.monotonic():
+        _group_hot_cache.pop(key, None)
+        return None
+
+    _group_hot_cache.move_to_end(key)
+    return dict(doc)
+
+
+def cache_group_hot(group_doc: dict | None) -> None:
+    if group_doc:
+        _group_hot_cache_put(
+            int(group_doc.get("groupId", 0) or 0),
+            group_doc,
+        )
+
+
+def invalidate_group_hot(group_id: int) -> None:
+    _group_hot_cache.pop(int(group_id), None)
+
+
+async def ensure_user(
+    tg_user: User | None,
+    *,
+    include_cards: bool = False,
+    hot_path: bool = False,
+) -> Optional[dict]:
+    """Create/update a user without returning the large cards array by default."""
     if not tg_user or not tg_user.id:
         return None
     db = get_db()
+
+    if hot_path and not include_cards:
+        cached = _user_touch_cache_get(int(tg_user.id))
+        if cached is not None:
+            return cached
+    else:
+        _invalidate_user_touch_cache(int(tg_user.id))
+
     now = utcnow()
-    return await db.users.find_one_and_update(
+    projection = {
+        "_id": 0,
+        "userId": 1,
+        "username": 1,
+        "firstName": 1,
+        "lastName": 1,
+        "favoriteCardId": 1,
+        "exp": 1,
+        "haremView": 1,
+        "updatedAt": 1,
+    }
+    if include_cards:
+        projection["cards"] = 1
+
+    result = await db.users.find_one_and_update(
         {"userId": int(tg_user.id)},
         {
             "$set": {
@@ -36,12 +164,25 @@ async def ensure_user(tg_user: User | None) -> Optional[dict]:
                 "createdAt": now,
             },
         },
+        projection=projection,
         upsert=True,
         return_document=ReturnDocument.AFTER,
     )
 
+    if hot_path and result:
+        _user_touch_cache_put(int(tg_user.id), result)
 
-async def ensure_user_by_id(user_id: int, username: str = "", first_name: str = "", last_name: str = "") -> dict:
+    return result
+
+
+async def ensure_user_by_id(
+    user_id: int,
+    username: str = "",
+    first_name: str = "",
+    last_name: str = "",
+) -> dict:
+    """Create/update a user by numeric ID without returning the cards array."""
+    _invalidate_user_touch_cache(int(user_id))
     db = get_db()
     now = utcnow()
     return await db.users.find_one_and_update(
@@ -61,17 +202,56 @@ async def ensure_user_by_id(user_id: int, username: str = "", first_name: str = 
                 "createdAt": now,
             },
         },
+        projection={
+            "_id": 0,
+            "userId": 1,
+            "username": 1,
+            "firstName": 1,
+            "lastName": 1,
+            "favoriteCardId": 1,
+            "exp": 1,
+            "haremView": 1,
+            "updatedAt": 1,
+        },
         upsert=True,
         return_document=ReturnDocument.AFTER,
     )
 
 
-async def ensure_group(chat: Chat | None) -> Optional[dict]:
+async def ensure_group(
+    chat: Chat | None,
+    *,
+    hot_path: bool = False,
+) -> Optional[dict]:
+    """Create/update a group and return only fields used by hot-path callers."""
     if not chat or not chat.id:
         return None
     db = get_db()
+
+    if hot_path:
+        cached = _group_hot_cache_get(int(chat.id))
+        if cached is not None:
+            return cached
+    else:
+        invalidate_group_hot(int(chat.id))
+
     now = utcnow()
-    return await db.groups.find_one_and_update(
+    projection = {
+        "_id": 0,
+        "groupId": 1,
+        "title": 1,
+        "username": 1,
+        "changeTime": 1,
+        "messageCount": 1,
+        "totalDrops": 1,
+        "activeDrop": 1,
+        "dropPaused": 1,
+        "dropPausedReason": 1,
+        "checkgpApproved": 1,
+        "checkgpPassed": 1,
+        "checkgpMinMembers": 1,
+    }
+    result = await db.groups.find_one_and_update(
         {"groupId": int(chat.id)},
         {
             "$set": {
@@ -80,8 +260,6 @@ async def ensure_group(chat: Chat | None) -> Optional[dict]:
                 "updatedAt": now,
             },
             "$setOnInsert": {
-                # Approve system removed: every group can use the bot immediately.
-                # These legacy fields are kept only for old database compatibility.
                 "isApproved": True,
                 "approvedBy": 0,
                 "approvedAt": None,
@@ -94,18 +272,42 @@ async def ensure_group(chat: Chat | None) -> Optional[dict]:
                 "createdAt": now,
             },
         },
+        projection=projection,
         upsert=True,
         return_document=ReturnDocument.AFTER,
     )
 
+    if hot_path and result:
+        _group_hot_cache_put(int(chat.id), result)
 
-async def is_approved_group(chat_id: int) -> bool:
-    """Legacy compatibility helper. Approve system is removed; all groups are allowed."""
-    return True
+    return result
 
+
+async def get_group_snapshot(group_id: int) -> Optional[dict]:
+    """Read group hot-state controls without performing a write."""
+    projection = {
+        "_id": 0,
+        "groupId": 1,
+        "changeTime": 1,
+        "messageCount": 1,
+        "totalDrops": 1,
+        "activeDrop": 1,
+        "dropPaused": 1,
+        "dropPausedReason": 1,
+        "checkgpApproved": 1,
+        "checkgpPassed": 1,
+        "checkgpMinMembers": 1,
+    }
+    return await get_db().groups.find_one(
+        {"groupId": int(group_id)},
+        projection,
+    )
 
 async def get_user_doc(user_id: int) -> Optional[dict]:
-    return await get_db().users.find_one({"userId": int(user_id)})
+    return await get_db().users.find_one(
+        {"userId": int(user_id)},
+        {"_id": 0},
+    )
 
 
 async def get_photo_by_card_id(card_id: str) -> Optional[dict]:
@@ -203,26 +405,60 @@ def public_card_snapshot(photo_doc: dict, qty: int = 1) -> dict:
 
 
 async def add_card_to_user_id(user_id: int, card_doc: dict, qty: int = 1) -> dict:
+    """Atomically add a claimed card without duplicate array entries.
+
+    Existing card -> one atomic positional increment.
+    Missing card -> guarded push. If a concurrent claim inserts the card first,
+    the guarded push no-ops and we retry the atomic increment instead.
+    """
     db = get_db()
     qty = max(1, int(qty or 1))
+    user_id = int(user_id)
     card_id = str(card_doc.get("cardId", ""))
     card = public_card_snapshot(card_doc, qty)
-    now = utcnow()
-
-    user = await db.users.find_one({"userId": int(user_id), "cards.cardId": card_id})
     exp_inc = get_rarity_exp(card.get("rarity")) * qty
-    if user:
-        await db.users.update_one(
-            {"userId": int(user_id), "cards.cardId": card_id},
-            {"$inc": {"cards.$.count": qty, "exp": exp_inc}, "$set": {"updatedAt": now}},
+
+    # Fast path: increment an already-owned card atomically.
+    result = await db.users.update_one(
+        {"userId": user_id, "cards.cardId": card_id},
+        {
+            "$inc": {"cards.$.count": qty, "exp": exp_inc},
+            "$set": {"updatedAt": utcnow()},
+        },
+    )
+    if result.modified_count == 1:
+        return await db.users.find_one(
+            {"userId": user_id},
+            {"_id": 0, "userId": 1, "exp": 1},
         )
-    else:
-        await db.users.update_one(
-            {"userId": int(user_id)},
-            {"$push": {"cards": card}, "$inc": {"exp": exp_inc}, "$set": {"updatedAt": now}},
-            upsert=False,
+
+    # First owner: the $ne guard prevents concurrent claims from both pushing
+    # the same cardId into the same user's cards array.
+    result = await db.users.update_one(
+        {"userId": user_id, "cards.cardId": {"$ne": card_id}},
+        {
+            "$push": {"cards": card},
+            "$inc": {"exp": exp_inc},
+            "$set": {"updatedAt": utcnow()},
+        },
+    )
+    if result.modified_count != 1:
+        # Another claim inserted the card between the two paths. Convert this
+        # operation into the same atomic increment instead of pushing a duplicate.
+        result = await db.users.update_one(
+            {"userId": user_id, "cards.cardId": card_id},
+            {
+                "$inc": {"cards.$.count": qty, "exp": exp_inc},
+                "$set": {"updatedAt": utcnow()},
+            },
         )
-    return await db.users.find_one({"userId": int(user_id)})
+        if result.modified_count != 1:
+            raise RuntimeError("Unable to atomically add claimed card.")
+
+    return await db.users.find_one(
+        {"userId": user_id},
+        {"_id": 0, "userId": 1, "exp": 1},
+    )
 
 
 async def add_card_to_user(tg_user: User, card_doc: dict, qty: int = 1) -> dict:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timezone
 
 from telegram import Chat, ChatMemberUpdated, Update
@@ -26,6 +27,27 @@ INACTIVE_STATUSES = {
     ChatMemberStatus.LEFT,
     ChatMemberStatus.BANNED,
 }
+
+# Passed groups are stable for normal message traffic. Cache the one-time
+# membership decision to avoid a Mongo read on every group message.
+_CHECK_CACHE_TTL = 600.0
+_check_cache: dict[int, tuple[float, bool]] = {}
+
+def _cache_passed(group_id: int, passed: bool) -> None:
+    _check_cache[int(group_id)] = (time.monotonic() + _CHECK_CACHE_TTL, bool(passed))
+
+def _cached_passed(group_id: int) -> bool | None:
+    item = _check_cache.get(int(group_id))
+    if not item:
+        return None
+    expires, passed = item
+    if expires <= time.monotonic():
+        _check_cache.pop(int(group_id), None)
+        return None
+    return passed
+
+def _invalidate_check_cache(group_id: int) -> None:
+    _check_cache.pop(int(group_id), None)
 
 
 def _is_group_chat(chat: Chat | None) -> bool:
@@ -119,6 +141,7 @@ async def _check_and_leave_if_needed(
         return False
 
     reason = f"members={member_count}/{MIN_GROUP_MEMBERS}"
+    _cache_passed(int(chat.id), False)
     await _save_check_result(chat, member_count, False, trigger, reason)
 
     try:
@@ -169,12 +192,27 @@ async def check_group_requirements_on_message(update: Update, context: ContextTy
     if not _is_group_chat(chat):
         return
 
-    group = await ensure_group(chat)
+    # This handler runs for every group message. Do not call ensure_group()
+    # here because that helper performs a write and can return drop state.
+    # A tiny read is enough to decide whether the one-time membership check
+    # has already passed.
+    cached = _cached_passed(int(chat.id))
+    if cached is True:
+        return
+    if cached is False:
+        # A failed group is normally left immediately; keep the cache only as
+        # a short-lived guard against repeated expensive checks during races.
+        return
+
+    group = await get_db().groups.find_one(
+        {"groupId": int(chat.id)},
+        {"_id": 0, "checkgpPassed": 1, "checkgpMinMembers": 1},
+    )
     min_saved = int((group or {}).get("checkgpMinMembers", 0) or 0)
     already_passed = bool((group or {}).get("checkgpPassed") is True)
 
-    # Already checked with the current 40-member rule.
     if already_passed and min_saved >= MIN_GROUP_MEMBERS:
+        _cache_passed(int(chat.id), True)
         return
 
     await _check_and_leave_if_needed(context, chat, trigger="group_message")
@@ -224,6 +262,7 @@ async def approve_group_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         # Bot may have already left. Approval is still saved; add the bot again after this.
         pass
 
+    _invalidate_check_cache(int(group_id))
     await get_db().groups.update_one(
         {"groupId": int(group_id)},
         {

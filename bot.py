@@ -25,6 +25,7 @@ from config import (
     WEBHOOK_URL,
 )
 from database.mongodb import close_db, get_db, init_db
+from database import sqlite_hot
 from handlers import register_handlers
 from web.app import create_health_app
 from utils.text import utcnow
@@ -43,9 +44,9 @@ async def register_commands(app: Application) -> None:
     await app.bot.set_my_commands(
         [
             BotCommand("start", "Start the bot"),
-            BotCommand("harem", "Display your harem"),
+            BotCommand("bharem", "Display your harem"),
             BotCommand("search", "Search characters"),
-            BotCommand("profile", "See your profile"),
+            BotCommand("bprofile", "See your profile"),
             BotCommand("fav", "Set or show favourite character"),
             BotCommand("check", "Check character by ID"),
             BotCommand(CLAIM_COMMAND, "Claim spawned character"),
@@ -84,7 +85,13 @@ async def start_web_server(app_bot: Application | None = None) -> web.AppRunner:
             try:
                 data = await request.json()
                 update = Update.de_json(data=data, bot=app_bot.bot)
-                await app_bot.process_update(update)
+                if update is None:
+                    return web.Response(status=400, text="invalid update")
+
+                # Put the update into PTB's managed queue. This keeps Telegram's
+                # webhook request fast while letting Application.stop() drain
+                # queued/in-flight updates cleanly during graceful shutdown.
+                await app_bot.update_queue.put(update)
                 return web.Response(text="ok")
             except Exception as exc:
                 print("WEBHOOK ERROR:", repr(exc))
@@ -180,9 +187,19 @@ async def main() -> None:
         raise RuntimeError("Missing WEBHOOK_URL in Render Environment Variables. Example: https://your-service.onrender.com")
 
     await init_db()
+    await sqlite_hot.init()
+    sqlite_hot.start_flush_loop(get_db)
     await reset_group_state_on_startup()
+    # Startup reset is authoritative in Mongo; never reuse stale local counters.
+    await sqlite_hot.clear_groups()
 
-    app = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).build()
+    using_polling = RUN_MODE.lower() == "polling"
+    app_builder = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True)
+    # Custom aiohttp webhook feeds Application.update_queue directly, matching
+    # PTB's recommended custom-webhook architecture. Polling retains its updater.
+    if not using_polling:
+        app_builder.updater(None)
+    app = app_builder.build()
     register_handlers(app)
     app.add_error_handler(error_handler)
 
@@ -195,7 +212,6 @@ async def main() -> None:
             pass
 
     health_runner: web.AppRunner | None = None
-    using_polling = RUN_MODE.lower() == "polling"
 
     await app.initialize()
     await register_commands(app)
@@ -210,12 +226,22 @@ async def main() -> None:
         await stop_event.wait()
     finally:
         print("Shutting down...")
+        # Stop accepting new webhook requests before draining PTB's update queue.
+        if not using_polling and health_runner is not None:
+            await health_runner.cleanup()
+
         if using_polling and app.updater:
             await app.updater.stop()
+
+        # PTB waits for pending update_queue work and tasks created through
+        # Application.create_task() before returning from stop().
         await app.stop()
         await app.shutdown()
-        if health_runner is not None:
+
+        if using_polling and health_runner is not None:
             await health_runner.cleanup()
+
+        await sqlite_hot.close()
         await close_db()
 
 
