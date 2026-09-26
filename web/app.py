@@ -134,5 +134,13 @@ def create_health_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
-    app.router.add_get("/profile-image/{token}.jpg", profile_image)
+
+    # /bprofile now sends the stored Telegram file_id directly, so this
+    # legacy public image endpoint is opt-in to avoid unnecessary HTTP egress.
+    enabled = str(
+        os.getenv("ENABLE_PROFILE_IMAGE_ENDPOINT", "false") or "false"
+    ).strip().lower()
+    if enabled in {"1", "true", "yes", "on"}:
+        app.router.add_get("/profile-image/{token}.jpg", profile_image)
+
     return app
