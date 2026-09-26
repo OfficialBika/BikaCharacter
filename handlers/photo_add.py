@@ -57,9 +57,9 @@ def is_allowed_add_chat(update: Update) -> bool:
     if not chat:
         return False
 
-    # Bot DM ထဲမှာ add ခွင့်ပြု
+    # Owner/adders may upload cards directly in bot DM.
     if chat.type == "private":
-        return False
+        return True
 
     # သတ်မှတ်ထားတဲ့ Adder Group ထဲမှာ add ခွင့်ပြု
     return int(chat.id) in {
