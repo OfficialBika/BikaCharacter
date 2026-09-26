@@ -85,7 +85,10 @@ async def start_web_server(app_bot: Application | None = None) -> web.AppRunner:
             try:
                 data = await request.json()
                 update = Update.de_json(data=data, bot=app_bot.bot)
-                await app_bot.process_update(update)
+                # Telegram only needs an immediate 2xx acknowledgement. Queue the
+                # update on the running PTB event loop so slow DB/media handlers
+                # cannot hold the webhook HTTP connection open.
+                asyncio.create_task(app_bot.process_update(update))
                 return web.Response(text="ok")
             except Exception as exc:
                 print("WEBHOOK ERROR:", repr(exc))
