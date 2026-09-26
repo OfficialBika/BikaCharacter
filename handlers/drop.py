@@ -811,6 +811,13 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     updated = await db.groups.find_one_and_update(
         query,
         {"$inc": {"messageCount": 1}, "$set": {"updatedAt": now}},
+        projection={
+            "_id": 0,
+            "groupId": 1,
+            "changeTime": 1,
+            "messageCount": 1,
+            "activeDrop": 1,
+        },
         return_document=ReturnDocument.AFTER,
     )
     if not updated:
