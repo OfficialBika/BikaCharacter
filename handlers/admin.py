@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 import time
 from typing import Optional
 
 from telegram import Update
+from pymongo.errors import ConnectionFailure, OperationFailure
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from config import (
@@ -208,6 +210,118 @@ async def clmute_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.effective_message.reply_text(t("clmute_group_cleared", count=result.deleted_count))
 
 
+_TRANSFER_FALLBACK_LOCK = asyncio.Lock()
+
+
+def _transfer_transaction_unsupported(exc: BaseException) -> bool:
+    if isinstance(exc, (ConnectionFailure, OperationFailure)):
+        message = str(exc).lower()
+        return (
+            "transaction numbers are only allowed" in message
+            or "transactions are not supported" in message
+            or "does not support transactions" in message
+            or getattr(exc, "code", None) in {20, 263, 303}
+        )
+    return False
+
+
+async def _run_transfer_transaction(
+    *,
+    old_id: int,
+    new_id: int,
+    owner_id: int,
+) -> dict:
+    """Move a full harem and its audit log atomically."""
+    db = get_db()
+    transfer_id = secrets.token_hex(12)
+
+    async def _txn(session):
+        source = await db.users.find_one(
+            {"userId": int(old_id)},
+            {"_id": 0, "cards": 1, "exp": 1, "favoriteCardId": 1},
+            session=session,
+        )
+        if not source or not source.get("cards"):
+            raise ValueError("Source user has no cards.")
+
+        target = await db.users.find_one(
+            {"userId": int(new_id)},
+            {"_id": 0, "cards": 1, "exp": 1, "favoriteCardId": 1},
+            session=session,
+        )
+
+        source_cards = list(source.get("cards", []))
+        target_cards = list((target or {}).get("cards", []))
+        by_id = {str(c.get("cardId")): dict(c) for c in target_cards}
+
+        for card in source_cards:
+            cid = str(card.get("cardId"))
+            qty = max(1, int(card.get("count", 1)))
+            if cid in by_id:
+                by_id[cid]["count"] = int(by_id[cid].get("count", 0)) + qty
+            else:
+                by_id[cid] = dict(card)
+
+        source_exp = int(source.get("exp", 0) or 0)
+        target_exp = int((target or {}).get("exp", 0) or 0)
+        target_fav = str((target or {}).get("favoriteCardId", "") or "")
+        source_fav = str(source.get("favoriteCardId", "") or "")
+        transferred_ids = {str(c.get("cardId")) for c in source_cards}
+        if not target_fav and source_fav in transferred_ids:
+            target_fav = source_fav
+
+        now = utcnow()
+        await db.users.update_one(
+            {"userId": int(new_id)},
+            {
+                "$set": {
+                    "cards": list(by_id.values()),
+                    "exp": target_exp + source_exp,
+                    "favoriteCardId": target_fav,
+                    "updatedAt": now,
+                },
+                "$setOnInsert": {"createdAt": now, "haremView": "default"},
+            },
+            upsert=True,
+            session=session,
+        )
+
+        cleared = await db.users.update_one(
+            {"userId": int(old_id)},
+            {
+                "$set": {
+                    "cards": [],
+                    "exp": 0,
+                    "favoriteCardId": "",
+                    "updatedAt": now,
+                }
+            },
+            session=session,
+        )
+        if cleared.modified_count != 1:
+            raise RuntimeError("Source harem could not be cleared.")
+
+        total = sum(max(1, int(c.get("count", 1))) for c in source_cards)
+        await db.harem_transfers.insert_one(
+            {
+                "_id": transfer_id,
+                "fromUserId": int(old_id),
+                "toUserId": int(new_id),
+                "cardUniqueCount": len(source_cards),
+                "cardTotalCount": total,
+                "exp": source_exp,
+                "byOwnerId": int(owner_id),
+                "createdAt": now,
+            },
+            session=session,
+        )
+
+        return {"unique": len(source_cards), "total": total}
+
+    async with await db.client.start_session() as session:
+        return await session.with_transaction(_txn)
+
+
 async def transfer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Owner-only full harem transfer.
 
@@ -240,77 +354,135 @@ async def transfer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await msg.reply_text(t("transfer_same"))
         return
 
-    db = get_db()
-    source = await db.users.find_one({"userId": int(old_id)})
-    if not source or not source.get("cards"):
-        await msg.reply_text(t("transfer_no_cards"))
-        return
+    async with _TRANSFER_FALLBACK_LOCK:
+        try:
+            result = await _run_transfer_transaction(
+                old_id=int(old_id),
+                new_id=int(new_id),
+                owner_id=int(update.effective_user.id),
+            )
+            await msg.reply_text(
+                t(
+                    "transfer_success",
+                    old_id=old_id,
+                    new_id=new_id,
+                    unique=int(result["unique"]),
+                    total=int(result["total"]),
+                )
+            )
+            return
+        except (ConnectionFailure, OperationFailure) as exc:
+            if not _transfer_transaction_unsupported(exc):
+                print("TRANSFER TRANSACTION ERROR:", repr(exc), flush=True)
+                await msg.reply_text(
+                    "❌ Transfer failed safely. No harem changes were committed."
+                )
+                return
+            print(
+                "TRANSFER TRANSACTIONS UNSUPPORTED: using locked compatibility fallback",
+                flush=True,
+            )
+        except ValueError as exc:
+            await msg.reply_text(f"❌ {exc}")
+            return
+        except Exception as exc:
+            print("TRANSFER TRANSACTION ERROR:", repr(exc), flush=True)
+            await msg.reply_text(
+                "❌ Transfer failed safely. No harem changes were committed."
+            )
+            return
 
-    if reply_user and int(reply_user.id) == int(new_id):
-        await ensure_user(reply_user)
-        target = await db.users.find_one({"userId": int(reply_user.id)}, {"_id": 0})
-    else:
-        await ensure_user_by_id(int(new_id))
-        target = await db.users.find_one({"userId": int(new_id)}, {"_id": 0})
+        # Compatibility fallback for standalone MongoDB deployments.
+        db = get_db()
+        source = await db.users.find_one({"userId": int(old_id)})
+        if not source or not source.get("cards"):
+            await msg.reply_text(t("transfer_no_cards"))
+            return
 
-    source_cards = list(source.get("cards", []))
-    target_cards = list((target or {}).get("cards", []))
-    by_id = {str(c.get("cardId")): dict(c) for c in target_cards}
-    for card in source_cards:
-        cid = str(card.get("cardId"))
-        qty = max(1, int(card.get("count", 1)))
-        if cid in by_id:
-            by_id[cid]["count"] = int(by_id[cid].get("count", 0)) + qty
+        if reply_user and int(reply_user.id) == int(new_id):
+            await ensure_user(reply_user)
+            target = await db.users.find_one({"userId": int(reply_user.id)}, {"_id": 0})
         else:
-            by_id[cid] = dict(card)
+            await ensure_user_by_id(int(new_id))
+            target = await db.users.find_one({"userId": int(new_id)}, {"_id": 0})
 
-    source_exp = int(source.get("exp", 0) or 0)
-    target_exp = int((target or {}).get("exp", 0) or 0)
-    target_fav = str((target or {}).get("favoriteCardId", "") or "")
-    source_fav = str(source.get("favoriteCardId", "") or "")
-    transferred_ids = {str(c.get("cardId")) for c in source_cards}
-    if not target_fav and source_fav in transferred_ids:
-        target_fav = source_fav
+        source_cards = list(source.get("cards", []))
+        target_cards = list((target or {}).get("cards", []))
+        by_id = {str(c.get("cardId")): dict(c) for c in target_cards}
+        for card in source_cards:
+            cid = str(card.get("cardId"))
+            qty = max(1, int(card.get("count", 1)))
+            if cid in by_id:
+                by_id[cid]["count"] = int(by_id[cid].get("count", 0)) + qty
+            else:
+                by_id[cid] = dict(card)
 
-    now = utcnow()
-    await db.users.update_one(
-        {"userId": int(new_id)},
-        {
-            "$set": {
-                "cards": list(by_id.values()),
-                "exp": target_exp + source_exp,
-                "favoriteCardId": target_fav,
-                "updatedAt": now,
-            },
-            "$setOnInsert": {"createdAt": now, "haremView": "default"},
-        },
-        upsert=True,
-    )
-    await db.users.update_one(
-        {"userId": int(old_id)},
-        {"$set": {"cards": [], "exp": 0, "favoriteCardId": "", "updatedAt": now}},
-    )
-    await db.harem_transfers.insert_one(
-        {
-            "fromUserId": int(old_id),
-            "toUserId": int(new_id),
-            "cardUniqueCount": len(source_cards),
-            "cardTotalCount": sum(max(1, int(c.get("count", 1))) for c in source_cards),
-            "exp": source_exp,
-            "byOwnerId": int(update.effective_user.id),
-            "createdAt": now,
-        }
-    )
-    await msg.reply_text(
-        t(
-            "transfer_success",
-            old_id=old_id,
-            new_id=new_id,
-            unique=len(source_cards),
-            total=sum(max(1, int(c.get("count", 1))) for c in source_cards),
+        source_exp = int(source.get("exp", 0) or 0)
+        target_exp = int((target or {}).get("exp", 0) or 0)
+        target_fav = str((target or {}).get("favoriteCardId", "") or "")
+        source_fav = str(source.get("favoriteCardId", "") or "")
+        transferred_ids = {str(c.get("cardId")) for c in source_cards}
+        if not target_fav and source_fav in transferred_ids:
+            target_fav = source_fav
+
+        now = utcnow()
+        try:
+            await db.users.update_one(
+                {"userId": int(new_id)},
+                {
+                    "$set": {
+                        "cards": list(by_id.values()),
+                        "exp": target_exp + source_exp,
+                        "favoriteCardId": target_fav,
+                        "updatedAt": now,
+                    },
+                    "$setOnInsert": {"createdAt": now, "haremView": "default"},
+                },
+                upsert=True,
+            )
+            await db.users.update_one(
+                {"userId": int(old_id)},
+                {
+                    "$set": {
+                        "cards": [],
+                        "exp": 0,
+                        "favoriteCardId": "",
+                        "updatedAt": now,
+                    }
+                },
+            )
+            await db.harem_transfers.insert_one(
+                {
+                    "_id": secrets.token_hex(12),
+                    "fromUserId": int(old_id),
+                    "toUserId": int(new_id),
+                    "cardUniqueCount": len(source_cards),
+                    "cardTotalCount": sum(
+                        max(1, int(c.get("count", 1))) for c in source_cards
+                    ),
+                    "exp": source_exp,
+                    "byOwnerId": int(update.effective_user.id),
+                    "createdAt": now,
+                }
+            )
+        except Exception as exc:
+            print("TRANSFER FALLBACK ERROR:", repr(exc), flush=True)
+            await msg.reply_text(
+                "❌ Transfer failed in fallback mode. Please verify the harem before retrying."
+            )
+            return
+
+        await msg.reply_text(
+            t(
+                "transfer_success",
+                old_id=old_id,
+                new_id=new_id,
+                unique=len(source_cards),
+                total=sum(
+                    max(1, int(c.get("count", 1))) for c in source_cards
+                ),
+            )
         )
-    )
-
 
 async def addadder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_owner(update.effective_user):
