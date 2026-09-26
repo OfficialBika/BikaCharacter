@@ -140,6 +140,20 @@ async def init() -> None:
         _INITIALIZED = True
 
 
+async def clear_groups() -> None:
+    """Drop local hot state so startup always rebuilds from MongoDB."""
+    await init()
+    async with _LOCK:
+        def _clear():
+            conn = _connect()
+            try:
+                conn.execute("DELETE FROM groups_hot")
+                conn.commit()
+            finally:
+                conn.close()
+        await asyncio.to_thread(_clear)
+
+
 async def close() -> None:
     global _FLUSH_TASK, _INITIALIZED
     if _FLUSH_TASK is not None:
