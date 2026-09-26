@@ -408,9 +408,16 @@ async def set_group_from_mongo(group: dict) -> dict:
                 ).fetchone()
                 current = _row_to_group(row)
                 merged = dict(group)
-                if current and current.get("_sqliteDirtyCount"):
+                was_dirty = bool(current and current.get("_sqliteDirtyCount"))
+                if was_dirty:
                     merged["messageCount"] = current.get("messageCount", 0)
                 _write_group_sync(merged, refresh=True)
+                if was_dirty:
+                    conn.execute(
+                        "UPDATE groups_hot SET dirty_count=1 WHERE group_id=?",
+                        (int(group["groupId"]),),
+                    )
+                    conn.commit()
             finally:
                 conn.close()
         await asyncio.to_thread(_sync)
