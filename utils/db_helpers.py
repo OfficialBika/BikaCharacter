@@ -242,6 +242,8 @@ async def ensure_group(
         "title": 1,
         "username": 1,
         "changeTime": 1,
+        "messageCount": 1,
+        "totalDrops": 1,
         "activeDrop": 1,
         "dropPaused": 1,
         "dropPausedReason": 1,
