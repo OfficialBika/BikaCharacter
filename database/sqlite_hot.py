@@ -216,7 +216,9 @@ async def seed_group(group: dict, *, force: bool = False) -> dict:
                 if cached and now - float(cached.get("_sqliteLastRefresh", 0) or 0) < SQLITE_REFRESH_SECONDS:
                     return cached
 
+            conn.close()
             _write_group_sync(group, refresh=True)
+            conn = _connect()
             row = conn.execute(
                 "SELECT * FROM groups_hot WHERE group_id=?",
                 (int(group["groupId"]),),
@@ -403,7 +405,9 @@ async def update_group_fields(
                     current["dropSpawnLockAt"] = None
                     current["dropSpawnLockReason"] = ""
 
+                conn.close()
                 _write_group_sync(current, refresh=False)
+                conn = _connect()
                 row = conn.execute(
                     "SELECT * FROM groups_hot WHERE group_id=?",
                     (int(group_id),),
