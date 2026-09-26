@@ -22,7 +22,7 @@ A production-ready Telegram character catcher bot built with `python-telegram-bo
 - `/fav <id>` and `.fav <id>` favourite card support
 - `/bprofile`, `/check <id>`
 - `.gift <id> [qty]` or `/gift <id> [qty]` with confirm/cancel buttons
-- Owner/adders `/add` photo/video support in bot DM and the configured adder group, with Bika Database private channel archive
+- Owner/adders `/add` photo/video support only in the configured adder group(s), with Bika Database private channel archive
 - CheckGP system: new groups are verified against the minimum member requirement; owner-approved groups bypass the check
 - Sends a log to `GROUP_LOG_CHANNEL_ID` when bot is added to a new group
 - Anti-spam: if one user sends 6 messages in a row, bot ignores that user for 10 minutes in that group
@@ -144,7 +144,7 @@ Transfer a whole harem from one user ID to another:
 /transfer old_user_id + reply target user
 ```
 
-Allow or remove extra users who can add cards by DM photo captions:
+Allow or remove extra users who can add cards in the configured adder group(s):
 
 ```text
 /addadder <user_id>
