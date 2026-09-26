@@ -405,30 +405,58 @@ def public_card_snapshot(photo_doc: dict, qty: int = 1) -> dict:
 
 
 async def add_card_to_user_id(user_id: int, card_doc: dict, qty: int = 1) -> dict:
+    """Atomically add a claimed card without duplicate array entries.
+
+    Existing card -> one atomic positional increment.
+    Missing card -> guarded push. If a concurrent claim inserts the card first,
+    the guarded push no-ops and we retry the atomic increment instead.
+    """
     db = get_db()
     qty = max(1, int(qty or 1))
+    user_id = int(user_id)
     card_id = str(card_doc.get("cardId", ""))
     card = public_card_snapshot(card_doc, qty)
-    now = utcnow()
-
-    user = await db.users.find_one(
-        {"userId": int(user_id), "cards.cardId": card_id},
-        {"_id": 0, "cards.$": 1},
-    )
     exp_inc = get_rarity_exp(card.get("rarity")) * qty
-    if user:
-        await db.users.update_one(
-            {"userId": int(user_id), "cards.cardId": card_id},
-            {"$inc": {"cards.$.count": qty, "exp": exp_inc}, "$set": {"updatedAt": now}},
+
+    # Fast path: increment an already-owned card atomically.
+    result = await db.users.update_one(
+        {"userId": user_id, "cards.cardId": card_id},
+        {
+            "$inc": {"cards.$.count": qty, "exp": exp_inc},
+            "$set": {"updatedAt": utcnow()},
+        },
+    )
+    if result.modified_count == 1:
+        return await db.users.find_one(
+            {"userId": user_id},
+            {"_id": 0, "userId": 1, "exp": 1},
         )
-    else:
-        await db.users.update_one(
-            {"userId": int(user_id)},
-            {"$push": {"cards": card}, "$inc": {"exp": exp_inc}, "$set": {"updatedAt": now}},
-            upsert=False,
+
+    # First owner: the $ne guard prevents concurrent claims from both pushing
+    # the same cardId into the same user's cards array.
+    result = await db.users.update_one(
+        {"userId": user_id, "cards.cardId": {"$ne": card_id}},
+        {
+            "$push": {"cards": card},
+            "$inc": {"exp": exp_inc},
+            "$set": {"updatedAt": utcnow()},
+        },
+    )
+    if result.modified_count != 1:
+        # Another claim inserted the card between the two paths. Convert this
+        # operation into the same atomic increment instead of pushing a duplicate.
+        result = await db.users.update_one(
+            {"userId": user_id, "cards.cardId": card_id},
+            {
+                "$inc": {"cards.$.count": qty, "exp": exp_inc},
+                "$set": {"updatedAt": utcnow()},
+            },
         )
+        if result.modified_count != 1:
+            raise RuntimeError("Unable to atomically add claimed card.")
+
     return await db.users.find_one(
-        {"userId": int(user_id)},
+        {"userId": user_id},
         {"_id": 0, "userId": 1, "exp": 1},
     )
 
