@@ -863,6 +863,10 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as exc:
         print("DROP SPAWN UNEXPECTED ERROR:", repr(exc), flush=True)
         await mark_group_drop_skipped(chat_id, "spawn_unexpected_error", exc, pause_group=False)
+    finally:
+        # spawn_random_character may create a normal drop or a pre-spawn captcha.
+        # Mirror the authoritative Mongo state immediately so SQLite never
+        # briefly thinks the group is still free to spawn again.
         latest = await get_db().groups.find_one({"groupId": chat_id})
         if latest:
             await sqlite_hot.set_group_from_mongo(latest)
