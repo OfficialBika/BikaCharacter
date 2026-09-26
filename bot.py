@@ -25,6 +25,7 @@ from config import (
     WEBHOOK_URL,
 )
 from database.mongodb import close_db, get_db, init_db
+from database import sqlite_hot
 from handlers import register_handlers
 from web.app import create_health_app
 from utils.text import utcnow
@@ -180,6 +181,8 @@ async def main() -> None:
         raise RuntimeError("Missing WEBHOOK_URL in Render Environment Variables. Example: https://your-service.onrender.com")
 
     await init_db()
+    await sqlite_hot.init()
+    sqlite_hot.start_flush_loop(get_db)
     await reset_group_state_on_startup()
 
     app = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).build()
@@ -216,6 +219,7 @@ async def main() -> None:
         await app.shutdown()
         if health_runner is not None:
             await health_runner.cleanup()
+        await sqlite_hot.close()
         await close_db()
 
 
