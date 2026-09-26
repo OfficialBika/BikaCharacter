@@ -35,6 +35,7 @@ from utils.cooldown import is_bot_muted, record_message_and_maybe_mute
 from utils.db_helpers import (
     cache_group_hot,
     ensure_group,
+    get_group_snapshot,
     ensure_user,
     get_drop_photo_for_rarity,
     get_photo_by_card_id,
@@ -776,7 +777,10 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         time.time() - float(group.get("_sqliteLastRefresh", 0) or 0)
         >= sqlite_hot.SQLITE_REFRESH_SECONDS
     ):
-        mongo_group = await ensure_group(chat)
+        mongo_group = await get_group_snapshot(chat_id)
+        if not mongo_group:
+            # First message in a newly-seen group: create the authoritative row once.
+            mongo_group = await ensure_group(chat)
         if not mongo_group:
             return
         group = await sqlite_hot.set_group_from_mongo(mongo_group)
