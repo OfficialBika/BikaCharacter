@@ -29,7 +29,7 @@ SQLITE_FLUSH_SECONDS = max(
 )
 SQLITE_REFRESH_SECONDS = max(
     5.0,
-    float(os.getenv("SQLITE_REFRESH_SECONDS", "30") or 30),
+    float(os.getenv("SQLITE_REFRESH_SECONDS", "10") or 10),
 )
 SQLITE_BUSY_TIMEOUT_MS = max(
     1000,
@@ -347,6 +347,38 @@ async def acquire_spawn(group_id: int, change_time: int, reason: str = "auto_dro
                 conn.close()
 
         return await asyncio.to_thread(_acquire)
+
+
+async def release_spawn(group_id: int) -> dict | None:
+    """Release the local spawn gate if the Mongo-side gate did not succeed."""
+    await init()
+
+    async with _LOCK:
+        def _release():
+            conn = _connect()
+            try:
+                conn.execute(
+                    """
+                    UPDATE groups_hot
+                    SET message_count=0,
+                        drop_spawn_lock_until=NULL,
+                        drop_spawn_lock_at=NULL,
+                        drop_spawn_lock_reason='',
+                        dirty_count=1
+                    WHERE group_id=?
+                    """,
+                    (int(group_id),),
+                )
+                conn.commit()
+                row = conn.execute(
+                    "SELECT * FROM groups_hot WHERE group_id=?",
+                    (int(group_id),),
+                ).fetchone()
+                return _row_to_group(row)
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_release)
 
 
 async def set_group_from_mongo(group: dict) -> dict:
