@@ -29,6 +29,18 @@ def _flag_set(args: list[str]) -> set[str]:
     return {str(arg or "").strip().lower() for arg in args}
 
 
+async def _sleep_until_or_stop(seconds: float) -> bool:
+    """Sleep for the requested time, but wake immediately on stop."""
+    try:
+        await asyncio.wait_for(
+            _BROADCAST_STOP.wait(),
+            timeout=max(0.0, float(seconds)),
+        )
+        return True
+    except asyncio.TimeoutError:
+        return False
+
+
 async def _collect_targets(
     *,
     include_groups: bool,
@@ -137,7 +149,8 @@ async def _broadcast_worker(
                             1.0,
                             float(getattr(exc, "retry_after", 1) or 1),
                         )
-                        await asyncio.sleep(retry_after + 1)
+                        if await _sleep_until_or_stop(retry_after + 1):
+                            break
 
                     except (Forbidden, BadRequest) as exc:
                         failure_reason = f"{type(exc).__name__}: {exc}"
@@ -151,7 +164,8 @@ async def _broadcast_worker(
                         if attempt >= BROADCAST_MAX_RETRY or _BROADCAST_STOP.is_set():
                             break
                         backoff = min(2.0, 0.25 * (2 ** attempt))
-                        await asyncio.sleep(backoff)
+                        if await _sleep_until_or_stop(backoff):
+                            break
 
                     except Exception as exc:
                         failure_reason = f"{type(exc).__name__}: {exc}"
