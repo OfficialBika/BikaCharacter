@@ -5,6 +5,7 @@ import io
 import os
 import random
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from config import (
     RARITY_SUPREME_NAME,
 )
 from database.mongodb import get_db
+from database import sqlite_hot
 from utils.cooldown import is_bot_muted, record_message_and_maybe_mute
 from utils.db_helpers import (
     cache_group_hot,
@@ -298,14 +300,22 @@ async def mark_group_drop_skipped(
     )
 
 
-async def acquire_drop_spawn_lock(chat_id: int, change_time: int, reason: str = "auto_drop") -> dict | None:
+async def acquire_drop_spawn_lock(
+    chat_id: int,
+    change_time: int,
+    reason: str = "auto_drop",
+    *,
+    require_message_count: bool = True,
+) -> dict | None:
     """Atomically lock a group before spawning.
 
     With concurrent_updates=True, multiple messages can cross changeTime at the
     same time. This lock ensures only one update can reset the counter and spawn.
     """
     now = utcnow()
-    query = {"groupId": int(chat_id), "messageCount": {"$gte": int(change_time)}}
+    query = {"groupId": int(chat_id)}
+    if require_message_count:
+        query["messageCount"] = {"$gte": int(change_time)}
     query.update(_drop_allowed_filter(now, allow_unclaimed_card=True))
 
     return await get_db().groups.find_one_and_update(
@@ -742,30 +752,40 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not is_countable_message(update):
         return
 
-    # PM2/VPS restart protection:
-    # Do not count old Telegram updates that were created while the bot was offline.
-    # This prevents queued messages from spawning many cards immediately on restart.
     if is_stale_startup_update(update):
         return
 
     chat = update.effective_chat
     user = update.effective_user
+    chat_id = int(chat.id)
 
-    group = await ensure_group(chat, hot_path=True)
+    # SQLite is the hot path. MongoDB remains authoritative and is refreshed
+    # periodically, not once per Telegram message.
+    group = await sqlite_hot.get_group(chat_id)
+    if not group or (
+        time.time() - float(group.get("_sqliteLastRefresh", 0) or 0)
+        >= sqlite_hot.SQLITE_REFRESH_SECONDS
+    ):
+        mongo_group = await ensure_group(chat)
+        if not mongo_group:
+            return
+        group = await sqlite_hot.set_group_from_mongo(mongo_group)
+
     if not group:
         return
 
-    if await is_group_drop_paused(int(chat.id), group):
+    if await is_group_drop_paused(chat_id, group):
         return
 
     active = (group or {}).get("activeDrop") or {}
     pre_cap = active.get("preSpawnCaptcha") or {}
     if pre_cap.get("status") in {"pending", "solving"}:
-        # If a captcha expired while the bot process was offline, clear it now so the
-        # group does not stay blocked forever after PM2 restarts the bot.
         if is_pre_spawn_expired(pre_cap):
             await get_db().groups.update_one(
-                {"groupId": int(chat.id), "activeDrop.preSpawnCaptcha.status": "pending"},
+                {
+                    "groupId": chat_id,
+                    "activeDrop.preSpawnCaptcha.status": "pending",
+                },
                 {
                     "$set": {
                         "activeDrop": None,
@@ -773,24 +793,16 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     }
                 },
             )
-            active = {}
+            group = await ensure_group(chat)
+            if group:
+                await sqlite_hot.set_group_from_mongo(group)
         else:
-            # A high-rarity pre-spawn captcha is already active. Do not advance drop counter
-            # until it is solved, failed, or timed out.
             return
 
-    # Normal unclaimed cards do NOT block counting anymore.
-    # If the group reaches changeTime again, acquire_drop_spawn_lock() records
-    # the old card as skipped and the new card replaces it safely.
-    # Pending/solving pre-spawn captcha is still blocked above.
-
-    # If Telegram gives us a real user, apply bot-mute / 6-message streak logic.
-    # Forwarded media still has the forwarding user as effective_user and will be counted.
-    # Rare sender-chat/no-user messages are counted, but mute logic is skipped safely.
     if user:
         await ensure_user(user, hot_path=True)
 
-        if await is_bot_muted(chat.id, user.id):
+        if await is_bot_muted(chat_id, user.id):
             return
 
         just_muted = await record_message_and_maybe_mute(update)
@@ -803,41 +815,45 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 pass
             return
 
-    db = get_db()
-    now = utcnow()
-    query = {"groupId": int(chat.id)}
-    query.update(_drop_allowed_filter(now, allow_unclaimed_card=True))
-
-    updated = await db.groups.find_one_and_update(
-        query,
-        {"$inc": {"messageCount": 1}, "$set": {"updatedAt": now}},
-        projection={
-            "_id": 0,
-            "groupId": 1,
-            "changeTime": 1,
-            "messageCount": 1,
-            "activeDrop": 1,
-        },
-        return_document=ReturnDocument.AFTER,
-    )
+    updated = await sqlite_hot.increment_message_count(chat_id)
     if not updated:
         return
 
-    # Refresh the short-lived group cache with the authoritative post-increment
-    # state so the next burst of messages avoids another Mongo read.
-    cache_group_hot(updated)
-
-    change_time = int((updated or {}).get("changeTime", DEFAULT_CHANGETIME) or DEFAULT_CHANGETIME)
+    change_time = int(
+        (updated or {}).get("changeTime", DEFAULT_CHANGETIME)
+        or DEFAULT_CHANGETIME
+    )
     message_count = int((updated or {}).get("messageCount", 0) or 0)
     if message_count < change_time:
         return
 
-    locked = await acquire_drop_spawn_lock(int(chat.id), change_time, "auto_drop")
-    if not locked:
+    # A local atomic gate handles concurrent_updates=True. Mongo is still used
+    # once per actual drop to atomically validate pause/captcha state and persist
+    # the reset/lock, rather than on every chat message.
+    local_lock = await sqlite_hot.acquire_spawn(chat_id, change_time, "auto_drop")
+    if not local_lock:
         return
 
+    mongo_group = await ensure_group(chat)
+    if not mongo_group:
+        await sqlite_hot.release_spawn(chat_id)
+        return
+
+    locked = await acquire_drop_spawn_lock(
+        chat_id,
+        change_time,
+        "auto_drop",
+        require_message_count=False,
+    )
+    if not locked:
+        await sqlite_hot.release_spawn(chat_id)
+        await sqlite_hot.set_group_from_mongo(mongo_group)
+        return
+
+    await sqlite_hot.set_group_from_mongo(locked)
+
     await mark_unclaimed_drop_replaced(
-        int(chat.id),
+        chat_id,
         (locked or {}).get("activeDrop") or {},
         change_time,
     )
@@ -845,9 +861,12 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         await spawn_random_character(update, context)
     except Exception as exc:
-        # Do not leave dropSpawnLock stuck on unexpected runtime errors.
         print("DROP SPAWN UNEXPECTED ERROR:", repr(exc), flush=True)
-        await mark_group_drop_skipped(int(chat.id), "spawn_unexpected_error", exc, pause_group=False)
+        await mark_group_drop_skipped(chat_id, "spawn_unexpected_error", exc, pause_group=False)
+        latest = await get_db().groups.find_one({"groupId": chat_id})
+        if latest:
+            await sqlite_hot.set_group_from_mongo(latest)
+
 
 async def spawn_random_character(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
