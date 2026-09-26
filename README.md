@@ -18,12 +18,12 @@ A production-ready Telegram character catcher bot built with `python-telegram-bo
   - Owner: 1 to 3000
 - Default changetime: 100
 - `/bika <name>` first correct claimer wins the spawned card
-- `/harem` and `.harem` card list with pagination buttons
+- `/bharem` and `.bharem` card list with pagination buttons
 - `/fav <id>` and `.fav <id>` favourite card support
-- `/profile`, `/check <id>`
+- `/bprofile`, `/check <id>`
 - `.gift <id> [qty]` or `/gift <id> [qty]` with confirm/cancel buttons
-- Owner/adders `/add` photo support in DM with Bika Database private channel archive
-- No approve system: bot works immediately after being added to a group
+- Owner/adders `/add` photo/video support in bot DM and the configured adder group, with Bika Database private channel archive
+- CheckGP system: new groups are verified against the minimum member requirement; owner-approved groups bypass the check
 - Sends a log to `GROUP_LOG_CHANNEL_ID` when bot is added to a new group
 - Anti-spam: if one user sends 6 messages in a row, bot ignores that user for 10 minutes in that group
 
@@ -163,7 +163,9 @@ Gift count logic: `.gift <cardid>` or `/gift <cardid>` removes `x1` from sender 
 
 ## Deploy notes
 
-This project runs in polling mode and also opens a small HTTP health server on `PORT`. For PM2:
+Render uses webhook mode by default. Telegram webhook requests are acknowledged immediately and processed asynchronously by the running PTB event loop. SQLite is an ephemeral hot cache only; MongoDB remains the persistent source of truth.
+
+For PM2:
 
 ```bash
 pm2 start bot.py --name bika-python --interpreter python3
