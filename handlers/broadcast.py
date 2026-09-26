@@ -104,37 +104,74 @@ async def _broadcast_worker(
             break
 
         delivered = False
+        skipped = False
+        failure_reason = ""
 
         try:
-            await _deliver(
-                context=context,
-                source=source,
-                target_id=target_id,
-                copy_mode=copy_mode,
-            )
-            delivered = True
-
-        except RetryAfter as exc:
-            await asyncio.sleep(int(getattr(exc, "retry_after", 1) or 1) + 1)
-
-        except (Forbidden, BadRequest, TelegramError) as exc:
-            result["failures"].append(
-                f"{target_id} - {type(exc).__name__}: {exc}"
-            )
-
-        except Exception as exc:
-            result["failures"].append(
-                f"{target_id} - {type(exc).__name__}: {exc}"
-            )
-
-        async with counter_lock:
-            result["processed"] += 1
-            if delivered:
-                result["success"] += 1
+            # Stop requests prevent any not-yet-started target from being sent.
+            if _BROADCAST_STOP.is_set():
+                skipped = True
             else:
-                result["failed"] += 1
+                for attempt in range(BROADCAST_MAX_RETRY + 1):
+                    if attempt > 0 and _BROADCAST_STOP.is_set():
+                        skipped = True
+                        break
 
-        queue.task_done()
+                    try:
+                        await _deliver(
+                            context=context,
+                            source=source,
+                            target_id=target_id,
+                            copy_mode=copy_mode,
+                        )
+                        delivered = True
+                        break
+
+                    except RetryAfter as exc:
+                        failure_reason = (
+                            f"{type(exc).__name__}: {exc}"
+                        )
+                        if attempt >= BROADCAST_MAX_RETRY or _BROADCAST_STOP.is_set():
+                            break
+                        retry_after = max(
+                            1.0,
+                            float(getattr(exc, "retry_after", 1) or 1),
+                        )
+                        await asyncio.sleep(retry_after + 1)
+
+                    except (Forbidden, BadRequest) as exc:
+                        failure_reason = f"{type(exc).__name__}: {exc}"
+                        break
+
+                    except TelegramError as exc:
+                        # Remaining TelegramError subclasses are generally
+                        # transport/API errors. Retry them within the configured
+                        # bounded retry budget, but never after a stop request.
+                        failure_reason = f"{type(exc).__name__}: {exc}"
+                        if attempt >= BROADCAST_MAX_RETRY or _BROADCAST_STOP.is_set():
+                            break
+                        backoff = min(2.0, 0.25 * (2 ** attempt))
+                        await asyncio.sleep(backoff)
+
+                    except Exception as exc:
+                        failure_reason = f"{type(exc).__name__}: {exc}"
+                        break
+
+        finally:
+            async with counter_lock:
+                result["processed"] += 1
+                if delivered:
+                    result["success"] += 1
+                elif skipped:
+                    result["skipped"] += 1
+                else:
+                    result["failed"] += 1
+                    if failure_reason:
+                        result["failures"].append(
+                            f"{target_id} - {failure_reason}"
+                        )
+
+            queue.task_done()
 
 
 def _status_text(
@@ -144,6 +181,7 @@ def _status_text(
     groups_ok: int,
     users_ok: int,
     failed: int,
+    skipped: int,
     status: str,
 ) -> str:
     return (
@@ -153,7 +191,8 @@ def _status_text(
         f"Processed: <code>{processed}/{total}</code>\n"
         f"Groups: <code>{groups_ok}</code>\n"
         f"Users: <code>{users_ok}</code>\n"
-        f"Failed: <code>{failed}</code>"
+        f"Failed: <code>{failed}</code>\n"
+        f"Skipped: <code>{skipped}</code>"
     )
 
 
@@ -242,6 +281,7 @@ async def broadcast_cmd(
                     groups_ok=0,
                     users_ok=0,
                     failed=0,
+                    skipped=0,
                     status="Running",
                 ),
                 parse_mode="HTML",
@@ -256,6 +296,7 @@ async def broadcast_cmd(
                 "processed": 0,
                 "success": 0,
                 "failed": 0,
+                "skipped": 0,
                 "failures": failures,
                 "sent_ids": [],
             }
@@ -279,6 +320,7 @@ async def broadcast_cmd(
 
                 processed = worker_results["processed"]
                 failed = worker_results["failed"]
+                skipped = worker_results["skipped"]
 
                 if processed % 25 == 0 or processed == len(targets):
                     try:
@@ -289,7 +331,8 @@ async def broadcast_cmd(
                                 groups_ok=groups_ok,
                                 users_ok=users_ok,
                                 failed=failed,
-                                status="Running",
+                                skipped=skipped,
+                                status="Stopped" if _BROADCAST_STOP.is_set() else "Running",
                             ),
                             parse_mode="HTML",
                         )
@@ -305,6 +348,7 @@ async def broadcast_cmd(
 
             processed = worker_results["processed"]
             failed = worker_results["failed"]
+            skipped = worker_results["skipped"]
 
             # Recalculate success counters from completed results.
             groups_ok = min(worker_results["success"], len(group_ids))
@@ -330,6 +374,7 @@ async def broadcast_cmd(
                     "groupsSent": groups_ok,
                     "usersSent": users_ok,
                     "failed": failed,
+                    "skipped": skipped,
                     "status": final_status.lower(),
                     "createdAt": utcnow(),
                 }
@@ -342,6 +387,7 @@ async def broadcast_cmd(
                     groups_ok=groups_ok,
                     users_ok=users_ok,
                     failed=failed,
+                    skipped=skipped,
                     status=final_status,
                 ),
                 parse_mode="HTML",
@@ -366,7 +412,6 @@ async def broadcast_cmd(
 
         finally:
             _BROADCAST_ACTIVE = False
-            _BROADCAST_SEMAPHORE = asyncio.Semaphore(BROADCAST_WORKERS)
             _BROADCAST_STOP.clear()
 
 
