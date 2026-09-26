@@ -285,11 +285,14 @@ async def mark_group_drop_skipped(
         unset_data.update(DROP_PAUSE_UNSET)
 
     try:
-        await get_db().groups.update_one(
+        updated = await get_db().groups.find_one_and_update(
             {"groupId": int(chat_id)},
             {"$set": set_data, "$inc": inc_data, "$unset": unset_data},
             upsert=True,
+            return_document=ReturnDocument.AFTER,
         )
+        if updated:
+            await sqlite_hot.set_group_from_mongo(updated)
     except Exception as db_exc:
         print("DROP AUTO-SKIP DB ERROR:", repr(db_exc))
 
