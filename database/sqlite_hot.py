@@ -396,9 +396,24 @@ async def release_spawn(group_id: int) -> dict | None:
 
 
 async def set_group_from_mongo(group: dict) -> dict:
+    """Sync Mongo state without clobbering a newer dirty local message counter."""
     await init()
     async with _LOCK:
-        await asyncio.to_thread(_write_group_sync, group, refresh=True)
+        def _sync():
+            conn = _connect()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM groups_hot WHERE group_id=?",
+                    (int(group["groupId"]),),
+                ).fetchone()
+                current = _row_to_group(row)
+                merged = dict(group)
+                if current and current.get("_sqliteDirtyCount"):
+                    merged["messageCount"] = current.get("messageCount", 0)
+                _write_group_sync(merged, refresh=True)
+            finally:
+                conn.close()
+        await asyncio.to_thread(_sync)
     return group
 
 
@@ -408,6 +423,7 @@ async def update_group_fields(
     active_drop: dict | None = None,
     total_drops: int | None = None,
     message_count: int | None = None,
+    change_time: int | None = None,
     drop_paused: bool | None = None,
     drop_paused_until: Any = None,
     drop_paused_reason: str | None = None,
@@ -440,6 +456,8 @@ async def update_group_fields(
                 if message_count is not None:
                     current["messageCount"] = int(message_count)
                     current["_sqliteDirtyCount"] = True
+                if change_time is not None:
+                    current["changeTime"] = int(change_time)
                 if drop_paused is not None:
                     current["dropPaused"] = bool(drop_paused)
                 if drop_paused_until is not None:
