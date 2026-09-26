@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 import random
+import time
+from collections import OrderedDict
 from datetime import timedelta
 from typing import Optional
 
@@ -14,15 +17,67 @@ from utils.rarity import get_rarity_exp
 from utils.text import safe_chat_title, utcnow
 
 
+# Drop listener metadata is global per user and does not need a Mongo write on
+# every single chat message. Keep it fresh on a bounded TTL cache.
+_USER_TOUCH_TTL_SECONDS = max(
+    30,
+    int(os.getenv("USER_TOUCH_TTL_SECONDS", "300") or 300),
+)
+_USER_TOUCH_CACHE_MAX = max(
+    256,
+    int(os.getenv("USER_TOUCH_CACHE_MAX", "4096") or 4096),
+)
+_user_touch_cache: OrderedDict[int, tuple[float, dict]] = OrderedDict()
+
+
+def _user_touch_cache_put(user_id: int, doc: dict) -> None:
+    key = int(user_id)
+    _user_touch_cache[key] = (
+        time.monotonic() + _USER_TOUCH_TTL_SECONDS,
+        dict(doc or {}),
+    )
+    _user_touch_cache.move_to_end(key)
+    while len(_user_touch_cache) > _USER_TOUCH_CACHE_MAX:
+        _user_touch_cache.popitem(last=False)
+
+
+def _user_touch_cache_get(user_id: int) -> dict | None:
+    key = int(user_id)
+    cached = _user_touch_cache.get(key)
+    if not cached:
+        return None
+
+    expires_mono, doc = cached
+    if expires_mono <= time.monotonic():
+        _user_touch_cache.pop(key, None)
+        return None
+
+    _user_touch_cache.move_to_end(key)
+    return dict(doc)
+
+
+def _invalidate_user_touch_cache(user_id: int) -> None:
+    _user_touch_cache.pop(int(user_id), None)
+
+
 async def ensure_user(
     tg_user: User | None,
     *,
     include_cards: bool = False,
+    hot_path: bool = False,
 ) -> Optional[dict]:
     """Create/update a user without returning the large cards array by default."""
     if not tg_user or not tg_user.id:
         return None
     db = get_db()
+
+    if hot_path and not include_cards:
+        cached = _user_touch_cache_get(int(tg_user.id))
+        if cached is not None:
+            return cached
+    else:
+        _invalidate_user_touch_cache(int(tg_user.id))
+
     now = utcnow()
     projection = {
         "_id": 0,
@@ -38,7 +93,7 @@ async def ensure_user(
     if include_cards:
         projection["cards"] = 1
 
-    return await db.users.find_one_and_update(
+    result = await db.users.find_one_and_update(
         {"userId": int(tg_user.id)},
         {
             "$set": {
@@ -60,6 +115,11 @@ async def ensure_user(
         return_document=ReturnDocument.AFTER,
     )
 
+    if hot_path and result:
+        _user_touch_cache_put(int(tg_user.id), result)
+
+    return result
+
 
 async def ensure_user_by_id(
     user_id: int,
@@ -68,6 +128,7 @@ async def ensure_user_by_id(
     last_name: str = "",
 ) -> dict:
     """Create/update a user by numeric ID without returning the cards array."""
+    _invalidate_user_touch_cache(int(user_id))
     db = get_db()
     now = utcnow()
     return await db.users.find_one_and_update(
