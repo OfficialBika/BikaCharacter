@@ -30,7 +30,13 @@ from config import (
 )
 from database.mongodb import get_db
 from utils.cooldown import is_bot_muted, record_message_and_maybe_mute
-from utils.db_helpers import ensure_group, ensure_user, get_drop_photo_for_rarity, get_photo_by_card_id
+from utils.db_helpers import (
+    cache_group_hot,
+    ensure_group,
+    ensure_user,
+    get_drop_photo_for_rarity,
+    get_photo_by_card_id,
+)
 from utils.rarity import get_rarity_emoji, get_scheduled_drop_rarity
 from utils.permissions import is_owner
 from utils.text import escape_html, safe_chat_title, utcnow
@@ -745,7 +751,7 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     chat = update.effective_chat
     user = update.effective_user
 
-    group = await ensure_group(chat)
+    group = await ensure_group(chat, hot_path=True)
     if not group:
         return
 
@@ -809,6 +815,10 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
     if not updated:
         return
+
+    # Refresh the short-lived group cache with the authoritative post-increment
+    # state so the next burst of messages avoids another Mongo read.
+    cache_group_hot(updated)
 
     change_time = int((updated or {}).get("changeTime", DEFAULT_CHANGETIME) or DEFAULT_CHANGETIME)
     message_count = int((updated or {}).get("messageCount", 0) or 0)
