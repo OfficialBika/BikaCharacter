@@ -57,9 +57,8 @@ def is_allowed_add_chat(update: Update) -> bool:
     if not chat:
         return False
 
-    # Owner/adders may upload cards directly in bot DM.
-    if chat.type == "private":
-        return True
+    # /add is allowed only inside the configured Adder Group(s).
+    # Bot DM is intentionally not an add location.
 
     # သတ်မှတ်ထားတဲ့ Adder Group ထဲမှာ add ခွင့်ပြု
     return int(chat.id) in {
@@ -478,5 +477,5 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 def register_photo_add_handlers(app: Application) -> None:
-    # DM + Adder Group နှစ်ခုလုံးက photo/video/gif/document captions တွေဖမ်းရန်
+    # Adder Group ထဲက photo/video/gif/document captions တွေကိုပဲ /add အတွက်ဖမ်းရန်
     app.add_handler(MessageHandler(filters.ATTACHMENT, photo_add_handler))
