@@ -283,6 +283,26 @@ async def ensure_group(
     return result
 
 
+async def get_group_snapshot(group_id: int) -> Optional[dict]:
+    """Read group hot-state controls without performing a write."""
+    projection = {
+        "_id": 0,
+        "groupId": 1,
+        "changeTime": 1,
+        "messageCount": 1,
+        "totalDrops": 1,
+        "activeDrop": 1,
+        "dropPaused": 1,
+        "dropPausedReason": 1,
+        "checkgpApproved": 1,
+        "checkgpPassed": 1,
+        "checkgpMinMembers": 1,
+    }
+    return await get_db().groups.find_one(
+        {"groupId": int(group_id)},
+        projection,
+    )
+
 async def get_user_doc(user_id: int) -> Optional[dict]:
     return await get_db().users.find_one(
         {"userId": int(user_id)},
