@@ -25,11 +25,11 @@ SQLITE_HOT_PATH = Path(
 )
 SQLITE_FLUSH_SECONDS = max(
     1.0,
-    float(os.getenv("SQLITE_FLUSH_SECONDS", "3") or 3),
+    float(os.getenv("SQLITE_FLUSH_SECONDS", "10") or 10),
 )
 SQLITE_REFRESH_SECONDS = max(
     5.0,
-    float(os.getenv("SQLITE_REFRESH_SECONDS", "10") or 10),
+    float(os.getenv("SQLITE_REFRESH_SECONDS", "30") or 30),
 )
 SQLITE_BUSY_TIMEOUT_MS = max(
     1000,
