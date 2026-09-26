@@ -396,9 +396,16 @@ async def mark_unclaimed_drop_replaced(chat_id: int, active: dict | None, change
 
 
 def _datetime_to_utc_ts(value) -> float:
-    """Convert Telegram/PyMongo datetimes to UTC timestamp safely."""
+    """Convert Telegram/PyMongo datetimes or SQLite ISO strings to UTC timestamps."""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except Exception:
+            return 0.0
+
     if not isinstance(value, datetime):
         return 0.0
+
     try:
         if value.tzinfo is None:
             value = value.replace(tzinfo=timezone.utc)
@@ -1054,7 +1061,7 @@ async def send_manual_pre_spawn_captcha(
     return True
 
 async def mark_pre_spawn_lost(chat_id: int, nonce: str, status: str) -> dict | None:
-    return await get_db().groups.find_one_and_update(
+    updated = await get_db().groups.find_one_and_update(
         {
             "groupId": int(chat_id),
             "activeDrop.preSpawnCaptcha.nonce": str(nonce),
@@ -1069,16 +1076,22 @@ async def mark_pre_spawn_lost(chat_id: int, nonce: str, status: str) -> dict | N
         },
         return_document=ReturnDocument.AFTER,
     )
+    if updated:
+        await sqlite_hot.set_group_from_mongo(updated)
+    return updated
 
 
 async def clear_lost_pre_spawn(chat_id: int, nonce: str) -> None:
     latest = await get_db().groups.find_one({"groupId": int(chat_id), "activeDrop.preSpawnCaptcha.nonce": str(nonce)})
     pre_cap = ((latest or {}).get("activeDrop") or {}).get("preSpawnCaptcha") or {}
     if pre_cap.get("status") in {"failed", "timeout", "missing_card"}:
-        await get_db().groups.update_one(
+        updated = await get_db().groups.find_one_and_update(
             {"groupId": int(chat_id), "activeDrop.preSpawnCaptcha.nonce": str(nonce)},
             {"$set": {"activeDrop": None, "updatedAt": utcnow()}},
+            return_document=ReturnDocument.AFTER,
         )
+        if updated:
+            await sqlite_hot.set_group_from_mongo(updated)
 
 
 async def _edit_pre_spawn_result(bot, chat_id: int, message_id: int, text: str, parse_mode: str | None = ParseMode.HTML) -> None:
