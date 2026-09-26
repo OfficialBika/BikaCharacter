@@ -184,6 +184,8 @@ async def main() -> None:
     await sqlite_hot.init()
     sqlite_hot.start_flush_loop(get_db)
     await reset_group_state_on_startup()
+    # Startup reset is authoritative in Mongo; never reuse stale local counters.
+    await sqlite_hot.clear_groups()
 
     app = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).build()
     register_handlers(app)
