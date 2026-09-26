@@ -85,6 +85,14 @@ async def changetime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         {"groupId": update.effective_chat.id},
         {"$set": {"changeTime": value, "messageCount": 0, "updatedAt": utcnow()}},
     )
+    # Mongo is authoritative; immediately mirror the threshold and reset counter
+    # into the local hot cache so the next message uses the new value.
+    from database import sqlite_hot
+    await sqlite_hot.update_group_fields(
+        int(update.effective_chat.id),
+        change_time=value,
+        message_count=0,
+    )
     await update.message.reply_text(t("changetime_updated", value=value))
 
 
