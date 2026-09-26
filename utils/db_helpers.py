@@ -60,6 +60,60 @@ def _invalidate_user_touch_cache(user_id: int) -> None:
     _user_touch_cache.pop(int(user_id), None)
 
 
+# Group state is read on every incoming group message. A very short cache removes
+# most repeated reads while the atomic messageCount update below still consults
+# MongoDB for the authoritative spawn/lock state.
+_GROUP_HOT_TTL_SECONDS = max(
+    0.5,
+    float(os.getenv("GROUP_HOT_TTL_SECONDS", "1.5") or 1.5),
+)
+_GROUP_HOT_CACHE_MAX = max(
+    128,
+    int(os.getenv("GROUP_HOT_CACHE_MAX", "2048") or 2048),
+)
+_group_hot_cache: OrderedDict[int, tuple[float, dict]] = OrderedDict()
+
+
+def _group_hot_cache_put(group_id: int, doc: dict | None) -> None:
+    if not doc:
+        return
+    key = int(group_id)
+    _group_hot_cache[key] = (
+        time.monotonic() + _GROUP_HOT_TTL_SECONDS,
+        dict(doc),
+    )
+    _group_hot_cache.move_to_end(key)
+    while len(_group_hot_cache) > _GROUP_HOT_CACHE_MAX:
+        _group_hot_cache.popitem(last=False)
+
+
+def _group_hot_cache_get(group_id: int) -> dict | None:
+    key = int(group_id)
+    cached = _group_hot_cache.get(key)
+    if not cached:
+        return None
+
+    expires_mono, doc = cached
+    if expires_mono <= time.monotonic():
+        _group_hot_cache.pop(key, None)
+        return None
+
+    _group_hot_cache.move_to_end(key)
+    return dict(doc)
+
+
+def cache_group_hot(group_doc: dict | None) -> None:
+    if group_doc:
+        _group_hot_cache_put(
+            int(group_doc.get("groupId", 0) or 0),
+            group_doc,
+        )
+
+
+def invalidate_group_hot(group_id: int) -> None:
+    _group_hot_cache.pop(int(group_id), None)
+
+
 async def ensure_user(
     tg_user: User | None,
     *,
@@ -164,11 +218,23 @@ async def ensure_user_by_id(
     )
 
 
-async def ensure_group(chat: Chat | None) -> Optional[dict]:
+async def ensure_group(
+    chat: Chat | None,
+    *,
+    hot_path: bool = False,
+) -> Optional[dict]:
     """Create/update a group and return only fields used by hot-path callers."""
     if not chat or not chat.id:
         return None
     db = get_db()
+
+    if hot_path:
+        cached = _group_hot_cache_get(int(chat.id))
+        if cached is not None:
+            return cached
+    else:
+        invalidate_group_hot(int(chat.id))
+
     now = utcnow()
     projection = {
         "_id": 0,
@@ -183,7 +249,7 @@ async def ensure_group(chat: Chat | None) -> Optional[dict]:
         "checkgpPassed": 1,
         "checkgpMinMembers": 1,
     }
-    return await db.groups.find_one_and_update(
+    result = await db.groups.find_one_and_update(
         {"groupId": int(chat.id)},
         {
             "$set": {
@@ -208,6 +274,11 @@ async def ensure_group(chat: Chat | None) -> Optional[dict]:
         upsert=True,
         return_document=ReturnDocument.AFTER,
     )
+
+    if hot_path and result:
+        _group_hot_cache_put(int(chat.id), result)
+
+    return result
 
 
 async def get_user_doc(user_id: int) -> Optional[dict]:
