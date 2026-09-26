@@ -193,6 +193,7 @@ async def main() -> None:
     # Startup reset is authoritative in Mongo; never reuse stale local counters.
     await sqlite_hot.clear_groups()
 
+    using_polling = RUN_MODE.lower() == "polling"
     app_builder = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True)
     # Custom aiohttp webhook feeds Application.update_queue directly, matching
     # PTB's recommended custom-webhook architecture. Polling retains its updater.
@@ -211,7 +212,6 @@ async def main() -> None:
             pass
 
     health_runner: web.AppRunner | None = None
-    using_polling = RUN_MODE.lower() == "polling"
 
     await app.initialize()
     await register_commands(app)
