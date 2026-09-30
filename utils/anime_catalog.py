@@ -61,7 +61,23 @@ async def ensure_anime_catalog_seeded() -> None:
                 for name in sorted(names, key=normalized_anime_key)
             ]
             if operations:
-                await db[ANIME_COLLECTION].bulk_write(operations, ordered=False)
+                try:
+                    await db[ANIME_COLLECTION].bulk_write(operations, ordered=False)
+                except DuplicateKeyError:
+                    # Another bot instance may have seeded the same Anime at
+                    # the same time. Re-apply one normalized upsert at a time.
+                    for name in sorted(names, key=normalized_anime_key):
+                        key = normalized_anime_key(name)
+                        await db[ANIME_COLLECTION].update_one(
+                            {"normalizedName": key},
+                            {
+                                "$setOnInsert": {
+                                    "name": name,
+                                    "normalizedName": key,
+                                }
+                            },
+                            upsert=True,
+                        )
 
         await db.bot_settings.update_one(
             {"_id": "config"},
