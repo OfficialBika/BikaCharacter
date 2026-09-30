@@ -3,7 +3,19 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from config import RARITY_ORDER, LIMITED_RARITY_NAME
+from config import (
+    RARITY_ORDER,
+    LIMITED_RARITY_NAME,
+    RARITY_SUPREME_NAME,
+    RARITY_CATAPHRACT_NAME,
+    RARITY_CROSSVERSE_NAME,
+    RARITY_DIVINE_NAME,
+    RARITY_MYSTICAL_NAME,
+    RARITY_LEGENDARY_NAME,
+    RARITY_RARE_NAME,
+    RARITY_UNCOMMON_NAME,
+    RARITY_COMMON_NAME,
+)
 from utils.rarity import normalize_rarity
 
 
@@ -27,6 +39,67 @@ def normalized_search_name(text: str = "") -> str:
     text = re.sub(r"[^a-z0-9\s\-]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def normalize_add_rarity_code(raw: str | None) -> str | None:
+    """Normalize the short rarity code used by the new /add wizard.
+
+    Codes are input-only shorthands. The database always stores the full
+    configured rarity name.
+    """
+    text = str(raw or "").strip().casefold()
+    aliases = {
+        "su": RARITY_SUPREME_NAME,
+        "ca": RARITY_CATAPHRACT_NAME,
+        "cv": RARITY_CROSSVERSE_NAME,
+        "dv": RARITY_DIVINE_NAME,
+        "my": RARITY_MYSTICAL_NAME,
+        "lg": RARITY_LEGENDARY_NAME,
+        "ra": RARITY_RARE_NAME,
+        "un": RARITY_UNCOMMON_NAME,
+        "co": RARITY_COMMON_NAME,
+    }
+    return aliases.get(text)
+
+
+def parse_normal_add_caption(caption: str = "") -> Optional[dict]:
+    """Parse normal-card captions after an anime has been selected.
+
+    New card:
+      Yelan | Lg
+
+    Update:
+      240 | Yelan | Dv
+    """
+    text = str(caption or "").replace("\r", "").strip()
+    if not text or text.startswith("/"):
+        return None
+
+    parts = [x.strip() for x in text.split("|")]
+    if len(parts) == 2:
+        card_id = ""
+        name, rarity_raw = parts
+        card_id_provided = False
+    elif len(parts) == 3:
+        card_id, name, rarity_raw = parts
+        card_id_provided = True
+        if not re.fullmatch(r"\d+", card_id):
+            return None
+    else:
+        return None
+
+    name = name.strip()
+    rarity = normalize_add_rarity_code(rarity_raw)
+    if not name or rarity is None:
+        return None
+
+    return {
+        "cardId": str(card_id).strip(),
+        "name": name,
+        "normalizedName": normalized_search_name(name),
+        "rarity": rarity,
+        "_cardIdProvided": card_id_provided,
+    }
 
 
 def _compact(text: str = "") -> str:
