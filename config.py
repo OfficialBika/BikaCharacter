@@ -84,6 +84,12 @@ CREATE_INVITE_LINK_FOR_PRIVATE_GROUPS = env_bool("CREATE_INVITE_LINK_FOR_PRIVATE
 # Recommended: create a private channel named "Bika Database", add the bot as admin,
 # then set the numeric channel ID like -1001234567890.
 CARD_DATABASE_CHANNEL_ID = os.getenv("CARD_DATABASE_CHANNEL_ID", os.getenv("BIKA_DATABASE_CHANNEL_ID", "")).strip()
+# Adding-specific log channel. Falls back to the existing group-log channel so
+# current deployments need no mandatory new environment variable.
+ADDING_LOG_CHANNEL_ID = os.getenv(
+    "ADDING_LOG_CHANNEL_ID",
+    GROUP_LOG_CHANNEL_ID,
+).strip()
 
 ADDER_GROUP_IDS = [
     int(x.strip())
@@ -155,6 +161,12 @@ ANTI_SPAM_STREAK = int(os.getenv("ANTI_SPAM_STREAK", "6") or 6)
 BOT_MUTE_SECONDS = int(os.getenv("BOT_MUTE_SECONDS", "600") or 600)
 CLAIM_PREFIX_MIN_LENGTH = int(os.getenv("CLAIM_PREFIX_MIN_LENGTH", "3") or 3)
 CLAIM_CAPTCHA_SECONDS = int(os.getenv("CLAIM_CAPTCHA_SECONDS", "120") or 120)
+
+# Multi-step /add wizard. The timeout is inactivity-based: selecting an anime
+# or submitting a card resets the three-minute window.
+ADD_SESSION_TIMEOUT_SECONDS = env_int("ADD_SESSION_TIMEOUT_SECONDS", 180, 30, 900)
+ADD_ANIME_PAGE_SIZE = env_int("ADD_ANIME_PAGE_SIZE", 10, 4, 20)
+
 INLINE_PAGE_SIZE = env_int("INLINE_PAGE_SIZE", 50, 1, 50)
 INLINE_CACHE_TIME = env_int("INLINE_CACHE_TIME", 60, 0, 300)
 
