@@ -168,12 +168,13 @@ async def canonicalize_anime_catalog() -> None:
     for key, group in groups.items():
         canonical = str(group["canonical"])
         aliases = sorted(group["aliases"])
+        wrong_aliases = [alias for alias in aliases if alias != canonical]
 
-        # Card data is preserved; only the Anime string is corrected.
-        if aliases:
+        # Card data is preserved; only genuinely wrong Anime strings are corrected.
+        if wrong_aliases:
             for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
                 await db[collection_name].update_many(
-                    {"anime": {"$in": aliases}},
+                    {"anime": {"$in": wrong_aliases}},
                     {"$set": {"anime": canonical, "updatedAt": now}},
                 )
 
