@@ -39,12 +39,14 @@ async def ensure_indexes() -> None:
     await db.photos.create_index([("normalizedName", ASCENDING), ("cardId", ASCENDING)])
     await db.photos.create_index([("rarity", ASCENDING)])
     await db.photos.create_index([("anime", ASCENDING)])
+    await db.photos.create_index([("fileUniqueId", ASCENDING)])
 
     limited = db[LIMITED_CARDS_COLLECTION]
     await limited.create_index([("cardId", ASCENDING)], unique=True)
     await limited.create_index([("normalizedName", ASCENDING), ("cardId", ASCENDING)])
     await limited.create_index([("rarity", ASCENDING)])
     await limited.create_index([("anime", ASCENDING)])
+    await limited.create_index([("fileUniqueId", ASCENDING)])
 
     await db.users.create_index([("userId", ASCENDING)], unique=True)
     await db.users.create_index([("updatedAt", DESCENDING)])
@@ -75,6 +77,16 @@ async def ensure_indexes() -> None:
 
     await db.daily_claim_limits.create_index([("userId", ASCENDING), ("date", ASCENDING)], unique=True)
     await db.daily_claim_limits.create_index([("date", ASCENDING), ("count", DESCENDING)])
+
+    # Adding wizard / catalog indexes. These are additive and do not change
+    # existing card/user data.
+    await db.animes.create_index([("normalizedName", ASCENDING)], unique=True)
+    await db.animes.create_index([("normalizedName", ASCENDING), ("name", ASCENDING)])
+    await db.add_sessions.create_index([("expiresAt", ASCENDING)], expireAfterSeconds=0)
+    await db.add_sessions.create_index([("userId", ASCENDING), ("chatId", ASCENDING), ("status", ASCENDING)])
+    await db.add_operations.create_index([("status", ASCENDING), ("createdAt", ASCENDING)])
+    await db.add_operations.create_index([("cardId", ASCENDING)])
+    await db.card_id_reservations.create_index([("reservedAt", ASCENDING)], expireAfterSeconds=1800)
 
 
 async def close_db() -> None:
