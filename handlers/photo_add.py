@@ -1279,8 +1279,16 @@ async def add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     token = parts[1]
+    # Check expiry inside MongoDB instead of comparing a MongoDB-decoded
+    # naive datetime with utcnow()'s timezone-aware datetime. Motor/PyMongo
+    # decodes BSON datetimes as naive UTC by default, so a direct Python
+    # comparison can raise TypeError and make the button appear unresponsive.
     session = await get_db()[ADD_SESSION_COLLECTION].find_one(
-        {"_id": token, "status": "active"}
+        {
+            "_id": token,
+            "status": "active",
+            "expiresAt": {"$gt": utcnow()},
+        }
     )
     if not session:
         await query.answer("Add session expired. Send /add again.", show_alert=True)
@@ -1292,27 +1300,6 @@ async def add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     if int(session.get("chatId", 0) or 0) != int(query.message.chat_id):
         await query.answer("This Add session belongs to another chat.", show_alert=True)
-        return
-
-    if session.get("expiresAt") and session["expiresAt"] <= utcnow():
-        await get_db()[ADD_SESSION_COLLECTION].update_one(
-            {"_id": token, "status": "active"},
-            {
-                "$set": {
-                    "status": "expired",
-                    "closedAt": utcnow(),
-                    "updatedAt": utcnow(),
-                }
-            },
-        )
-        _cancel_add_session_task(token)
-        await query.edit_message_text(
-            "⏰ <b>Add session closed.</b>\n\n"
-            "No Add information was received for 3 minutes.\n"
-            "Send /add to start again.",
-            parse_mode="HTML",
-        )
-        await query.answer()
         return
 
     action = parts[0]
@@ -1412,9 +1399,14 @@ async def add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await query.answer("Cancelled.")
             return
 
-    except (ValueError, TelegramError) as exc:
+    except Exception as exc:
+        # Never leave Telegram's callback spinner hanging when an unexpected
+        # runtime/DB/Telegram error occurs inside the Add wizard.
         print("ADD CALLBACK ERROR:", repr(exc), flush=True)
-        await query.answer("Unable to process this Add action.", show_alert=True)
+        try:
+            await query.answer("Unable to process this Add action.", show_alert=True)
+        except TelegramError:
+            pass
         return
 
     await query.answer("Unknown Add action.", show_alert=True)
