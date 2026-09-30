@@ -27,6 +27,7 @@ from config import (
 from database.mongodb import close_db, get_db, init_db
 from database import sqlite_hot
 from handlers import register_handlers
+from handlers.photo_add import _ensure_card_counter
 from web.app import create_health_app
 from utils.text import utcnow
 from utils.anime_catalog import canonicalize_anime_catalog, ensure_anime_catalog_seeded
@@ -88,72 +89,57 @@ async def start_web_server(app_bot: Application | None = None) -> web.AppRunner:
                 update = Update.de_json(data=data, bot=app_bot.bot)
                 if update is None:
                     return web.Response(status=400, text="invalid update")
-
-                # Put the update into PTB's managed queue. This keeps Telegram's
-                # webhook request fast while letting Application.stop() drain
-                # queued/in-flight updates cleanly during graceful shutdown.
                 await app_bot.update_queue.put(update)
                 return web.Response(text="ok")
             except Exception as exc:
-                print("WEBHOOK ERROR:", repr(exc))
-                return web.Response(status=500, text="error")
+                print("WEBHOOK ERROR:", repr(exc), flush=True)
+                return web.Response(status=400, text="bad request")
 
         health_app.router.add_post(webhook_path, telegram_webhook)
-        print(f"Telegram webhook endpoint mounted at {webhook_path}")
 
     runner = web.AppRunner(health_app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
+
+    site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
     await site.start()
-    print(f"Web server running on :{PORT}")
+    print(f"Web server running on :{PORT}", flush=True)
     return runner
 
 
-def allowed_updates_for_bot() -> list[str]:
-    """Return configured update types while always keeping inline callbacks enabled.
+async def run_webhook(app: Application) -> tuple[web.AppRunner, str]:
+    runner = await start_web_server(app)
+    webhook_url = f"{WEBHOOK_URL.rstrip('/')}{_normalize_webhook_path(WEBHOOK_PATH)}"
 
-    The /add Anime selector uses CallbackQueryHandler. If an older deployment
-    environment has BOT_ALLOWED_UPDATES set without callback_query, Telegram will
-    show the inline buttons but no button press will ever reach the bot.
-    """
+    await app.bot.delete_webhook(drop_pending_updates=WEBHOOK_DROP_PENDING_UPDATES)
+    await app.bot.set_webhook(
+        url=webhook_url,
+        secret_token=WEBHOOK_SECRET_TOKEN or None,
+        allowed_updates=allowed_updates_for_bot(),
+    )
+
+    print(f"Telegram webhook endpoint mounted at {WEBHOOK_PATH}", flush=True)
+    print(f"BIKA Character Bot launched in webhook mode: {webhook_url}", flush=True)
+    return runner, webhook_url
+
+
+async def run_polling(app: Application) -> web.AppRunner:
+    health_runner = await start_web_server(app)
+
+    await app.updater.start_polling(
+        allowed_updates=allowed_updates_for_bot(),
+        drop_pending_updates=True,
+    )
+    print("BIKA Character Bot launched in polling mode", flush=True)
+    return health_runner
+
+
+def allowed_updates_for_bot() -> list[str]:
     configured = [str(item).strip() for item in (BOT_ALLOWED_UPDATES or []) if str(item).strip()]
     if not configured:
         configured = ["message", "inline_query", "my_chat_member"]
     if "callback_query" not in configured:
         configured.append("callback_query")
     return configured
-
-
-async def run_webhook(app: Application) -> tuple[web.AppRunner, str]:
-    if not WEBHOOK_URL:
-        raise RuntimeError("Missing WEBHOOK_URL. Example: https://your-service.onrender.com")
-
-    webhook_path = _normalize_webhook_path(WEBHOOK_PATH)
-    full_webhook_url = WEBHOOK_URL.rstrip("/") + webhook_path
-
-    health_runner = await start_web_server(app)
-    await app.bot.set_webhook(
-        url=full_webhook_url,
-        allowed_updates=allowed_updates_for_bot(),
-        secret_token=WEBHOOK_SECRET_TOKEN or None,
-        drop_pending_updates=WEBHOOK_DROP_PENDING_UPDATES,
-    )
-    print(f"BIKA Character Bot launched in webhook mode: {full_webhook_url}")
-    return health_runner, full_webhook_url
-
-
-async def run_polling(app: Application) -> web.AppRunner | None:
-    health_runner = None
-    if ENABLE_HEALTH_SERVER:
-        health_runner = await start_web_server(None)
-
-    await app.bot.delete_webhook(drop_pending_updates=WEBHOOK_DROP_PENDING_UPDATES)
-    await app.updater.start_polling(
-        drop_pending_updates=WEBHOOK_DROP_PENDING_UPDATES,
-        allowed_updates=allowed_updates_for_bot(),
-    )
-    print("BIKA Character Bot launched in polling mode")
-    return health_runner
 
 
 async def reset_group_state_on_startup() -> None:
@@ -198,6 +184,14 @@ async def main() -> None:
         raise RuntimeError("Missing WEBHOOK_URL in Render Environment Variables. Example: https://your-service.onrender.com")
 
     await init_db()
+
+    # Prepare the numeric /add counter before Telegram starts receiving updates.
+    # This keeps the first normal /add fast and avoids doing the initial full-ID
+    # compatibility scan inside a live media handler.
+    print("ADD COUNTER INIT START", flush=True)
+    await _ensure_card_counter()
+    print("ADD COUNTER INIT READY", flush=True)
+
     # Normalize legacy duplicate Anime aliases once before the bot starts serving /add.
     await ensure_anime_catalog_seeded()
     await canonicalize_anime_catalog()
