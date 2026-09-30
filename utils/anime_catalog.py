@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import re
 
+from utils.text import utcnow
+
 from pymongo import UpdateOne
 
 from config import LIMITED_CARDS_COLLECTION
@@ -66,7 +68,7 @@ async def ensure_anime_catalog_seeded() -> None:
                 "$set": {
                     ANIME_CATALOG_SEEDED_KEY: True,
                 },
-                "$setOnInsert": {"createdAt": __import__("datetime").datetime.now(__import__("datetime").timezone.utc)},
+                "$setOnInsert": {"createdAt": utcnow()},
             },
             upsert=True,
         )
@@ -79,8 +81,7 @@ async def add_anime(name: str, *, created_by: int) -> tuple[bool, str]:
     if not clean or not key:
         return False, ""
 
-    from utils.text import utcnow
-
+    now = utcnow()
     result = await db[ANIME_COLLECTION].update_one(
         {"normalizedName": key},
         {
@@ -88,9 +89,9 @@ async def add_anime(name: str, *, created_by: int) -> tuple[bool, str]:
                 "name": clean,
                 "normalizedName": key,
                 "createdBy": int(created_by),
-                "createdAt": utcnow(),
+                "createdAt": now,
             },
-            "$set": {"updatedAt": utcnow()},
+            "$set": {"updatedAt": now},
         },
         upsert=True,
     )
