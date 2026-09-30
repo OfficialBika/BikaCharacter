@@ -1286,27 +1286,54 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
 
-    # Accept the common full-width pipe copied from some keyboards as well.
+    # Accept full-width pipes and an optional "Media +" input marker.
+    # The marker is for human readability only and must never become part
+    # of the character name saved to MongoDB.
     caption = caption.replace("｜", "|").strip()
+    caption = re.sub(r"^\s*media\s*\+\s*", "", caption, count=1, flags=re.I)
     parsed = parse_normal_add_caption(caption)
     if not parsed:
         await msg.reply_text(
             "❌ Invalid Add format.\n\n"
             "New card:\n"
-            "Yelan | Lg\n\n"
+            "Yelan | Lg\n"
+            "or\n"
+            "Media + Yelan | Lg\n\n"
             "Update:\n"
-            "240 | Yelan | Dv\n\n"
+            "240 | Yelan | Dv\n"
+            "or\n"
+            "Media + 240 | Yelan | Dv\n\n"
             "Rarity codes: Su, Ca, Cv, Dv, My, Lg, Ra, Un, Co"
         )
         return
 
-    await _save_normal_card(
-        update,
-        context,
-        session,
-        parsed,
-        media_info,
+    print(
+        "ADD PARSED:"
+        f" user={int(user.id)} chat={int(chat.id)}"
+        f" cardId={parsed.get('cardId')!r}"
+        f" name={parsed.get('name')!r}"
+        f" rarity={parsed.get('rarity')!r}"
+        f" anime={session.get('selectedAnime')!r}",
+        flush=True,
     )
+
+    try:
+        await _save_normal_card(
+            update,
+            context,
+            session,
+            parsed,
+            media_info,
+        )
+    except Exception as exc:
+        print("ADD SAVE UNHANDLED ERROR:", repr(exc), flush=True)
+        try:
+            await msg.reply_text(
+                "❌ Failed to process this card. "
+                "Please send the same media + caption again."
+            )
+        except Exception:
+            pass
 
 
 async def add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
