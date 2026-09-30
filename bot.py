@@ -109,8 +109,18 @@ async def start_web_server(app_bot: Application | None = None) -> web.AppRunner:
 
 
 def allowed_updates_for_bot() -> list[str]:
-    """Limit Telegram update delivery to the update types this bot uses."""
-    return list(BOT_ALLOWED_UPDATES or ["message", "callback_query", "inline_query", "my_chat_member"])
+    """Return configured update types while always keeping inline callbacks enabled.
+
+    The /add Anime selector uses CallbackQueryHandler. If an older deployment
+    environment has BOT_ALLOWED_UPDATES set without callback_query, Telegram will
+    show the inline buttons but no button press will ever reach the bot.
+    """
+    configured = [str(item).strip() for item in (BOT_ALLOWED_UPDATES or []) if str(item).strip()]
+    if not configured:
+        configured = ["message", "inline_query", "my_chat_member"]
+    if "callback_query" not in configured:
+        configured.append("callback_query")
+    return configured
 
 
 async def run_webhook(app: Application) -> tuple[web.AppRunner, str]:
