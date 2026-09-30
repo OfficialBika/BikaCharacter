@@ -157,14 +157,18 @@ async def recover_pending_add_operations() -> None:
                 )
                 continue
 
+            # Avoid updating "createdAt" through both $set and
+            # $setOnInsert. Archived documents from the current Add flow already
+            # contain createdAt; older operations may not.
+            recovery_update = {"$set": document}
+            if "createdAt" not in document:
+                recovery_update["$setOnInsert"] = {
+                    "createdAt": op_created or utcnow(),
+                }
+
             await db[collection_name].update_one(
                 {"cardId": card_id},
-                {
-                    "$set": document,
-                    "$setOnInsert": {
-                        "createdAt": document.get("createdAt") or op_created or utcnow(),
-                    },
-                },
+                recovery_update,
                 upsert=True,
             )
             await db.add_operations.update_one(
