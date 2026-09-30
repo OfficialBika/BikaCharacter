@@ -75,6 +75,13 @@ def parse_normal_add_caption(caption: str = "") -> Optional[dict]:
     if not text or text.startswith("/"):
         return None
 
+    # /add media captions may optionally be written as:
+    #   Media + Raiden shogun | Ra
+    # Treat "Media +" only as an input marker, never as part of the name.
+    text = re.sub(r"^\s*media\s*\+\s*", "", text, count=1, flags=re.I)
+    if not text:
+        return None
+
     parts = [x.strip() for x in text.split("|")]
     if len(parts) == 2:
         card_id = ""
