@@ -1286,11 +1286,9 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
 
-    # Accept full-width pipes and an optional "Media +" input marker.
-    # The marker is for human readability only and must never become part
-    # of the character name saved to MongoDB.
+    # Accept full-width pipes. The parser also accepts an optional
+    # "Media +" input marker without storing it in the character name.
     caption = caption.replace("｜", "|").strip()
-    caption = re.sub(r"^\s*media\s*\+\s*", "", caption, count=1, flags=re.I)
     parsed = parse_normal_add_caption(caption)
     if not parsed:
         await msg.reply_text(
