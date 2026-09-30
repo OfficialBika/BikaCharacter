@@ -6,6 +6,8 @@ from typing import Optional
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import ASCENDING, DESCENDING
 
+from utils.text import utcnow
+
 from config import DB_NAME, MONGODB_URI, LIMITED_CARDS_COLLECTION
 
 _client: Optional[AsyncIOMotorClient] = None
@@ -30,6 +32,7 @@ async def init_db() -> None:
     _db = _client[DB_NAME]
     await _db.command("ping")
     await ensure_indexes()
+    await recover_pending_add_operations()
     print(f"MongoDB connected: {DB_NAME}")
 
 
@@ -87,6 +90,97 @@ async def ensure_indexes() -> None:
     await db.add_operations.create_index([("status", ASCENDING), ("createdAt", ASCENDING)])
     await db.add_operations.create_index([("cardId", ASCENDING)])
     await db.card_id_reservations.create_index([("reservedAt", ASCENDING)], expireAfterSeconds=1800)
+
+
+async def recover_pending_add_operations() -> None:
+    """Replay archived Add operations that were interrupted before final DB save.
+
+    Only operations that already reached the archived state are recovered.
+    If a newer card update exists, it wins and the stale operation is marked
+    complete instead of overwriting current data.
+    """
+    db = get_db()
+    rows = await db.add_operations.find(
+        {"status": "archived"},
+        {
+            "_id": 1,
+            "collectionName": 1,
+            "cardId": 1,
+            "document": 1,
+            "createdAt": 1,
+        },
+    ).sort("createdAt", 1).limit(100).to_list(100)
+
+    for operation in rows:
+        try:
+            collection_name = str(operation.get("collectionName") or "photos")
+            if collection_name not in {"photos", LIMITED_CARDS_COLLECTION}:
+                await db.add_operations.update_one(
+                    {"_id": operation["_id"], "status": "archived"},
+                    {
+                        "$set": {
+                            "status": "failed",
+                            "lastError": "Invalid Add operation collection.",
+                        }
+                    },
+                )
+                continue
+
+            document = dict(operation.get("document") or {})
+            card_id = str(operation.get("cardId") or document.get("cardId") or "").strip()
+            if not card_id:
+                continue
+
+            existing = await db[collection_name].find_one(
+                {"cardId": card_id},
+                {"updatedAt": 1},
+            )
+            op_created = operation.get("createdAt")
+            existing_updated = (existing or {}).get("updatedAt")
+
+            # A later successful edit must never be overwritten by an older
+            # interrupted operation.
+            if existing and existing_updated and op_created and existing_updated > op_created:
+                await db.add_operations.update_one(
+                    {"_id": operation["_id"], "status": "archived"},
+                    {
+                        "$set": {
+                            "status": "completed",
+                            "recoveredAt": utcnow(),
+                            "recoverySkipped": True,
+                            "updatedAt": utcnow(),
+                        }
+                    },
+                )
+                continue
+
+            await db[collection_name].update_one(
+                {"cardId": card_id},
+                {
+                    "$set": document,
+                    "$setOnInsert": {
+                        "createdAt": document.get("createdAt") or op_created or utcnow(),
+                    },
+                },
+                upsert=True,
+            )
+            await db.add_operations.update_one(
+                {"_id": operation["_id"], "status": "archived"},
+                {
+                    "$set": {
+                        "status": "completed",
+                        "recoveredAt": utcnow(),
+                        "updatedAt": utcnow(),
+                    }
+                },
+            )
+        except Exception as exc:
+            print(
+                "ADD OPERATION RECOVERY FAILED:",
+                operation.get("_id"),
+                repr(exc),
+                flush=True,
+            )
 
 
 async def close_db() -> None:
