@@ -129,12 +129,14 @@ async def _ensure_card_counter() -> None:
         db = get_db()
         max_id = await _max_numeric_card_id()
         now = utcnow()
+        # Do not combine $max and $setOnInsert on the same "seq" path.
+        # MongoDB rejects that combination as a path conflict (code 40).
+        # $max also initializes the field on an upsert when it is missing.
         await db.counters.update_one(
             {"_id": CARD_COUNTER_ID},
             {
                 "$max": {"seq": int(max_id)},
                 "$set": {"updatedAt": now},
-                "$setOnInsert": {"seq": int(max_id)},
             },
             upsert=True,
         )
