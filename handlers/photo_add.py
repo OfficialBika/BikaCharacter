@@ -822,19 +822,18 @@ async def _handle_limited_legacy_add(
     if not existing:
         base_doc["createdAt"] = now
 
-    await db[ADD_OPERATION_COLLECTION].insert_one(
-        {
-            "_id": op_id,
-            "status": "prepared",
-            "collectionName": collection_name,
-            "cardId": parsed["cardId"],
-            "document": base_doc,
-            "createdAt": now,
-        }
-    )
-
     storage = None
     try:
+        await db[ADD_OPERATION_COLLECTION].insert_one(
+            {
+                "_id": op_id,
+                "status": "prepared",
+                "collectionName": collection_name,
+                "cardId": parsed["cardId"],
+                "document": base_doc,
+                "createdAt": now,
+            }
+        )
         if same_media:
             storage = {
                 "storageChatId": existing["storageChatId"],
