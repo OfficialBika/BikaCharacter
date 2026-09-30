@@ -29,6 +29,7 @@ from database import sqlite_hot
 from handlers import register_handlers
 from web.app import create_health_app
 from utils.text import utcnow
+from utils.anime_catalog import canonicalize_anime_catalog, ensure_anime_catalog_seeded
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -197,6 +198,9 @@ async def main() -> None:
         raise RuntimeError("Missing WEBHOOK_URL in Render Environment Variables. Example: https://your-service.onrender.com")
 
     await init_db()
+    # Normalize legacy duplicate Anime aliases once before the bot starts serving /add.
+    await ensure_anime_catalog_seeded()
+    await canonicalize_anime_catalog()
     await sqlite_hot.init()
     sqlite_hot.start_flush_loop(get_db)
     await reset_group_state_on_startup()
