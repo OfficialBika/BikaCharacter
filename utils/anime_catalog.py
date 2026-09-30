@@ -147,6 +147,19 @@ async def canonicalize_anime_catalog() -> None:
         if isinstance(aliases, set):
             aliases.add(raw)
 
+    # Read catalog rows once and group them by the NEW canonical key. We must
+    # not query by normalizedName here because older rows may contain legacy
+    # keys such as "genshin impact" or "genshin impact [🎮]".
+    catalog_docs = await db[ANIME_COLLECTION].find(
+        {},
+        {"name": 1, "normalizedName": 1},
+    ).to_list(None)
+    catalog_by_key: dict[str, list[dict]] = {}
+    for doc in catalog_docs:
+        key = normalized_anime_key(doc.get("name", ""))
+        if key:
+            catalog_by_key.setdefault(key, []).append(doc)
+
     for key, group in groups.items():
         canonical = str(group["canonical"])
         aliases = sorted(group["aliases"])
@@ -157,11 +170,7 @@ async def canonicalize_anime_catalog() -> None:
                     {"$set": {"anime": canonical}},
                 )
 
-        candidate_keys = sorted({normalized_anime_key(alias) for alias in aliases})
-        docs = await db[ANIME_COLLECTION].find(
-            {"normalizedName": {"$in": candidate_keys}},
-            {"name": 1, "normalizedName": 1},
-        ).to_list(None)
+        docs = catalog_by_key.get(key, [])
 
         if docs:
             keep = next(
