@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 
 from pymongo import ReturnDocument
+from pymongo.errors import ConnectionFailure, OperationFailure
 from telegram import InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -164,20 +165,8 @@ async def _debit_sender_card(
         },
     )
 
-    # Clear favourite only if the sender no longer owns the card.
-    await db.users.update_one(
-        {
-            "userId": int(sender_id),
-            "favoriteCardId": str(card_id),
-            "cards.cardId": {"$ne": str(card_id)},
-        },
-        {
-            "$set": {
-                "favoriteCardId": "",
-                "updatedAt": utcnow(),
-            }
-        },
-    )
+    # Favourite is cleared only after the whole gift succeeds. This makes a
+    # failed gift rollback lossless for the sender's favourite selection.
 
     return {"ok": True, "snapshot": snapshot}
 
@@ -286,6 +275,177 @@ async def _rollback_sender_card(
     )
 
 
+def _transaction_unsupported(exc: BaseException) -> bool:
+    """Return True when the connected Mongo deployment cannot run transactions."""
+    if isinstance(exc, (ConnectionFailure, OperationFailure)):
+        message = str(exc).lower()
+        return (
+            "transaction numbers are only allowed" in message
+            or "transactions are not supported" in message
+            or "does not support transactions" in message
+            or getattr(exc, "code", None) in {20, 263, 303}
+        )
+    return False
+
+
+async def _clear_sender_favorite_if_missing(sender_id: int, card_id: str) -> None:
+    await get_db().users.update_one(
+        {
+            "userId": int(sender_id),
+            "favoriteCardId": str(card_id),
+            "cards.cardId": {"$ne": str(card_id)},
+        },
+        {
+            "$set": {
+                "favoriteCardId": "",
+                "updatedAt": utcnow(),
+            }
+        },
+    )
+
+
+async def _complete_gift_transaction(
+    *,
+    token: str,
+    sender_id: int,
+    receiver_id: int,
+    card_id: str,
+    qty: int,
+    card_snapshot: dict,
+) -> None:
+    """Commit gift inventory, transfer log and request status atomically."""
+    db = get_db()
+    card_id = str(card_id)
+    qty = int(qty)
+    exp_inc = int(get_rarity_exp(card_snapshot.get("rarity"))) * qty
+
+    async def _txn(session):
+        sender_result = await db.users.update_one(
+            {
+                "userId": int(sender_id),
+                "cards": {
+                    "$elemMatch": {
+                        "cardId": card_id,
+                        "count": {"$gte": qty},
+                    }
+                },
+            },
+            {
+                "$inc": {"cards.$[giftcard].count": -qty},
+                "$set": {"updatedAt": utcnow()},
+            },
+            array_filters=[{"giftcard.cardId": card_id}],
+            session=session,
+        )
+        if sender_result.modified_count != 1:
+            raise ValueError("Not enough quantity or card not found.")
+
+        await db.users.update_one(
+            {
+                "userId": int(sender_id),
+                "cards": {
+                    "$elemMatch": {
+                        "cardId": card_id,
+                        "count": {"$lte": 0},
+                    }
+                },
+            },
+            {
+                "$pull": {
+                    "cards": {
+                        "cardId": card_id,
+                        "count": {"$lte": 0},
+                    }
+                },
+                "$set": {"updatedAt": utcnow()},
+            },
+            session=session,
+        )
+
+        await db.users.update_one(
+            {
+                "userId": int(sender_id),
+                "favoriteCardId": card_id,
+                "cards.cardId": {"$ne": card_id},
+            },
+            {
+                "$set": {
+                    "favoriteCardId": "",
+                    "updatedAt": utcnow(),
+                }
+            },
+            session=session,
+        )
+
+        receiver_result = await db.users.update_one(
+            {
+                "userId": int(receiver_id),
+                "cards.cardId": card_id,
+            },
+            {
+                "$inc": {
+                    "cards.$[giftcard].count": qty,
+                    "exp": exp_inc,
+                },
+                "$set": {"updatedAt": utcnow()},
+            },
+            array_filters=[{"giftcard.cardId": card_id}],
+            session=session,
+        )
+        if receiver_result.modified_count != 1:
+            receiver_result = await db.users.update_one(
+                {
+                    "userId": int(receiver_id),
+                    "cards.cardId": {"$ne": card_id},
+                },
+                {
+                    "$push": {"cards": public_card_snapshot(card_snapshot, qty)},
+                    "$inc": {"exp": exp_inc},
+                    "$set": {"updatedAt": utcnow()},
+                },
+                session=session,
+            )
+            if receiver_result.modified_count != 1:
+                raise RuntimeError("Receiver card credit race could not be resolved.")
+
+        now = utcnow()
+        await db.transfers.update_one(
+            {"_id": str(token)},
+            {
+                "$setOnInsert": {
+                    "_id": str(token),
+                    "fromUserId": int(sender_id),
+                    "toUserId": int(receiver_id),
+                    "cardId": card_id,
+                    "name": str(card_snapshot.get("name", "")),
+                    "rarity": str(card_snapshot.get("rarity", "")),
+                    "anime": str(card_snapshot.get("anime", "")),
+                    "qty": qty,
+                    "createdAt": now,
+                }
+            },
+            upsert=True,
+            session=session,
+        )
+
+        result = await db[GIFT_REQUESTS_COLLECTION].update_one(
+            {"_id": str(token), "status": "processing"},
+            {
+                "$set": {
+                    "status": "completed",
+                    "completedAt": now,
+                    "updatedAt": now,
+                }
+            },
+            session=session,
+        )
+        if result.modified_count != 1:
+            raise RuntimeError("Gift request state could not be finalized.")
+
+    async with await db.client.start_session() as session:
+        await session.with_transaction(_txn)
+
+
 async def gift_with_args(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -316,7 +476,7 @@ async def gift_with_args(
     if len(args) > 1 and args[1].isdigit():
         qty = max(1, int(args[1]))
 
-    sender_doc = await ensure_user(sender)
+    sender_doc = await ensure_user(sender, include_cards=True)
     await ensure_user(receiver)
 
     card = next(
@@ -401,7 +561,7 @@ async def gift_confirm_callback(
 
     request = await get_db()[GIFT_REQUESTS_COLLECTION].find_one(
         {"_id": token},
-        {"senderId": 1, "status": 1},
+        {"senderId": 1, "status": 1, "receiverId": 1, "cardId": 1, "qty": 1, "cardSnapshot": 1},
     )
     if not request:
         await query.answer("Gift request not found or expired.", show_alert=True)
@@ -430,12 +590,70 @@ async def gift_confirm_callback(
     receiver_id = int(reserved["receiverId"])
     card_id = str(reserved["cardId"])
     qty = int(reserved["qty"])
+    card_snapshot = dict(reserved.get("cardSnapshot") or {})
 
-    debit = await _debit_sender_card(
-        sender_id,
-        card_id,
-        qty,
-    )
+    try:
+        await _complete_gift_transaction(
+            token=token,
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+            card_id=card_id,
+            qty=qty,
+            card_snapshot=card_snapshot,
+        )
+    except ValueError as exc:
+        await _mark_gift_request(
+            token,
+            "failed",
+            failureReason=str(exc),
+        )
+        await query.edit_message_text(f"❌ {exc}")
+        await query.answer(t("failed"), show_alert=True)
+        return
+    except (ConnectionFailure, OperationFailure) as exc:
+        if not _transaction_unsupported(exc):
+            await _mark_gift_request(
+                token,
+                "failed",
+                failureReason=f"Mongo gift transaction failed: {type(exc).__name__}",
+            )
+            await query.edit_message_text(
+                "❌ Gift failed safely. No inventory changes were committed."
+            )
+            await query.answer(t("failed"), show_alert=True)
+            return
+
+        # Standalone MongoDB compatibility: use the existing atomic debit/credit
+        # helpers with compensation. Replica-set/sharded deployments use the
+        # fully atomic path above.
+        print("GIFT TRANSACTIONS UNSUPPORTED: using compensating fallback", flush=True)
+    except Exception as exc:
+        await _mark_gift_request(
+            token,
+            "failed",
+            failureReason=f"Gift transaction failed: {type(exc).__name__}",
+        )
+        print("GIFT TRANSACTION ERROR:", repr(exc), flush=True)
+        await query.edit_message_text(
+            "❌ Gift failed safely. No inventory changes were committed."
+        )
+        await query.answer(t("failed"), show_alert=True)
+        return
+    else:
+        await query.edit_message_text(
+            t(
+                "gift_success",
+                emoji=get_rarity_emoji(card_snapshot.get("rarity")),
+                name=escape_html(card_snapshot.get("name")),
+                card_id=escape_html(card_snapshot.get("cardId")),
+                qty=qty,
+            ),
+            parse_mode="HTML",
+        )
+        await query.answer(t("gift_confirmed"))
+        return
+
+    debit = await _debit_sender_card(sender_id, card_id, qty)
     if not debit.get("ok"):
         await _mark_gift_request(
             token,
@@ -466,11 +684,7 @@ async def gift_confirm_callback(
 
     if not credited:
         try:
-            await _rollback_sender_card(
-                sender_id,
-                card_snapshot,
-                qty,
-            )
+            await _rollback_sender_card(sender_id, card_snapshot, qty)
         finally:
             await _mark_gift_request(
                 token,
@@ -497,7 +711,6 @@ async def gift_confirm_callback(
         "createdAt": now,
     }
 
-    # Idempotent transfer log: token is unique.
     await get_db().transfers.update_one(
         {"_id": token},
         {"$setOnInsert": transfer_doc},
@@ -509,6 +722,7 @@ async def gift_confirm_callback(
         "completed",
         completedAt=now,
     )
+    await _clear_sender_favorite_if_missing(sender_id, card_id)
 
     await query.edit_message_text(
         t(
@@ -521,7 +735,6 @@ async def gift_confirm_callback(
         parse_mode="HTML",
     )
     await query.answer(t("gift_confirmed"))
-
 
 async def gift_cancel_callback(
     update: Update,

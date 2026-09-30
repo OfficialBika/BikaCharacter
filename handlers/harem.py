@@ -752,7 +752,7 @@ async def noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 def register_harem_handlers(app: Application) -> None:
-    app.add_handler(CommandHandler("harem", harem_cmd))
-    app.add_handler(MessageHandler(filters.Regex(r"^\.harem(?:\s+\d+)?$"), harem_dot_cmd))
+    app.add_handler(CommandHandler("bharem", harem_cmd))
+    app.add_handler(MessageHandler(filters.Regex(r"^\.bharem(?:\s+\d+)?$"), harem_dot_cmd))
     app.add_handler(CallbackQueryHandler(harem_callback, pattern=r"^harem:\d+:-?\d+$"))
     app.add_handler(CallbackQueryHandler(noop_callback, pattern=r"^noop$"))

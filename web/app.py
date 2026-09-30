@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import hashlib
 import os
-import secrets
 import time
 from collections import OrderedDict
 from typing import Any
@@ -74,9 +74,11 @@ def store_profile_image(
         60,
         int(ttl_seconds or PROFILE_IMAGE_TTL_SECONDS),
     )
-    token = secrets.token_urlsafe(24)
+    # Use a content-addressed token so identical profile renders reuse the same
+    # public URL. This lets downstream clients cache the image instead of
+    # downloading a fresh URL on every /profile request.
+    token = hashlib.sha256(image_bytes).hexdigest()[:32]
     expires_at = time.monotonic() + ttl
-
     _PROFILE_IMAGE_CACHE[token] = (
         image_bytes,
         expires_at,
@@ -132,5 +134,13 @@ def create_health_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
-    app.router.add_get("/profile-image/{token}.jpg", profile_image)
+
+    # /bprofile now sends the stored Telegram file_id directly, so this
+    # legacy public image endpoint is opt-in to avoid unnecessary HTTP egress.
+    enabled = str(
+        os.getenv("ENABLE_PROFILE_IMAGE_ENDPOINT", "false") or "false"
+    ).strip().lower()
+    if enabled in {"1", "true", "yes", "on"}:
+        app.router.add_get("/profile-image/{token}.jpg", profile_image)
+
     return app

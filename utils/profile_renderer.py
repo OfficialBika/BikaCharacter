@@ -21,6 +21,7 @@ except Exception:  # pragma: no cover
 
 CANVAS_W = 1400
 CANVAS_H = 900
+PROFILE_JPEG_QUALITY = max(70, min(90, int(os.getenv("PROFILE_JPEG_QUALITY", "82") or 82)))
 
 EMOJI_FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
@@ -837,7 +838,7 @@ def render_profile_card(
     img.save(
         out,
         format="JPEG",
-        quality=93,
+        quality=PROFILE_JPEG_QUALITY,
         optimize=True,
     )
 
