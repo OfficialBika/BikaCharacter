@@ -894,9 +894,12 @@ async def _handle_limited_legacy_add(
         )
 
         try:
+            # "createdAt" is already inside doc for a new card.
+            # Do not also target the same field with $setOnInsert; MongoDB
+            # rejects that as a path conflict (code 40).
             await db[collection_name].update_one(
                 {"cardId": parsed["cardId"]},
-                {"$set": doc, "$setOnInsert": {"createdAt": now}},
+                {"$set": doc},
                 upsert=True,
             )
         except DuplicateKeyError:
@@ -1118,9 +1121,12 @@ async def _save_normal_card(
         )
 
         try:
+            # "createdAt" is already inside doc for a new card.
+            # Do not also target the same field with $setOnInsert; MongoDB
+            # rejects that as a path conflict (code 40).
             await db[collection_name].update_one(
                 {"cardId": parsed["cardId"]},
-                {"$set": doc, "$setOnInsert": {"createdAt": now}},
+                {"$set": doc},
                 upsert=True,
             )
         except DuplicateKeyError:
