@@ -1,39 +1,61 @@
 from __future__ import annotations
 
+import asyncio
+import math
+import secrets
+from datetime import timedelta
+
 import config
-from pymongo.errors import DuplicateKeyError
-from telegram import Update
+from pymongo import ReturnDocument
+from telegram import InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
-from telegram.ext import Application, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from database.mongodb import get_db
-from utils.parser import parse_add_caption
+from utils.anime_catalog import add_anime, ensure_anime_catalog_seeded, list_animes
+from utils.buttons import action_button, make_button
+from utils.parser import parse_add_caption, parse_normal_add_caption
 from utils.permissions import is_owner
 from utils.text import escape_html, mention_user, utcnow
 
 CARD_DATABASE_CHANNEL_ID = config.CARD_DATABASE_CHANNEL_ID
+ADDING_LOG_CHANNEL_ID = getattr(
+    config,
+    "ADDING_LOG_CHANNEL_ID",
+    getattr(config, "GROUP_LOG_CHANNEL_ID", ""),
+)
 RARITY_ORDER = config.RARITY_ORDER
 LIMITED_CARDS_COLLECTION = getattr(config, "LIMITED_CARDS_COLLECTION", "limited_cards")
 LIMITED_RARITY_NAME = getattr(config, "LIMITED_RARITY_NAME", "Limited")
 
-# Adder Group ထဲကနေ /add သုံးချင်တဲ့ group ID.
-# config.py ထဲမှာ ADDER_GROUP_ID ရှိရင် အဲဒါကိုသုံးမယ်။
-# မရှိရင် default group ID ကိုသုံးမယ်။
 ADDER_GROUP_IDS = getattr(
     config,
     "ADDER_GROUP_IDS",
-    [-1003983636133]
+    [-1003983636133],
 )
 SETTINGS_ID = "config"
 CARD_COUNTER_ID = "photo_card_id"
-CARD_RESERVATIONS_COLLECTION = "card_id_reservations"
-
+ADD_SESSION_COLLECTION = "add_sessions"
+ADD_OPERATION_COLLECTION = "add_operations"
+ADD_SESSION_TIMEOUT_SECONDS = int(getattr(config, "ADD_SESSION_TIMEOUT_SECONDS", 180))
+ADD_ANIME_PAGE_SIZE = int(getattr(config, "ADD_ANIME_PAGE_SIZE", 10))
 
 SUPPORTED_DOCUMENT_MIME_PREFIXES = ("image/", "video/")
 
+_ADD_SESSION_TASKS: dict[str, asyncio.Task] = {}
+_CARD_COUNTER_READY = False
+_CARD_COUNTER_LOCK = asyncio.Lock()
+
 
 def is_forwarded_message(msg) -> bool:
-    """Detect Telegram forwarded/copy-forwarded messages and reject them for /add."""
+    """Detect forwarded/copy-forwarded messages and reject them for /add."""
     return any(
         getattr(msg, attr, None)
         for attr in (
@@ -47,28 +69,19 @@ def is_forwarded_message(msg) -> bool:
 
 
 def is_limited_card(parsed: dict, card_id_provided: bool) -> bool:
-    card_id = str(parsed.get("cardId", "")).strip()
+    """Limited cards keep the existing owner-only rules."""
     rarity = str(parsed.get("rarity", "")).strip()
-    return rarity.lower() == str(LIMITED_RARITY_NAME).lower() or (card_id_provided and bool(card_id) and not card_id.isdigit())
+    return rarity.casefold() == str(LIMITED_RARITY_NAME).casefold()
 
 
 def is_allowed_add_chat(update: Update) -> bool:
     chat = update.effective_chat
     if not chat:
         return False
-
-    # /add is allowed only inside the configured Adder Group(s).
-    # Bot DM is intentionally not an add location.
-
-    # သတ်မှတ်ထားတဲ့ Adder Group ထဲမှာ add ခွင့်ပြု
-    return int(chat.id) in {
-    int(x)
-    for x in ADDER_GROUP_IDS
-    }
+    return int(chat.id) in {int(x) for x in ADDER_GROUP_IDS}
 
 
 async def is_allowed_adder(user) -> bool:
-    # Owner can be matched by OWNER_ID or OWNER_USERNAME.
     if is_owner(user):
         return True
 
@@ -80,45 +93,51 @@ async def is_allowed_adder(user) -> bool:
         {"_id": SETTINGS_ID},
         {"adderIds": 1},
     )
-    return int(user_id) in [int(x) for x in (settings or {}).get("adderIds", [])]
+    return int(user_id) in {int(x) for x in (settings or {}).get("adderIds", [])}
 
 
 async def _max_numeric_card_id() -> int:
+    """Scan numeric IDs only once per process, during counter initialization."""
     db = get_db()
     max_id = 0
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
-        docs = await db[collection_name].aggregate([
-            {"$match": {"cardId": {"$regex": r"^[0-9]+$"}}},
-            {"$project": {"cardIdNum": {"$toInt": "$cardId"}}},
-            {"$sort": {"cardIdNum": -1}},
-            {"$limit": 1},
-        ]).to_list(1)
+        docs = await db[collection_name].aggregate(
+            [
+                {"$match": {"cardId": {"$regex": r"^[0-9]+$"}}},
+                {"$project": {"cardIdNum": {"$toInt": "$cardId"}}},
+                {"$sort": {"cardIdNum": -1}},
+                {"$limit": 1},
+            ]
+        ).to_list(1)
         if docs:
-            max_id = max(max_id, int(docs[0]["cardIdNum"]))
+            max_id = max(max_id, int(docs[0].get("cardIdNum", 0) or 0))
     return max_id
 
 
 async def _ensure_card_counter() -> None:
-    """Legacy counter compatibility.
+    """Initialize the atomic numeric ID counter once per process."""
+    global _CARD_COUNTER_READY
 
-    New auto-ID assignment uses the smallest missing numeric ID from 1.
-    This counter is still kept in sync for old code compatibility.
-    """
-    db = get_db()
-    existing = await db.counters.find_one({"_id": CARD_COUNTER_ID})
-    if existing:
+    if _CARD_COUNTER_READY:
         return
 
-    max_id = await _max_numeric_card_id()
-    try:
-        await db.counters.insert_one({
-            "_id": CARD_COUNTER_ID,
-            "seq": max_id,
-            "updatedAt": utcnow(),
-        })
-    except Exception:
-        # Another concurrent /add may have created it first.
-        pass
+    async with _CARD_COUNTER_LOCK:
+        if _CARD_COUNTER_READY:
+            return
+
+        db = get_db()
+        max_id = await _max_numeric_card_id()
+        now = utcnow()
+        await db.counters.update_one(
+            {"_id": CARD_COUNTER_ID},
+            {
+                "$max": {"seq": int(max_id)},
+                "$set": {"updatedAt": now},
+                "$setOnInsert": {"seq": int(max_id)},
+            },
+            upsert=True,
+        )
+        _CARD_COUNTER_READY = True
 
 
 async def _sync_card_counter_at_least(card_id: str) -> None:
@@ -132,68 +151,39 @@ async def _sync_card_counter_at_least(card_id: str) -> None:
     )
 
 
-async def _existing_numeric_card_ids() -> set[int]:
+async def _card_id_exists(card_id: str) -> bool:
     db = get_db()
-    existing: set[int] = set()
-    for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
-        docs = await db[collection_name].aggregate([
-            {"$match": {"cardId": {"$regex": r"^[0-9]+$"}}},
-            {"$project": {"_id": 0, "cardIdNum": {"$toInt": "$cardId"}}},
-        ]).to_list(None)
-        existing.update(int(doc["cardIdNum"]) for doc in docs if int(doc.get("cardIdNum", 0) or 0) > 0)
-    return existing
+    normal, limited = await asyncio.gather(
+        db.photos.find_one({"cardId": str(card_id)}, {"_id": 1}),
+        db[LIMITED_CARDS_COLLECTION].find_one({"cardId": str(card_id)}, {"_id": 1}),
+    )
+    return bool(normal or limited)
 
 
-async def _reserved_numeric_card_ids() -> set[int]:
-    docs = await get_db()[CARD_RESERVATIONS_COLLECTION].find({}, {"_id": 1}).to_list(None)
-    reserved: set[int] = set()
-    for doc in docs:
-        value = str(doc.get("_id", ""))
-        if value.isdigit() and int(value) > 0:
-            reserved.add(int(value))
-    return reserved
-
-
-async def _reserve_next_card_id() -> str:
-    """Reserve the smallest missing numeric card ID starting from 1.
-
-    Example:
-      existing IDs: 1, 2, 3, 5, ..., 130
-      next new ID: 4
-
-    A short reservation document is used to reduce duplicate ID races when two
-    adders upload at nearly the same time.
-    """
+async def _next_auto_card_id() -> str:
+    """Allocate a numeric ID atomically without scanning all cards per add."""
+    await _ensure_card_counter()
     db = get_db()
 
     while True:
-        existing_ids = await _existing_numeric_card_ids()
-        reserved_ids = await _reserved_numeric_card_ids()
-        unavailable = existing_ids | reserved_ids
-
-        next_id = 1
-        while next_id in unavailable:
-            next_id += 1
-
-        next_id_str = str(next_id)
-        try:
-            await db[CARD_RESERVATIONS_COLLECTION].insert_one({
-                "_id": next_id_str,
-                "reservedAt": utcnow(),
-            })
-            return next_id_str
-        except DuplicateKeyError:
-            # Another add operation reserved the same ID first. Try again.
+        counter = await db.counters.find_one_and_update(
+            {"_id": CARD_COUNTER_ID},
+            {
+                "$inc": {"seq": 1},
+                "$set": {"updatedAt": utcnow()},
+            },
+            projection={"_id": 0, "seq": 1},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not counter:
             continue
 
+        candidate = str(int(counter.get("seq", 0) or 0))
+        if int(candidate) <= 0:
+            continue
 
-async def _release_reserved_card_id(card_id: str) -> None:
-    if not str(card_id).isdigit():
-        return
-    try:
-        await get_db()[CARD_RESERVATIONS_COLLECTION].delete_one({"_id": str(card_id)})
-    except Exception:
-        pass
+        if not await _card_id_exists(candidate):
+            return candidate
 
 
 def _database_caption(action: str, parsed: dict, adder) -> str:
@@ -210,14 +200,7 @@ def _database_caption(action: str, parsed: dict, adder) -> str:
 
 
 def _extract_message_media(msg) -> dict | None:
-    """Return Telegram media info for supported card media.
-
-    Supported:
-      - photo
-      - video / mp4 sent as Telegram video
-      - animation / gif
-      - image/video sent as document
-    """
+    """Return Telegram media info for supported card media."""
     if msg.photo:
         media = msg.photo[-1]
         return {
@@ -327,129 +310,784 @@ async def _post_to_card_database_channel(
     }
 
 
-async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _edit_database_caption(
+    context: ContextTypes.DEFAULT_TYPE,
+    storage: dict,
+    caption: str,
+) -> bool:
+    chat_id = storage.get("storageChatId")
+    message_id = storage.get("storageMessageId")
+    if not chat_id or not message_id:
+        return False
+
+    try:
+        await context.bot.edit_message_caption(
+            chat_id=chat_id,
+            message_id=int(message_id),
+            caption=caption,
+            parse_mode="HTML",
+        )
+        return True
+    except Exception as exc:
+        print("EDIT CARD DATABASE CAPTION FAILED:", repr(exc), flush=True)
+        return False
+
+
+async def _delete_database_message(
+    context: ContextTypes.DEFAULT_TYPE,
+    storage: dict | None,
+) -> bool:
+    if not storage:
+        return True
+
+    chat_id = storage.get("storageChatId")
+    message_id = storage.get("storageMessageId")
+    if not chat_id or not message_id:
+        return True
+
+    try:
+        await context.bot.delete_message(
+            chat_id=chat_id,
+            message_id=int(message_id),
+        )
+        return True
+    except Exception as exc:
+        print("DELETE OLD CARD DATABASE MESSAGE FAILED:", repr(exc), flush=True)
+        return False
+
+
+def _cancel_add_session_task(token: str) -> None:
+    task = _ADD_SESSION_TASKS.pop(str(token), None)
+    if task and not task.done():
+        task.cancel()
+
+
+async def _expire_add_session(token: str, bot) -> None:
+    try:
+        await asyncio.sleep(ADD_SESSION_TIMEOUT_SECONDS)
+    except asyncio.CancelledError:
+        return
+
+    try:
+        now = utcnow()
+        session = await get_db()[ADD_SESSION_COLLECTION].find_one_and_update(
+            {
+                "_id": str(token),
+                "status": "active",
+                "expiresAt": {"$lte": now},
+            },
+            {
+                "$set": {
+                    "status": "expired",
+                    "closedAt": now,
+                    "updatedAt": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if not session:
+            return
+
+        try:
+            await bot.edit_message_text(
+                chat_id=int(session["chatId"]),
+                message_id=int(session["promptMessageId"]),
+                text=(
+                    "⏰ <b>Add session closed.</b>\n\n"
+                    "No Add information was received for 3 minutes.\n"
+                    "Send /add to start again."
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            print("ADD SESSION EXPIRY MESSAGE EDIT FAILED:", repr(exc), flush=True)
+    finally:
+        _ADD_SESSION_TASKS.pop(str(token), None)
+
+
+def _schedule_add_session_expiry(token: str, bot) -> None:
+    _cancel_add_session_task(token)
+    _ADD_SESSION_TASKS[str(token)] = asyncio.create_task(
+        _expire_add_session(str(token), bot)
+    )
+
+
+async def _touch_add_session(
+    token: str,
+    bot,
+    *,
+    anime: str | None = None,
+) -> dict | None:
+    now = utcnow()
+    expires_at = now + timedelta(seconds=ADD_SESSION_TIMEOUT_SECONDS)
+    update_data = {
+        "expiresAt": expires_at,
+        "updatedAt": now,
+    }
+    if anime is not None:
+        update_data["selectedAnime"] = str(anime)
+
+    session = await get_db()[ADD_SESSION_COLLECTION].find_one_and_update(
+        {
+            "_id": str(token),
+            "status": "active",
+            "expiresAt": {"$gt": now},
+        },
+        {"$set": update_data},
+        return_document=ReturnDocument.AFTER,
+    )
+    if session:
+        _schedule_add_session_expiry(str(token), bot)
+    return session
+
+
+async def _get_active_add_session(user_id: int, chat_id: int) -> dict | None:
+    now = utcnow()
+    return await get_db()[ADD_SESSION_COLLECTION].find_one(
+        {
+            "userId": int(user_id),
+            "chatId": int(chat_id),
+            "status": "active",
+            "expiresAt": {"$gt": now},
+        },
+        sort=[("createdAt", -1)],
+    )
+
+
+def _add_anime_keyboard(
+    *,
+    token: str,
+    page: int,
+    names: list[str],
+    total: int,
+) -> InlineKeyboardMarkup:
+    rows: list[list] = []
+    for index in range(0, len(names), 2):
+        row = []
+        for local_index, name in enumerate(names[index:index + 2]):
+            absolute_index = index + local_index
+            row.append(
+                make_button(
+                    name,
+                    style="primary",
+                    callback_data=f"addsel:{token}:{absolute_index}",
+                    strip_existing_emoji=False,
+                )
+            )
+        rows.append(row)
+
+    total_pages = max(1, math.ceil(total / ADD_ANIME_PAGE_SIZE))
+    if total_pages > 1:
+        nav: list = []
+        if page > 0:
+            nav.append(
+                action_button(
+                    "◀️",
+                    "primary",
+                    callback_data=f"addpage:{token}:{page - 1}",
+                )
+            )
+        nav.append(
+            action_button(
+                f"{page + 1}/{total_pages}",
+                "primary",
+                callback_data=f"addpage:{token}:{page}",
+            )
+        )
+        if page < total_pages - 1:
+            nav.append(
+                action_button(
+                    "▶️",
+                    "primary",
+                    callback_data=f"addpage:{token}:{page + 1}",
+                )
+            )
+        rows.append(nav)
+
+    rows.append(
+        [
+            action_button(
+                "✖ Cancel",
+                "danger",
+                callback_data=f"addcancel:{token}",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(rows)
+
+
+async def _render_add_anime_page(
+    *,
+    bot,
+    chat_id: int,
+    message_id: int,
+    token: str,
+    page: int,
+) -> None:
+    names, total = await list_animes(page, ADD_ANIME_PAGE_SIZE)
+    if total <= 0:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=(
+                "🎴 <b>Please choose Anime</b>\n\n"
+                "No Anime found in the database yet.\n"
+                "Use /addanime Anime Name first."
+            ),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(
+                [[
+                    action_button(
+                        "✖ Cancel",
+                        "danger",
+                        callback_data=f"addcancel:{token}",
+                    )
+                ]]
+            ),
+        )
+        return
+
+    total_pages = max(1, math.ceil(total / ADD_ANIME_PAGE_SIZE))
+    safe_page = max(0, min(int(page), total_pages - 1))
+    if safe_page != int(page):
+        names, total = await list_animes(safe_page, ADD_ANIME_PAGE_SIZE)
+
+    await bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=message_id,
+        text=(
+            "🎴 <b>Please choose Anime</b>\n\n"
+            "Select the Anime for the cards you are going to add."
+        ),
+        parse_mode="HTML",
+        reply_markup=_add_anime_keyboard(
+            token=token,
+            page=safe_page,
+            names=names,
+            total=total,
+        ),
+    )
+
+
+async def start_add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_allowed_add_chat(update):
         return
 
-    if not update.effective_user:
-        return
-
+    user = update.effective_user
     msg = update.effective_message
-    if not msg:
+    chat = update.effective_chat
+    if not user or not msg or not chat:
         return
 
-    media_info = _extract_message_media(msg)
-    if not media_info:
-        return
-
-    caption = (msg.caption or "").strip()
-    looks_like_add = caption.lower().startswith("/add")
-
-    # Forward add is disabled. Direct uploads with /add only.
-    if is_forwarded_message(msg):
-        if looks_like_add:
-            await msg.reply_text("❌ Forward add is disabled. Please upload the media directly with /add.")
-        return
-
-    # /add မဟုတ်တဲ့ group/private media တွေကို ignore
-    if not looks_like_add:
-        return
-
-    if not await is_allowed_adder(update.effective_user):
+    if not await is_allowed_adder(user):
         await msg.reply_text(
             "❌ You are not allowed to add/update cards. "
             "Ask the owner to use /addadder for your account."
         )
         return
 
-    file_id = media_info["fileId"]
-    media_type = media_info["mediaType"]
-
-    parsed = parse_add_caption(caption)
-    if not parsed:
+    if context.args:
         await msg.reply_text(
-            "❌ Invalid add format.\n\n"
-            "Normal card with auto ID:\n"
-            "/add Yelan | Legendary | Genshin Impact\n\n"
-            "Normal card with specific numeric ID:\n"
-            "/add 2 | Yelan | Legendary | Genshin Impact\n\n"
-            "Limited owner-give-only card:\n"
-            "/add 1a | Special Name | Limited | Bika Limited\n\n"
-            f"Allowed rarities:\n{', '.join(RARITY_ORDER)}"
+            "❌ New /add format does not use command arguments.\n\n"
+            "Use /add, choose Anime, then send media with:\n"
+            "Yelan | Lg\n"
+            "or\n"
+            "240 | Yelan | Dv"
         )
         return
 
-    reserved_auto_card_id = ""
+    await ensure_anime_catalog_seeded()
+
+    db = get_db()
+    now = utcnow()
+    previous = await db[ADD_SESSION_COLLECTION].find_one_and_update(
+        {
+            "userId": int(user.id),
+            "chatId": int(chat.id),
+            "status": "active",
+        },
+        {
+            "$set": {
+                "status": "cancelled",
+                "closedAt": now,
+                "updatedAt": now,
+            }
+        },
+        sort=[("createdAt", -1)],
+        return_document=ReturnDocument.BEFORE,
+    )
+    if previous:
+        _cancel_add_session_task(str(previous["_id"]))
+
+    token = secrets.token_hex(8)
+    expires_at = now + timedelta(seconds=ADD_SESSION_TIMEOUT_SECONDS)
+
+    sent = await msg.reply_text(
+        "🎴 <b>Please choose Anime</b>\n\n"
+        "Select the Anime for the cards you are going to add.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(
+            [[
+                action_button(
+                    "Loading Anime…",
+                    "primary",
+                    callback_data=f"addpage:{token}:0",
+                )
+            ]]
+        ),
+    )
+
+    await db[ADD_SESSION_COLLECTION].delete_many(
+        {
+            "userId": int(user.id),
+            "chatId": int(chat.id),
+            "status": "active",
+        }
+    )
+    await db[ADD_SESSION_COLLECTION].insert_one(
+        {
+            "_id": token,
+            "userId": int(user.id),
+            "chatId": int(chat.id),
+            "status": "active",
+            "selectedAnime": "",
+            "promptMessageId": int(sent.message_id),
+            "createdAt": now,
+            "updatedAt": now,
+            "expiresAt": expires_at,
+        }
+    )
+
+    await _render_add_anime_page(
+        bot=context.bot,
+        chat_id=int(chat.id),
+        message_id=int(sent.message_id),
+        token=token,
+        page=0,
+    )
+    _schedule_add_session_expiry(token, context.bot)
+
+
+async def addanime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_allowed_add_chat(update):
+        return
+
+    user = update.effective_user
+    msg = update.effective_message
+    if not user or not msg:
+        return
+
+    if not await is_allowed_adder(user):
+        await msg.reply_text(
+            "❌ You are not allowed to add Anime. "
+            "Ask the owner to use /addadder for your account."
+        )
+        return
+
+    anime_name = " ".join(context.args or []).strip()
+    if not anime_name:
+        await msg.reply_text("Usage: /addanime Naruto")
+        return
+
+    try:
+        await ensure_anime_catalog_seeded()
+        created, clean_name = await add_anime(
+            anime_name,
+            created_by=int(user.id),
+        )
+    except Exception as exc:
+        print("ADD ANIME FAILED:", repr(exc), flush=True)
+        await msg.reply_text("❌ Failed to add Anime. Please try again.")
+        return
+
+    if not created:
+        await msg.reply_text(
+            f"⚠️ Anime already exists: {escape_html(clean_name)}",
+            parse_mode="HTML",
+        )
+        return
+
+    await msg.reply_text(
+        f"✅ New added Anime {escape_html(clean_name)}",
+        parse_mode="HTML",
+    )
+
+    if ADDING_LOG_CHANNEL_ID:
+        try:
+            await context.bot.send_message(
+                chat_id=ADDING_LOG_CHANNEL_ID,
+                text=(
+                    f"New added Anime {escape_html(clean_name)}\n\n"
+                    f"By {mention_user(user)}."
+                ),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception as exc:
+            print("SEND ADDING ANIME LOG FAILED:", repr(exc), flush=True)
+
+
+async def _handle_limited_legacy_add(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    media_info: dict,
+    caption: str,
+) -> bool:
+    parsed = parse_add_caption(caption)
+    if not parsed:
+        return False
+
     card_id_provided = bool(parsed.pop("_cardIdProvided", False))
     parsed["cardId"] = str(parsed.get("cardId", "")).strip()
 
-    limited_card = is_limited_card(parsed, card_id_provided)
-    if limited_card and not is_owner(update.effective_user):
+    if not is_limited_card(parsed, card_id_provided):
+        return False
+
+    if not is_owner(update.effective_user):
+        await update.effective_message.reply_text(
+            "❌ Limited cards can only be added/updated by the owner."
+        )
+        return True
+
+    if not card_id_provided or not parsed["cardId"] or parsed["cardId"].isdigit():
+        await update.effective_message.reply_text(
+            "❌ Limited cards require a custom non-numeric ID. "
+            "Example: /add 1a | Special Name | Limited | Bika Limited"
+        )
+        return True
+
+    parsed["rarity"] = str(LIMITED_RARITY_NAME)
+    collection_name = LIMITED_CARDS_COLLECTION
+    db = get_db()
+
+    existing, duplicate_other = await asyncio.gather(
+        db[collection_name].find_one({"cardId": parsed["cardId"]}),
+        db.photos.find_one({"cardId": parsed["cardId"]}, {"_id": 1}),
+    )
+    if duplicate_other and not existing:
+        await update.effective_message.reply_text(
+            f"❌ Card ID {parsed['cardId']} already exists in photos."
+        )
+        return True
+
+    unique_id = str(media_info.get("fileUniqueId", "")).strip()
+    duplicate_matches: list[dict] = []
+    if unique_id:
+        normal_dupes, limited_dupes = await asyncio.gather(
+            db.photos.find(
+                {
+                    "fileUniqueId": unique_id,
+                    "cardId": {"$ne": str(parsed["cardId"])},
+                },
+                {"_id": 0, "cardId": 1, "name": 1},
+            ).limit(5).to_list(5),
+            db[collection_name].find(
+                {
+                    "fileUniqueId": unique_id,
+                    "cardId": {"$ne": str(parsed["cardId"])},
+                },
+                {"_id": 0, "cardId": 1, "name": 1},
+            ).limit(5).to_list(5),
+        )
+        duplicate_matches = normal_dupes + limited_dupes
+
+    action = "Update" if existing else "Saved"
+    channel_caption = _database_caption(action, parsed, update.effective_user)
+    old_storage = (
+        {
+            "storageChatId": existing.get("storageChatId"),
+            "storageMessageId": existing.get("storageMessageId"),
+        }
+        if existing
+        else None
+    )
+    same_media = bool(
+        existing
+        and unique_id
+        and str(existing.get("fileUniqueId", "")) == unique_id
+        and existing.get("storageChatId")
+        and existing.get("storageMessageId")
+    )
+
+    op_id = secrets.token_hex(12)
+    now = utcnow()
+    base_doc = {
+        **parsed,
+        "mimeType": media_info.get("mimeType", ""),
+        "fileName": media_info.get("fileName", ""),
+        "addedBy": update.effective_user.id,
+        "updatedAt": now,
+    }
+    if not existing:
+        base_doc["createdAt"] = now
+
+    await db[ADD_OPERATION_COLLECTION].insert_one(
+        {
+            "_id": op_id,
+            "status": "prepared",
+            "collectionName": collection_name,
+            "cardId": parsed["cardId"],
+            "document": base_doc,
+            "createdAt": now,
+        }
+    )
+
+    storage = None
+    try:
+        if same_media:
+            storage = {
+                "storageChatId": existing["storageChatId"],
+                "storageMessageId": existing["storageMessageId"],
+                "fileId": existing.get("fileId") or media_info["fileId"],
+                "fileUniqueId": existing.get("fileUniqueId") or unique_id,
+                "mediaType": existing.get("mediaType") or media_info["mediaType"],
+            }
+            if not await _edit_database_caption(context, storage, channel_caption):
+                storage = await _post_to_card_database_channel(
+                    context,
+                    media_info["fileId"],
+                    channel_caption,
+                    media_info["mediaType"],
+                )
+        else:
+            storage = await _post_to_card_database_channel(
+                context,
+                media_info["fileId"],
+                channel_caption,
+                media_info["mediaType"],
+            )
+
+        doc = {**base_doc, **storage}
+        await db[ADD_OPERATION_COLLECTION].update_one(
+            {"_id": op_id},
+            {
+                "$set": {
+                    "status": "archived",
+                    "document": doc,
+                    "storage": storage,
+                    "oldStorage": old_storage,
+                    "archivedAt": utcnow(),
+                    "updatedAt": utcnow(),
+                }
+            },
+        )
+
+        await db[collection_name].update_one(
+            {"cardId": parsed["cardId"]},
+            {"$set": doc, "$setOnInsert": {"createdAt": now}},
+            upsert=True,
+        )
+        await db[ADD_OPERATION_COLLECTION].update_one(
+            {"_id": op_id},
+            {
+                "$set": {
+                    "status": "completed",
+                    "completedAt": utcnow(),
+                    "updatedAt": utcnow(),
+                }
+            },
+        )
+
+        if not same_media and old_storage:
+            await _delete_database_message(context, old_storage)
+
+    except TelegramError as exc:
+        await db[ADD_OPERATION_COLLECTION].update_one(
+            {"_id": op_id},
+            {
+                "$set": {
+                    "status": "failed",
+                    "lastError": str(exc),
+                    "updatedAt": utcnow(),
+                }
+            },
+        )
+        await update.effective_message.reply_text(
+            f"❌ Failed to archive Limited card: {escape_html(str(exc))}"
+        )
+        return True
+    except Exception as exc:
+        await db[ADD_OPERATION_COLLECTION].update_one(
+            {"_id": op_id},
+            {
+                "$set": {
+                    "status": "archived" if storage else "failed",
+                    "lastError": repr(exc),
+                    "updatedAt": utcnow(),
+                }
+            },
+        )
+        await update.effective_message.reply_text(
+            "❌ Limited card save encountered an error. "
+            "The archived operation will be recovered safely."
+        )
+        return True
+
+    warning = ""
+    if duplicate_matches:
+        first = duplicate_matches[0]
+        warning = (
+            "\n\n⚠️ Possible duplicate media already used by "
+            f"ID {escape_html(first.get('cardId'))}"
+            f" — {escape_html(first.get('name'))}."
+        )
+
+    await update.effective_message.reply_text(
+        f"{'✅' if action == 'Saved' else '♻️'} Limited card {action}.\n"
+        f"ID: {parsed['cardId']}\n"
+        f"Name: {parsed['name']}\n"
+        f"Rarity: {parsed['rarity']}\n"
+        f"Anime: {parsed['anime']}"
+        f"{warning}"
+    )
+    return True
+
+
+async def _save_normal_card(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    session: dict,
+    parsed: dict,
+    media_info: dict,
+) -> None:
+    msg = update.effective_message
+    user = update.effective_user
+    db = get_db()
+
+    card_id_provided = bool(parsed.pop("_cardIdProvided", False))
+    parsed["cardId"] = str(parsed.get("cardId", "")).strip()
+
+    if card_id_provided and not parsed["cardId"].isdigit():
         await msg.reply_text(
-            "❌ Limited cards can only be added/updated by the owner.\n"
-            "Normal adders can add/update normal numeric ID cards only."
+            "❌ Update ID must be numeric. Example: 240 | Yelan | Dv"
         )
         return
 
-    if limited_card:
-        parsed["rarity"] = str(LIMITED_RARITY_NAME)
-        if not card_id_provided or not parsed["cardId"]:
-            await msg.reply_text("❌ Limited cards require a custom ID. Example: /add 1a | Name | Limited | Anime")
-            return
-    else:
-        if not card_id_provided:
-            parsed["cardId"] = await _reserve_next_card_id()
-            reserved_auto_card_id = parsed["cardId"]
-        elif not parsed["cardId"].isdigit():
-            await msg.reply_text("❌ Non-numeric IDs are only allowed for Rarity Limited cards.")
-            return
+    if not card_id_provided:
+        parsed["cardId"] = await _next_auto_card_id()
 
-    collection_name = LIMITED_CARDS_COLLECTION if limited_card else "photos"
-    other_collection_name = "photos" if limited_card else LIMITED_CARDS_COLLECTION
-    mode = "Limited card" if limited_card else "Card"
+    parsed["anime"] = str(session.get("selectedAnime", "")).strip()
+    if not parsed["anime"]:
+        await msg.reply_text("❌ Add session has no selected Anime. Please send /add again.")
+        return
 
-    db = get_db()
-    try:
-        existing = await db[collection_name].find_one(
-            {"cardId": parsed["cardId"]},
-            {"_id": 1, "createdAt": 1},
+    collection_name = "photos"
+    other_collection_name = LIMITED_CARDS_COLLECTION
+
+    existing, duplicate_other = await asyncio.gather(
+        db[collection_name].find_one({"cardId": parsed["cardId"]}),
+        db[other_collection_name].find_one({"cardId": parsed["cardId"]}, {"_id": 1}),
+    )
+
+    if duplicate_other and not existing:
+        await msg.reply_text(
+            f"❌ Card ID {parsed['cardId']} belongs to a Limited card."
         )
-        duplicate_other = await db[other_collection_name].find_one({"cardId": parsed["cardId"]}, {"_id": 1})
-        if duplicate_other and not existing:
-            await msg.reply_text(f"❌ Card ID {parsed['cardId']} already exists in {other_collection_name}.")
-            return
+        return
 
-        action = "Update" if existing else "Saved"
-        channel_caption = _database_caption(action, parsed, update.effective_user)
+    action = "Update" if existing else "Saved"
 
-        try:
-            storage = await _post_to_card_database_channel(context, file_id, channel_caption, media_type)
-        except TelegramError as exc:
-            await msg.reply_text(
-                "❌ Failed to post card media to Bika Database channel.\n\n"
-                "Check these:\n"
-                "1) CARD_DATABASE_CHANNEL_ID is correct\n"
-                "2) Bot is admin in that private channel\n"
-                f"3) Telegram error: {exc}"
-            )
-            return
-        except Exception as exc:
-            await msg.reply_text(f"❌ Bika Database channel setup error: {exc}")
-            return
+    unique_id = str(media_info.get("fileUniqueId", "")).strip()
+    duplicate_matches: list[dict] = []
+    if unique_id:
+        normal_dupes, limited_dupes = await asyncio.gather(
+            db.photos.find(
+                {
+                    "fileUniqueId": unique_id,
+                    "cardId": {"$ne": str(parsed["cardId"])},
+                },
+                {"_id": 0, "cardId": 1, "name": 1},
+            ).limit(5).to_list(5),
+            db[LIMITED_CARDS_COLLECTION].find(
+                {
+                    "fileUniqueId": unique_id,
+                    "cardId": {"$ne": str(parsed["cardId"])},
+                },
+                {"_id": 0, "cardId": 1, "name": 1},
+            ).limit(5).to_list(5),
+        )
+        duplicate_matches = normal_dupes + limited_dupes
 
-        now = utcnow()
-        doc = {
-            **parsed,
-            "fileId": storage["fileId"],
-            "fileUniqueId": storage.get("fileUniqueId", ""),
-            "mediaType": storage.get("mediaType", media_type),
-            "mimeType": media_info.get("mimeType", ""),
-            "fileName": media_info.get("fileName", ""),
-            "storageChatId": storage["storageChatId"],
-            "storageMessageId": storage["storageMessageId"],
-            "addedBy": update.effective_user.id,
-            "updatedAt": now,
+    channel_caption = _database_caption(action, parsed, user)
+    old_storage = (
+        {
+            "storageChatId": existing.get("storageChatId"),
+            "storageMessageId": existing.get("storageMessageId"),
         }
+        if existing
+        else None
+    )
+    same_media = bool(
+        existing
+        and unique_id
+        and str(existing.get("fileUniqueId", "")) == unique_id
+        and existing.get("storageChatId")
+        and existing.get("storageMessageId")
+    )
+
+    op_id = secrets.token_hex(12)
+    now = utcnow()
+    base_doc = {
+        **parsed,
+        "mimeType": media_info.get("mimeType", ""),
+        "fileName": media_info.get("fileName", ""),
+        "addedBy": user.id,
+        "updatedAt": now,
+    }
+    if not existing:
+        base_doc["createdAt"] = now
+
+    storage = None
+    try:
+        await db[ADD_OPERATION_COLLECTION].insert_one(
+            {
+                "_id": op_id,
+                "status": "prepared",
+                "collectionName": collection_name,
+                "cardId": parsed["cardId"],
+                "document": base_doc,
+                "createdAt": now,
+            }
+        )
+
+        if same_media:
+            storage = {
+                "storageChatId": existing["storageChatId"],
+                "storageMessageId": existing["storageMessageId"],
+                "fileId": existing.get("fileId") or media_info["fileId"],
+                "fileUniqueId": existing.get("fileUniqueId") or unique_id,
+                "mediaType": existing.get("mediaType") or media_info["mediaType"],
+            }
+            if not await _edit_database_caption(context, storage, channel_caption):
+                storage = await _post_to_card_database_channel(
+                    context,
+                    media_info["fileId"],
+                    channel_caption,
+                    media_info["mediaType"],
+                )
+        else:
+            storage = await _post_to_card_database_channel(
+                context,
+                media_info["fileId"],
+                channel_caption,
+                media_info["mediaType"],
+            )
+
+        doc = {**base_doc, **storage}
+
+        await db[ADD_OPERATION_COLLECTION].update_one(
+            {"_id": op_id},
+            {
+                "$set": {
+                    "status": "archived",
+                    "document": doc,
+                    "storage": storage,
+                    "oldStorage": old_storage,
+                    "archivedAt": utcnow(),
+                    "updatedAt": utcnow(),
+                }
+            },
+        )
 
         await db[collection_name].update_one(
             {"cardId": parsed["cardId"]},
@@ -457,25 +1095,324 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             upsert=True,
         )
 
-        if not limited_card:
-            await _sync_card_counter_at_least(parsed["cardId"])
+        await _sync_card_counter_at_least(parsed["cardId"])
 
-        icon = "✅" if action == "Saved" else "♻️"
-        await msg.reply_text(
-            f"{icon} {mode} {action}.\n"
-            f"ID: {parsed['cardId']}\n"
-            f"Name: {parsed['name']}\n"
-            f"Rarity: {parsed['rarity']}\n"
-            f"Anime: {parsed['anime']}\n"
-            f"Media: {storage.get('mediaType', media_type)}\n"
-            f"Collection: {collection_name}\n"
-            f"Bika Database Message ID: {storage['storageMessageId']}"
+        await db[ADD_OPERATION_COLLECTION].update_one(
+            {"_id": op_id},
+            {
+                "$set": {
+                    "status": "completed",
+                    "completedAt": utcnow(),
+                    "updatedAt": utcnow(),
+                }
+            },
         )
-    finally:
-        if reserved_auto_card_id:
-            await _release_reserved_card_id(reserved_auto_card_id)
+
+        if not same_media and old_storage:
+            await _delete_database_message(context, old_storage)
+
+    except TelegramError as exc:
+        await db[ADD_OPERATION_COLLECTION].update_one(
+            {"_id": op_id},
+            {
+                "$set": {
+                    "status": "failed",
+                    "lastError": str(exc),
+                    "updatedAt": utcnow(),
+                }
+            },
+        )
+        await msg.reply_text(
+            "❌ Failed to post card media to Bika Database channel.\n\n"
+            "Check CARD_DATABASE_CHANNEL_ID and the bot's channel permissions.\n"
+            f"Telegram error: {escape_html(str(exc))}"
+        )
+        return
+    except Exception as exc:
+        await db[ADD_OPERATION_COLLECTION].update_one(
+            {"_id": op_id},
+            {
+                "$set": {
+                    "status": "archived" if storage else "failed",
+                    "lastError": repr(exc),
+                    "updatedAt": utcnow(),
+                }
+            },
+        )
+        await msg.reply_text(
+            "❌ Card save encountered an error. "
+            "The archived operation will be recovered safely."
+        )
+        return
+
+    await _touch_add_session(
+        str(session["_id"]),
+        context.bot,
+        anime=str(parsed["anime"]),
+    )
+
+    warning = ""
+    if duplicate_matches:
+        first = duplicate_matches[0]
+        warning = (
+            "\n\n⚠️ Possible duplicate media already used by "
+            f"ID {escape_html(first.get('cardId'))}"
+            f" — {escape_html(first.get('name'))}."
+        )
+
+    await msg.reply_text(
+        f"{'✅' if action == 'Saved' else '♻️'} Card {action}.\n"
+        f"ID: {parsed['cardId']}\n"
+        f"Name: {parsed['name']}\n"
+        f"Rarity: {parsed['rarity']}\n"
+        f"Anime: {parsed['anime']}\n"
+        f"Media: {storage.get('mediaType', media_info['mediaType'])}\n"
+        f"Collection: {collection_name}"
+        f"{warning}"
+    )
+
+
+async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_allowed_add_chat(update):
+        return
+
+    user = update.effective_user
+    msg = update.effective_message
+    chat = update.effective_chat
+    if not user or not msg or not chat:
+        return
+
+    media_info = _extract_message_media(msg)
+    if not media_info:
+        return
+
+    caption = (msg.caption or "").strip()
+    looks_like_add_command = caption.casefold().startswith("/add")
+
+    if is_forwarded_message(msg):
+        if looks_like_add_command:
+            await msg.reply_text(
+                "❌ Forward add is disabled. Please upload the media directly with /add."
+            )
+        return
+
+    if not await is_allowed_adder(user):
+        if looks_like_add_command or "|" in caption:
+            await msg.reply_text(
+                "❌ You are not allowed to add/update cards. "
+                "Ask the owner to use /addadder for your account."
+            )
+        return
+
+    # Preserve the old Limited owner-only path.
+    if looks_like_add_command:
+        handled = await _handle_limited_legacy_add(
+            update,
+            context,
+            media_info,
+            caption,
+        )
+        if handled:
+            return
+
+        await msg.reply_text(
+            "❌ Normal cards now use the new Add flow.\n\n"
+            "1) Send /add\n"
+            "2) Choose Anime\n"
+            "3) Send media with:\n"
+            "Yelan | Lg"
+        )
+        return
+
+    session = await _get_active_add_session(int(user.id), int(chat.id))
+    if not session:
+        if "|" in caption:
+            await msg.reply_text("❌ Please send /add first, then choose Anime.")
+        return
+
+    await _touch_add_session(str(session["_id"]), context.bot)
+
+    parsed = parse_normal_add_caption(caption)
+    if not parsed:
+        await msg.reply_text(
+            "❌ Invalid Add format.\n\n"
+            "New card:\n"
+            "Yelan | Lg\n\n"
+            "Update:\n"
+            "240 | Yelan | Dv\n\n"
+            "Rarity codes: Su, Ca, Cv, Dv, My, Lg, Ra, Un, Co"
+        )
+        return
+
+    await _save_normal_card(
+        update,
+        context,
+        session,
+        parsed,
+        media_info,
+    )
+
+
+async def add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not query.from_user or not query.message:
+        return
+
+    data = str(query.data or "")
+    parts = data.split(":")
+    if len(parts) < 2:
+        await query.answer("Invalid Add action.", show_alert=True)
+        return
+
+    token = parts[1]
+    session = await get_db()[ADD_SESSION_COLLECTION].find_one(
+        {"_id": token, "status": "active"}
+    )
+    if not session:
+        await query.answer("Add session expired. Send /add again.", show_alert=True)
+        return
+
+    if int(session.get("userId", 0) or 0) != int(query.from_user.id):
+        await query.answer("This Add session belongs to another user.", show_alert=True)
+        return
+
+    if int(session.get("chatId", 0) or 0) != int(query.message.chat_id):
+        await query.answer("This Add session belongs to another chat.", show_alert=True)
+        return
+
+    if session.get("expiresAt") and session["expiresAt"] <= utcnow():
+        await get_db()[ADD_SESSION_COLLECTION].update_one(
+            {"_id": token, "status": "active"},
+            {
+                "$set": {
+                    "status": "expired",
+                    "closedAt": utcnow(),
+                    "updatedAt": utcnow(),
+                }
+            },
+        )
+        _cancel_add_session_task(token)
+        await query.edit_message_text(
+            "⏰ <b>Add session closed.</b>\n\n"
+            "No Add information was received for 3 minutes.\n"
+            "Send /add to start again.",
+            parse_mode="HTML",
+        )
+        await query.answer()
+        return
+
+    action = parts[0]
+
+    try:
+        if action == "addsel" and len(parts) == 3:
+            absolute_index = int(parts[2])
+            page = max(0, absolute_index // ADD_ANIME_PAGE_SIZE)
+            names, _total = await list_animes(page, ADD_ANIME_PAGE_SIZE)
+            local_index = absolute_index % ADD_ANIME_PAGE_SIZE
+            if local_index >= len(names):
+                await query.answer("Anime is no longer available.", show_alert=True)
+                return
+
+            selected = names[local_index]
+            touched = await _touch_add_session(
+                token,
+                context.bot,
+                anime=selected,
+            )
+            if not touched:
+                await query.answer("Add session expired.", show_alert=True)
+                return
+
+            await query.edit_message_text(
+                f"✅ <b>Selected Anime:</b> {escape_html(selected)}\n\n"
+                "Now send the character media with:\n\n"
+                "<code>Yelan | Lg</code>\n"
+                "or\n"
+                "<code>240 | Yelan | Dv</code>\n\n"
+                "The selected Anime will be used for every card until you "
+                "change it or the 3-minute session expires.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(
+                    [[
+                        action_button(
+                            "🔄 Change Anime",
+                            "primary",
+                            callback_data=f"addchange:{token}",
+                        ),
+                        action_button(
+                            "✖ Cancel",
+                            "danger",
+                            callback_data=f"addcancel:{token}",
+                        ),
+                    ]]
+                ),
+            )
+            await query.answer("Anime selected.")
+            return
+
+        if action == "addpage" and len(parts) == 3:
+            page = max(0, int(parts[2]))
+            await _touch_add_session(token, context.bot)
+            await _render_add_anime_page(
+                bot=context.bot,
+                chat_id=int(query.message.chat_id),
+                message_id=int(query.message.message_id),
+                token=token,
+                page=page,
+            )
+            await query.answer()
+            return
+
+        if action == "addchange" and len(parts) == 2:
+            await _touch_add_session(token, context.bot, anime="")
+            await _render_add_anime_page(
+                bot=context.bot,
+                chat_id=int(query.message.chat_id),
+                message_id=int(query.message.message_id),
+                token=token,
+                page=0,
+            )
+            await query.answer("Choose Anime.")
+            return
+
+        if action == "addcancel" and len(parts) == 2:
+            now = utcnow()
+            cancelled = await get_db()[ADD_SESSION_COLLECTION].find_one_and_update(
+                {"_id": token, "status": "active"},
+                {
+                    "$set": {
+                        "status": "cancelled",
+                        "closedAt": now,
+                        "updatedAt": now,
+                    }
+                },
+                return_document=ReturnDocument.AFTER,
+            )
+            _cancel_add_session_task(token)
+            if cancelled:
+                await query.edit_message_text(
+                    "✖ <b>Add session cancelled.</b>\n\n"
+                    "Send /add to start again.",
+                    parse_mode="HTML",
+                )
+            await query.answer("Cancelled.")
+            return
+
+    except (ValueError, TelegramError) as exc:
+        print("ADD CALLBACK ERROR:", repr(exc), flush=True)
+        await query.answer("Unable to process this Add action.", show_alert=True)
+        return
+
+    await query.answer("Unknown Add action.", show_alert=True)
 
 
 def register_photo_add_handlers(app: Application) -> None:
-    # Adder Group ထဲက photo/video/gif/document captions တွေကိုပဲ /add အတွက်ဖမ်းရန်
+    app.add_handler(CommandHandler("add", start_add_cmd))
+    app.add_handler(CommandHandler("addanime", addanime_cmd))
+    app.add_handler(
+        CallbackQueryHandler(
+            add_callback,
+            pattern=r"^add(?:sel|page|change|cancel):",
+        )
+    )
     app.add_handler(MessageHandler(filters.ATTACHMENT, photo_add_handler))
