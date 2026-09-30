@@ -1217,6 +1217,14 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     caption = (msg.caption or "").strip()
     media_info = _extract_message_media(msg)
+    if media_info:
+        print(
+            "ADD MEDIA RECEIVED:"
+            f" chat={int(chat.id)} user={int(user.id)}"
+            f" type={media_info.get('mediaType')}"
+            f" caption={caption[:200]!r}",
+            flush=True,
+        )
     if not media_info:
         # Do not silently ignore a captioned unsupported attachment.
         # This makes malformed client/media delivery visible to the adder.
@@ -1455,4 +1463,10 @@ def register_photo_add_handlers(app: Application) -> None:
             pattern=r"^add(?:sel|page|change|cancel):",
         )
     )
-    app.add_handler(MessageHandler(filters.ATTACHMENT, photo_add_handler))
+    add_media_filter = (
+        filters.PHOTO
+        | filters.VIDEO
+        | filters.ANIMATION
+        | filters.Document.ALL
+    )
+    app.add_handler(MessageHandler(add_media_filter, photo_add_handler))
