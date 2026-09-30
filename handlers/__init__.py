@@ -1,4 +1,4 @@
-from telegram.ext import Application, CallbackQueryHandler
+from telegram.ext import Application
 
 from handlers.admin import register_admin_handlers
 from handlers.broadcast import register_broadcast_handlers
@@ -11,7 +11,7 @@ from handlers.group_events import register_group_event_handlers
 from handlers.inline import register_inline_handlers
 from handlers.harem import register_harem_handlers
 from handlers.hmode import register_hmode_handlers
-from handlers.photo_add import add_callback, register_photo_add_handlers
+from handlers.photo_add import register_photo_add_handlers
 
 # Public /profile uses the new generated-image implementation.
 from handlers.profile import register_profile_handlers
@@ -52,13 +52,6 @@ def register_handlers(app: Application) -> None:
     register_admin_handlers(app)
     register_broadcast_handlers(app)
     register_photo_add_handlers(app)
-    # /add Anime selector and its paging/change/cancel buttons.
-    app.add_handler(
-        CallbackQueryHandler(
-            add_callback,
-            pattern=r"^(?:addsel|addpage|addchange|addcancel):[^:]+(?::\d+)?$",
-        )
-    )
     register_claim_handlers(app)
     register_check_handlers(app)
     register_profile_handlers(app)
