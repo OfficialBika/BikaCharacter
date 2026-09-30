@@ -73,29 +73,80 @@ http://localhost:8080/
 
 ## Add cards / Bika Database channel
 
-Create a private channel named **Bika Database**, add the bot as admin, then set `CARD_DATABASE_CHANNEL_ID` in `.env`. Every `/add` will post the card media to that private channel first, then save `fileId`, `fileUniqueId`, `storageChatId`, and `storageMessageId` in MongoDB.
+Create a private channel named **Bika Database**, add the bot as admin, then set
+`CARD_DATABASE_CHANNEL_ID` in `.env`. Normal cards now use a multi-step
+`/add` wizard. The selected Anime is remembered for the active three-minute
+session.
 
-New card with auto ID from 1 upward:
-
-```text
-/add Yelan | Legendary | Genshin Impact
-```
-
-Update/save a specific ID without changing the ID:
+Start a normal add:
 
 ```text
-/add 2 | Yelan | Legendary | Genshin Impact
+/add
 ```
 
-If ID 400 already exists as the latest ID and you update ID 2, the card remains ID 2. The next auto ID continues from the latest counter.
-
-Bot replies and channel captions show `Saved` for new cards and `Update` for existing card edits.
-
-Allowed rarities:
+The bot shows the Anime list as inline buttons. Choose the Anime, then send the
+character media with one of these captions:
 
 ```text
-Supreme, Cataphract, CrossVerse, Divine, Mystical, Legendary, Rare, Uncommon, Common
+Yelan | Lg
+240 | Yelan | Dv
 ```
+
+Short rarity codes are:
+
+```text
+Su = Supreme
+Ca = Cataphract
+Cv = CrossVerse
+Dv = Divine
+My = Mystical
+Lg = Legendary
+Ra = Rare
+Un = Uncommon
+Co = Common
+```
+
+The short code is input-only. MongoDB stores the full configured rarity name,
+for example `Lg` becomes `Legendary`.
+
+For a normal card without an explicit ID, the bot allocates the next numeric ID
+atomically. For an existing numeric ID, the three-part form updates/saves that
+specific ID:
+
+```text
+240 | Yelan | Dv
+```
+
+The Anime session is inactivity-based and closes automatically after three
+minutes without Add activity. Send `/add` again to start a new session.
+
+Use `/addanime Naruto` in the configured Adder Group to create a new Anime.
+The bot prevents duplicate Anime names using a normalized unique key and logs
+new Anime additions to `ADDING_LOG_CHANNEL_ID` (falling back to
+`GROUP_LOG_CHANNEL_ID` when the new variable is empty):
+
+```text
+New added Anime Naruto
+
+By @username.
+```
+
+Limited cards keep the existing owner-only flow and custom non-numeric IDs:
+
+```text
+/add 1a | Special Name | Limited | Bika Limited
+```
+
+Forwarded media and DM `/add` are not allowed. The Bika Database archive keeps
+the existing `fileId`, `fileUniqueId`, media type, storage chat/message
+references, and card metadata. When an existing card is updated with the same
+media, the archive caption is edited instead of posting another copy. A
+changed media file creates the new archive entry and the old archive message is
+removed after the database update succeeds.
+
+Interrupted archive/save operations are recorded and can be replayed safely on
+startup, so a Telegram archive post is not silently lost just because MongoDB
+failed during the same Add request.
 
 ## Rarity spawn schedule
 
