@@ -466,7 +466,7 @@ def _add_anime_keyboard(
     for index in range(0, len(names), 2):
         row = []
         for local_index, name in enumerate(names[index:index + 2]):
-            absolute_index = index + local_index
+            absolute_index = (int(page) * ADD_ANIME_PAGE_SIZE) + index + local_index
             row.append(
                 make_button(
                     name,
