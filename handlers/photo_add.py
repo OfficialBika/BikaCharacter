@@ -7,6 +7,7 @@ from datetime import timedelta
 
 import config
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 from telegram import InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
 from telegram.ext import (
@@ -872,11 +873,18 @@ async def _handle_limited_legacy_add(
             },
         )
 
-        await db[collection_name].update_one(
-            {"cardId": parsed["cardId"]},
-            {"$set": doc, "$setOnInsert": {"createdAt": now}},
-            upsert=True,
-        )
+        try:
+            await db[collection_name].update_one(
+                {"cardId": parsed["cardId"]},
+                {"$set": doc, "$setOnInsert": {"createdAt": now}},
+                upsert=True,
+            )
+        except DuplicateKeyError:
+            # A concurrent Add can win the unique cardId insert race.
+            await db[collection_name].update_one(
+                {"cardId": parsed["cardId"]},
+                {"$set": doc},
+            )
         await db[ADD_OPERATION_COLLECTION].update_one(
             {"_id": op_id},
             {
@@ -1089,11 +1097,18 @@ async def _save_normal_card(
             },
         )
 
-        await db[collection_name].update_one(
-            {"cardId": parsed["cardId"]},
-            {"$set": doc, "$setOnInsert": {"createdAt": now}},
-            upsert=True,
-        )
+        try:
+            await db[collection_name].update_one(
+                {"cardId": parsed["cardId"]},
+                {"$set": doc, "$setOnInsert": {"createdAt": now}},
+                upsert=True,
+            )
+        except DuplicateKeyError:
+            # A concurrent Add can win the unique cardId insert race.
+            await db[collection_name].update_one(
+                {"cardId": parsed["cardId"]},
+                {"$set": doc},
+            )
 
         await _sync_card_counter_at_least(parsed["cardId"])
 
