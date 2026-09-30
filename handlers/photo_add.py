@@ -254,13 +254,10 @@ def _extract_message_media(msg) -> dict | None:
         if not is_visual:
             return None
 
-        media_type = "video" if (
-            mime_type.startswith("video/")
-            or file_name.endswith((".mp4", ".m4v", ".mov", ".webm", ".mkv"))
-        ) else "document"
-
+        # Keep files uploaded as Telegram Documents as documents. Their
+        # document file_id is guaranteed to be reusable with send_document().
         return {
-            "mediaType": media_type,
+            "mediaType": "document",
             "fileId": media.file_id,
             "fileUniqueId": media.file_unique_id,
             "mimeType": mime_type,
