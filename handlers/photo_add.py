@@ -201,7 +201,13 @@ def _database_caption(action: str, parsed: dict, adder) -> str:
 
 
 def _extract_message_media(msg) -> dict | None:
-    """Return Telegram media info for supported card media."""
+    """Return Telegram media info for supported card media.
+
+    Telegram can deliver visually identical files either as native media
+    (photo/video/animation) or as a Document, and some clients omit/mislabel
+    the document MIME type. Keep /add tolerant of those harmless transport
+    differences instead of silently dropping the message.
+    """
     if msg.photo:
         media = msg.photo[-1]
         return {
@@ -234,11 +240,27 @@ def _extract_message_media(msg) -> dict | None:
 
     if msg.document:
         media = msg.document
-        mime_type = media.mime_type or ""
-        if not mime_type.startswith(SUPPORTED_DOCUMENT_MIME_PREFIXES):
+        mime_type = (media.mime_type or "").strip().lower()
+        file_name = (media.file_name or "").strip().lower()
+
+        visual_extensions = (
+            ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".avif",
+            ".gif", ".mp4", ".m4v", ".mov", ".webm", ".mkv",
+        )
+        is_visual = (
+            mime_type.startswith(SUPPORTED_DOCUMENT_MIME_PREFIXES)
+            or file_name.endswith(visual_extensions)
+        )
+        if not is_visual:
             return None
+
+        media_type = "video" if (
+            mime_type.startswith("video/")
+            or file_name.endswith((".mp4", ".m4v", ".mov", ".webm", ".mkv"))
+        ) else "document"
+
         return {
-            "mediaType": "document",
+            "mediaType": media_type,
             "fileId": media.file_id,
             "fileUniqueId": media.file_unique_id,
             "mimeType": mime_type,
@@ -1196,11 +1218,17 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not user or not msg or not chat:
         return
 
+    caption = (msg.caption or "").strip()
     media_info = _extract_message_media(msg)
     if not media_info:
+        # Do not silently ignore a captioned unsupported attachment.
+        # This makes malformed client/media delivery visible to the adder.
+        if caption and ("|" in caption or "｜" in caption):
+            await msg.reply_text(
+                "❌ Unsupported media type for /add.\n"
+                "Send a photo, video, GIF, or an image/video file."
+            )
         return
-
-    caption = (msg.caption or "").strip()
     looks_like_add_command = caption.casefold().startswith("/add")
 
     if is_forwarded_message(msg):
@@ -1238,14 +1266,23 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
 
-    session = await _get_active_add_session(int(user.id), int(chat.id))
-    if not session:
-        if "|" in caption:
-            await msg.reply_text("❌ Please send /add first, then choose Anime.")
+    try:
+        session = await _get_active_add_session(int(user.id), int(chat.id))
+        if not session:
+            if "|" in caption or "｜" in caption:
+                await msg.reply_text("❌ Please send /add first, then choose Anime.")
+            return
+
+        await _touch_add_session(str(session["_id"]), context.bot)
+    except Exception as exc:
+        print("ADD SESSION LOOKUP/TOUCH FAILED:", repr(exc), flush=True)
+        await msg.reply_text(
+            "❌ Add session could not be read. Please send /add again."
+        )
         return
 
-    await _touch_add_session(str(session["_id"]), context.bot)
-
+    # Accept the common full-width pipe copied from some keyboards as well.
+    caption = caption.replace("｜", "|").strip()
     parsed = parse_normal_add_caption(caption)
     if not parsed:
         await msg.reply_text(
