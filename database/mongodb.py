@@ -89,6 +89,9 @@ async def ensure_indexes() -> None:
     await db.add_sessions.create_index([("userId", ASCENDING), ("chatId", ASCENDING), ("status", ASCENDING)])
     await db.add_operations.create_index([("status", ASCENDING), ("createdAt", ASCENDING)])
     await db.add_operations.create_index([("cardId", ASCENDING)])
+    await db.add_operations.create_index([("completedAt", ASCENDING)], expireAfterSeconds=604800)
+    # Legacy reservation records are no longer used by new allocation code.
+    # Keep a TTL index so abandoned records from older versions cannot grow forever.
     await db.card_id_reservations.create_index([("reservedAt", ASCENDING)], expireAfterSeconds=1800)
 
 
