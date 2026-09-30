@@ -114,17 +114,20 @@ async def ensure_anime_catalog_seeded() -> None:
 
 
 async def canonicalize_anime_catalog() -> None:
-    """One-time cleanup of duplicate Anime aliases across catalog and cards.
+    """One-time, update-only Anime cleanup.
 
-    Only Anime strings/catalog rows are changed. Card IDs, media, and user data
-    are preserved.
+    IMPORTANT: This migration never deletes MongoDB documents. It only:
+      - rewrites known Anime aliases in card documents to the canonical name;
+      - updates one catalog document to be the canonical row;
+      - marks extra catalog rows as aliases instead of deleting them.
+    Card IDs, media, storage references, and user data are never removed.
     """
     db = get_db()
     settings = await db.bot_settings.find_one(
         {"_id": "config"},
-        {"animeCatalogCanonicalizedV2": 1},
+        {"animeCatalogCanonicalizedV3": 1},
     )
-    if (settings or {}).get("animeCatalogCanonicalizedV2"):
+    if (settings or {}).get("animeCatalogCanonicalizedV3"):
         return
 
     raw_values: set[str] = set()
@@ -147,12 +150,12 @@ async def canonicalize_anime_catalog() -> None:
         if isinstance(aliases, set):
             aliases.add(raw)
 
-    # Read catalog rows once and group them by the NEW canonical key. We must
-    # not query by normalizedName here because older rows may contain legacy
-    # keys such as "genshin impact" or "genshin impact [🎮]".
+    # Read existing catalog rows once. Legacy duplicate rows are retained,
+    # because normalizedName is unique and changing multiple rows to the same
+    # normalized key would otherwise require deleting data.
     catalog_docs = await db[ANIME_COLLECTION].find(
         {},
-        {"name": 1, "normalizedName": 1},
+        {"name": 1, "normalizedName": 1, "isAlias": 1},
     ).to_list(None)
     catalog_by_key: dict[str, list[dict]] = {}
     for doc in catalog_docs:
@@ -160,38 +163,94 @@ async def canonicalize_anime_catalog() -> None:
         if key:
             catalog_by_key.setdefault(key, []).append(doc)
 
+    now = utcnow()
+
     for key, group in groups.items():
         canonical = str(group["canonical"])
         aliases = sorted(group["aliases"])
+
+        # Card data is preserved; only the Anime string is corrected.
         if aliases:
             for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
                 await db[collection_name].update_many(
                     {"anime": {"$in": aliases}},
-                    {"$set": {"anime": canonical}},
+                    {"$set": {"anime": canonical, "updatedAt": now}},
                 )
 
         docs = catalog_by_key.get(key, [])
+        if not docs:
+            # The seed step normally creates this row already. Avoid creating
+            # anything here unless the catalog is genuinely missing it.
+            continue
 
-        if docs:
-            keep = next(
-                (doc for doc in docs if str(doc.get("name", "")).strip() == canonical),
-                docs[0],
-            )
-            duplicate_ids = [doc["_id"] for doc in docs if doc["_id"] != keep["_id"]]
-            if duplicate_ids:
-                await db[ANIME_COLLECTION].delete_many({"_id": {"$in": duplicate_ids}})
+        keep = next(
+            (
+                doc
+                for doc in docs
+                if str(doc.get("name", "")).strip() == canonical
+                and not doc.get("isAlias", False)
+            ),
+            None,
+        )
+
+        if keep is None:
+            # Pick one existing row as the canonical row. If its old
+            # normalizedName is a legacy key, changing it is safe because no
+            # canonical normalizedName exists in this group.
+            keep = docs[0]
             await db[ANIME_COLLECTION].update_one(
                 {"_id": keep["_id"]},
-                {"$set": {"name": canonical, "normalizedName": key, "updatedAt": utcnow()}},
+                {
+                    "$set": {
+                        "name": canonical,
+                        "normalizedName": key,
+                        "isAlias": False,
+                        "updatedAt": now,
+                    }
+                },
             )
         else:
-            await db[ANIME_COLLECTION].insert_one(
-                {"name": canonical, "normalizedName": key, "createdAt": utcnow(), "updatedAt": utcnow()},
+            await db[ANIME_COLLECTION].update_one(
+                {"_id": keep["_id"]},
+                {
+                    "$set": {
+                        "name": canonical,
+                        "normalizedName": key,
+                        "isAlias": False,
+                        "updatedAt": now,
+                    },
+                    "$unset": {"canonicalName": ""},
+                },
+            )
+
+        keep_id = keep["_id"]
+        for doc in docs:
+            if doc["_id"] == keep_id:
+                continue
+            # Never delete the duplicate row. Keep it for data safety/audit,
+            # but make its user-facing name canonical and hide it from the
+            # selectable Anime catalog.
+            await db[ANIME_COLLECTION].update_one(
+                {"_id": doc["_id"]},
+                {
+                    "$set": {
+                        "name": canonical,
+                        "canonicalName": canonical,
+                        "isAlias": True,
+                        "updatedAt": now,
+                    }
+                },
             )
 
     await db.bot_settings.update_one(
         {"_id": "config"},
-        {"$set": {"animeCatalogCanonicalizedV2": True, "animeCatalogCanonicalizedAt": utcnow()}},
+        {
+            "$set": {
+                "animeCatalogCanonicalizedV3": True,
+                "animeCatalogCanonicalizedAt": now,
+            },
+            "$setOnInsert": {"createdAt": now},
+        },
         upsert=True,
     )
 
@@ -213,7 +272,12 @@ async def add_anime(name: str, *, created_by: int) -> tuple[bool, str]:
                     "createdBy": int(created_by),
                     "createdAt": now,
                 },
-                "$set": {"updatedAt": now},
+                "$set": {
+                    "name": clean,
+                    "normalizedName": key,
+                    "isAlias": False,
+                    "updatedAt": now,
+                },
             },
             upsert=True,
         )
@@ -229,13 +293,14 @@ async def list_animes(page: int = 0, page_size: int = ANIME_PAGE_SIZE) -> tuple[
     page = max(0, int(page or 0))
     page_size = max(1, min(20, int(page_size or ANIME_PAGE_SIZE)))
 
-    total = int(await db[ANIME_COLLECTION].count_documents({}))
+    catalog_filter = {"isAlias": {"$ne": True}}
+    total = int(await db[ANIME_COLLECTION].count_documents(catalog_filter))
     if total <= 0:
         return [], 0
 
     docs = await (
         db[ANIME_COLLECTION]
-        .find({}, {"_id": 0, "name": 1})
+        .find(catalog_filter, {"_id": 0, "name": 1})
         .sort("normalizedName", 1)
         .skip(page * page_size)
         .limit(page_size)
