@@ -6,6 +6,7 @@ import re
 from utils.text import utcnow
 
 from pymongo import UpdateOne
+from pymongo.errors import DuplicateKeyError
 
 from config import LIMITED_CARDS_COLLECTION
 from database.mongodb import get_db
@@ -82,19 +83,23 @@ async def add_anime(name: str, *, created_by: int) -> tuple[bool, str]:
         return False, ""
 
     now = utcnow()
-    result = await db[ANIME_COLLECTION].update_one(
-        {"normalizedName": key},
-        {
-            "$setOnInsert": {
-                "name": clean,
-                "normalizedName": key,
-                "createdBy": int(created_by),
-                "createdAt": now,
+    try:
+        result = await db[ANIME_COLLECTION].update_one(
+            {"normalizedName": key},
+            {
+                "$setOnInsert": {
+                    "name": clean,
+                    "normalizedName": key,
+                    "createdBy": int(created_by),
+                    "createdAt": now,
+                },
+                "$set": {"updatedAt": now},
             },
-            "$set": {"updatedAt": now},
-        },
-        upsert=True,
-    )
+            upsert=True,
+        )
+    except DuplicateKeyError:
+        # Another adder inserted the same normalized Anime concurrently.
+        return False, clean
     return bool(result.upserted_id), clean
 
 
