@@ -14,13 +14,10 @@ def test_custom_emoji_markup_is_well_formed_when_configured(monkeypatch):
     import utils.rarity as rarity_module
 
     target = RARITY_ORDER[-1]
-    rarity_module._RARITY_CUSTOM_EMOJI_IDS[target] = "1234567890123456789"
-    rarity_module._RARITY_FALLBACK_EMOJIS[target] = "🔵"
+    monkeypatch.setitem(rarity_module._RARITY_CUSTOM_EMOJI_IDS, target, "1234567890123456789")
+    monkeypatch.setitem(rarity_module._RARITY_FALLBACK_EMOJIS, target, "🔵")
 
     value = get_rarity_emoji(target)
     assert value == '<tg-emoji emoji-id="1234567890123456789">🔵</tg-emoji>'
     assert get_rarity_custom_emoji_id(target) == "1234567890123456789"
     assert get_rarity_button_emoji(target) == "🔵"
-
-    # Do not leak test state into later tests.
-    rarity_module._RARITY_CUSTOM_EMOJI_IDS[target] = ""
