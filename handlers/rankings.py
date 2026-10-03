@@ -304,7 +304,12 @@ async def _leaderboard_command(update: Update) -> None:
 
 
 async def topgroup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _leaderboard_command(update)
+    if await should_ignore_update(update):
+        return
+    if not update.effective_user or not update.effective_message:
+        return
+    text, markup = await build_leaderboard_view(int(update.effective_user.id), "group")
+    await update.effective_message.reply_html(text, reply_markup=markup, disable_web_page_preview=True)
 
 
 async def gtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
