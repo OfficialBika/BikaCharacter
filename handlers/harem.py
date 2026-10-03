@@ -151,6 +151,9 @@ def get_harem_cards_for_view(user_doc: dict) -> tuple[list[dict], str, str]:
         filtered = [card for card in cards if str(card.get("rarity", "")).lower() == rarity.lower()]
         return filtered, "rarity", rarity
 
+    if sort_mode == "compact":
+        return cards, "compact", ""
+
     return cards, "anime", ""
 
 
@@ -268,6 +271,26 @@ def _paginate_grouped_cards(
     return pages
 
 
+def _paginate_compact_cards(cards: list[dict]) -> list[list[str]]:
+    ordered = sorted(cards, key=_card_id_sort_value)
+    if not ordered:
+        return [[]]
+    pages: list[list[str]] = []
+    current: list[str] = []
+    for card in ordered:
+        line = _card_line(card)
+        if current and (
+            len(current) >= MAX_CARD_ROWS_PER_PAGE
+            or len("\n".join(current + [line])) > 650
+        ):
+            pages.append(current)
+            current = []
+        current.append(line)
+    if current:
+        pages.append(current)
+    return pages
+
+
 def _build_harem_prefix(user_doc: dict, page: int, total_pages: int, view_cards: list[dict], grouped: list[tuple[str, list[dict]]], sort_mode: str, selected_rarity: str) -> list[str]:
     all_cards = list(user_doc.get("cards", []))
     header_name = " ".join([user_doc.get("firstName", ""), user_doc.get("lastName", "")]).strip() or user_doc.get("username") or f"User {user_doc.get('userId')}"
@@ -329,11 +352,13 @@ async def build_harem_caption(user_doc: dict, page: int = 1) -> tuple[str, int, 
     anime_names = [anime for anime, _cards in grouped]
     database_anime_totals = await get_database_anime_totals(anime_names)
 
-    if not grouped:
+    if not view_cards:
         if sort_mode == "rarity" and selected_rarity:
             body_pages = [[t("harem_no_rarity_cards", emoji=get_rarity_emoji(selected_rarity), rarity=escape_html(selected_rarity))]]
         else:
             body_pages = [[t("harem_no_cards")]]
+    elif sort_mode == "compact":
+        body_pages = _paginate_compact_cards(view_cards)
     else:
         body_pages = _paginate_grouped_cards(grouped, database_anime_totals)
 
@@ -450,6 +475,8 @@ async def build_rich_harem_html(user_doc: dict, page: int = 1) -> tuple[str, int
             f"<p><b>Mode:</b> {_rich_rarity_html(selected_rarity)} "
             f"{_rich_escape(selected_rarity)}</p>"
         )
+    elif sort_mode == "compact":
+        parts.append("<p><b>Mode:</b> Compact</p>")
     else:
         parts.append("<p><b>Mode:</b> Anime</p>")
 
@@ -473,15 +500,10 @@ async def build_rich_harem_html(user_doc: dict, page: int = 1) -> tuple[str, int
         '</tr>'
     ]
 
-    for anime, cards, database_total in page_sections:
-        owned_unique = len(grouped_lookup.get(anime, cards))
-        rows.append(
-            '<tr>'
-            f'<th colspan="3" align="left">⚜️ {_rich_escape(anime)} '
-            f'({owned_unique}/{database_total})</th>'
-            '</tr>'
-        )
-        for card in cards:
+    if sort_mode == "compact":
+        compact_cards = sorted(view_cards, key=_card_id_sort_value)
+        page_cards = compact_cards[(safe_page - 1) * MAX_CARD_ROWS_PER_PAGE : safe_page * MAX_CARD_ROWS_PER_PAGE]
+        for card in page_cards:
             count = int(card.get("count", 1) or 1)
             rows.append(
                 '<tr>'
@@ -490,6 +512,24 @@ async def build_rich_harem_html(user_doc: dict, page: int = 1) -> tuple[str, int
                 f'<td align="left">{_rich_escape(card.get("name"))} (x{count})</td>'
                 '</tr>'
             )
+    else:
+        for anime, cards, database_total in page_sections:
+            owned_unique = len(grouped_lookup.get(anime, cards))
+            rows.append(
+                '<tr>'
+                f'<th colspan="3" align="left">⚜️ {_rich_escape(anime)} '
+                f'({owned_unique}/{database_total})</th>'
+                '</tr>'
+            )
+            for card in cards:
+                count = int(card.get("count", 1) or 1)
+                rows.append(
+                    '<tr>'
+                    f'<td align="center">🍀 {_rich_escape(card.get("cardId"))}</td>'
+                    f'<td align="center">{_rich_rarity_html(card.get("rarity"))}</td>'
+                    f'<td align="left">{_rich_escape(card.get("name"))} (x{count})</td>'
+                    '</tr>'
+                )
 
     parts.append('<table bordered striped>' + ''.join(rows) + '</table>')
     return "\n".join(parts), safe_page, total_pages
@@ -582,6 +622,11 @@ def harem_keyboard(user_id: int, page: int, total_pages: int) -> InlineKeyboardM
                 action_button(t("harem_button_next"), "primary", callback_data=f"harem:{user_id}:{next_page}"),
             ],
             [
+                action_button(
+                    t("harem_mode_button"),
+                    "primary",
+                    callback_data=f"hmode:{user_id}:main",
+                ),
                 action_button(
                     t("harem_inline_button"),
                     "success",
