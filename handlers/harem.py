@@ -23,6 +23,7 @@ from utils.rarity import get_rarity_emoji
 from utils.buttons import action_button
 from utils.text import escape_html
 from utils.i18n import t
+from utils.hot_lookup import anime_totals
 
 # Telegram photo captions are limited to 1024 characters.
 # Keep the generated harem caption safely below that limit.
@@ -137,26 +138,8 @@ def group_cards_by_anime(cards: list[dict]) -> list[tuple[str, list[dict]]]:
 
 
 async def get_database_anime_totals(anime_names: list[str]) -> dict[str, int]:
-    """Return database total card count for each anime shown in harem.
-
-    Header format becomes owned unique cards / total cards in database.
-    Example: Demon Slayer (3/20).
-    """
-    names = [str(name or "").strip() for name in anime_names if str(name or "").strip()]
-    if not names:
-        return {}
-
-    totals: dict[str, int] = {}
-    pipeline = [
-        {"$match": {"anime": {"$in": names}}},
-        {"$group": {"_id": "$anime", "total": {"$sum": 1}}},
-    ]
-    for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
-        rows = await get_db()[collection_name].aggregate(pipeline).to_list(None)
-        for row in rows:
-            key = str(row.get("_id", "")).strip()
-            totals[key] = totals.get(key, 0) + int(row.get("total", 0) or 0)
-    return totals
+    """Return cached catalog totals; MongoDB remains the fallback source of truth."""
+    return await anime_totals(anime_names)
 
 
 def get_harem_cards_for_view(user_doc: dict) -> tuple[list[dict], str, str]:
