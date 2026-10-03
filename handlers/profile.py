@@ -5,7 +5,7 @@ import unicodedata
 
 import aiohttp
 from pymongo import ReturnDocument
-from telegram import Update
+from telegram import InputFile, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from config import PROFILE_TABLE as CONFIG_PROFILE_TABLE, PROFILE_TITLE, RARITY_ORDER
@@ -15,7 +15,6 @@ from utils.db_helpers import ensure_user, get_photo_by_card_id, rarity_counts
 from utils.profile_renderer import render_profile_card, normalize_name_for_render
 from utils.rarity import get_rarity_emoji, get_rarity_button_emoji
 from utils.text import escape_html
-from web.app import store_profile_image
 
 
 PROFILE_COUNTER_ID = "profile_id"
@@ -562,17 +561,16 @@ async def _delete_loading_message(message) -> None:
 
 
 async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show the user's favourite card media with the normal profile text.
+    """Render and send the user's favourite-card profile image.
 
-    This intentionally avoids generated profile images, avatar downloads, Rich
-    Message image URLs, and the Render /profile-image endpoint. Telegram receives
-    the already stored card file_id directly.
+    The renderer runs inside the same VPS polling process. No separate web
+    service, image-generation API, or profile server is required.
     """
     if await should_ignore_update(update):
         return
 
     loading_message = await update.effective_message.reply_text(
-        "⏳ Loading Your Data Please Wait."
+        "⏳ Building your profile..."
     )
 
     try:
@@ -587,58 +585,82 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             )
             return
 
-        total_photo_count = await get_db().photos.count_documents({})
-        profile_text = build_public_profile_text(
-            user_doc,
-            total_photo_count,
-        )
+        cards = list(user_doc.get("cards", []))
+        unique_cards = len(cards)
+        profile_id = await ensure_profile_id(int(update.effective_user.id))
+        global_rank = await get_global_unique_rank(unique_cards)
+        collector = collector_rank(unique_cards)
 
-        # Profile cover is strictly the user's favourite card. Do not silently
-        # download Telegram avatars or fall back to another owned card.
+        # The profile artwork uses ONLY the user's favourite card image.
         fav_id = str(user_doc.get("favoriteCardId", "") or "")
-        cover = None
+        favorite_name = "No Favourite Set"
+        favorite_rarity = ""
+        avatar_bytes = None
+
         if fav_id:
-            cover = next(
+            fav = next(
                 (
-                    card for card in user_doc.get("cards", [])
+                    card for card in cards
                     if str(card.get("cardId", "")) == fav_id
                 ),
                 None,
             )
-            if cover:
-                merged = dict(cover)
-                card_doc = await get_photo_by_card_id(fav_id)
-                if card_doc:
-                    for key in (
-                        "fileId",
-                        "fileUniqueId",
-                        "mediaType",
-                        "mimeType",
-                        "fileName",
-                    ):
-                        value = card_doc.get(key)
-                        if value:
-                            merged[key] = value
-                cover = merged
+            if fav:
+                favorite_name = normalize_name_for_render(
+                    str(fav.get("name", "Unknown"))
+                )
+                favorite_rarity = str(fav.get("rarity", "") or "")
+                file_id = str(fav.get("fileId", "") or "")
+
+                # Prefer the user's hydrated card data, then the canonical card
+                # document. This never falls back to another owned card.
+                if not file_id:
+                    card_doc = await get_photo_by_card_id(fav_id)
+                    if card_doc:
+                        file_id = str(card_doc.get("fileId", "") or "")
+
+                media_type = str(fav.get("mediaType", "photo") or "photo").lower()
+                if media_type == "photo" and file_id:
+                    avatar_bytes = await _download_telegram_file_bytes(
+                        context,
+                        file_id,
+                    )
+
+        image = render_profile_card(
+            full_name=_full_name(user_doc),
+            profile_id=profile_id,
+            unique_cards=unique_cards,
+            total_owned_cards=sum(
+                int(card.get("count", 0) or 0) for card in cards
+            ),
+            global_rank=global_rank,
+            collector_rank=collector["name"],
+            collector_emoji=collector["emoji"],
+            avatar_bytes=avatar_bytes,
+            favorite_name=favorite_name,
+            favorite_rarity=favorite_rarity,
+            next_rank_name=collector["nextName"],
+            next_rank_target=collector["nextTarget"],
+        )
+
+        caption = build_public_profile_text(
+            user_doc,
+            await get_db().photos.count_documents({}),
+        )
 
         await _delete_loading_message(loading_message)
+        image.seek(0)
+        await update.effective_message.reply_photo(
+            photo=InputFile(image, filename="bika_profile.jpg"),
+            caption=caption,
+            parse_mode="HTML",
+        )
 
-        if cover and str(cover.get("fileId") or ""):
-            await reply_public_profile_media(
-                update.effective_message,
-                cover,
-                profile_text,
-            )
-        else:
-            await update.effective_message.reply_text(
-                profile_text,
-                parse_mode="HTML",
-            )
-
-    except Exception:
+    except Exception as exc:
+        print("PROFILE GENERATION ERROR:", repr(exc), flush=True)
         try:
             await loading_message.edit_text(
-                "⚠️ Something went wrong. Please try again."
+                "⚠️ Something went wrong while building your profile. Please try again."
             )
         except Exception:
             pass
