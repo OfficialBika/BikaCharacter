@@ -4,9 +4,19 @@ from __future__ import annotations
 from typing import Optional
 
 from pymongo import ASCENDING, DESCENDING, AsyncMongoClient
+from pymongo.monitoring import CommandListener
+from utils.performance import observe_mongo_command
 from pymongo.asynchronous.database import AsyncDatabase
 
 from config import DB_NAME, MONGODB_URI, LIMITED_CARDS_COLLECTION
+
+
+class MongoLatencyListener(CommandListener):
+    def succeeded(self, event) -> None:
+        observe_mongo_command(event.command_name, float(event.duration_micros) / 1000.0, False)
+
+    def failed(self, event) -> None:
+        observe_mongo_command(event.command_name, float(event.duration_micros) / 1000.0, True)
 
 _client: Optional[AsyncMongoClient] = None
 _db: Optional[AsyncDatabase] = None
@@ -31,6 +41,7 @@ async def init_db() -> None:
         waitQueueTimeoutMS=5000,
         serverSelectionTimeoutMS=5000,
         connectTimeoutMS=5000,
+        event_listeners=[MongoLatencyListener()],
     )
     _db = _client[DB_NAME]
     await _db.command("ping")
