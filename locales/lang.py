@@ -256,6 +256,7 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
                         'ᴀɴɪᴍᴇ: <b>{anime}</b>\n'
                         'ǫᴛʏ: <b>1</b>',
         'harem_inline_button': '⛩ 𝐂𝐇𝐀𝐑𝐀𝐂𝐓𝐄𝐑𝐒',
+        'harem_mode_button': '⚙️ 𝐌𝐎𝐃𝐄',
         'hmode_choose_sort': '❄️ <b>𝐂𝐚𝐧 𝐂𝐡𝐨𝐨𝐬𝐞 𝐇𝐨𝐰 𝐓𝐨 𝐒𝐨𝐫𝐭 𝐘𝐨𝐮𝐫 𝐇𝐚𝐫𝐞𝐦:</b>',
         'hmode_sort_by_rarity': '💮 𝐒𝐎𝐑𝐓 𝐁𝐘 𝐑𝐀𝐑𝐈𝐓𝐘',
         'hmode_sort_by_anime': '📘 𝐒𝐎𝐑𝐓 𝐁𝐘 𝐀𝐍𝐈𝐌𝐄',
@@ -272,4 +273,5 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'harem_summary_anime': '🎴 ᴛᴏᴛᴀʟ ᴄᴀʀᴅꜱ: {total_cards} | 📚 ᴛᴏᴛᴀʟ ꜱᴇʀɪᴇꜱ: {total_series} | 📘 ᴍᴏᴅᴇ: 𝐀𝐍𝐈𝐌𝐄',
         'harem_summary_rarity': '{emoji} ʀᴀʀɪᴛʏ: <b>{rarity}</b> | 🎴 ꜱʜᴏᴡɪɴɢ: {shown_cards}/{total_cards} | 📚 ꜱᴇʀɪᴇꜱ: '
                                 '{total_series}',
+        'harem_summary_compact': '▦ ᴄᴏᴍᴘᴀᴄᴛ: {shown_cards}/{total_cards} ᴄᴀʀᴅꜱ',
         'harem_no_rarity_cards': '❌ ʏᴏᴜ ᴅᴏ ɴᴏᴛ ʜᴀᴠᴇ {emoji} <b>{rarity}</b> ᴄᴀʀᴅꜱ ʏᴇᴛ.'}}
