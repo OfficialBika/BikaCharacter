@@ -1,6 +1,6 @@
 # BIKA Character Catcher Bot — Python Async Version
 
-A production-ready Telegram character catcher bot built with `python-telegram-bot` and MongoDB/Motor.
+A production-ready Telegram character catcher bot built with `python-telegram-bot` and MongoDB with PyMongo Async.
 
 ## Main features
 
@@ -72,6 +72,17 @@ http://localhost:8080/
 ```
 
 ## Add cards / Bika Database channel
+
+For the complete Burmese adding guide, use <code>/addhelp</code> in Telegram.
+
+Fast adding helpers:
+
+```text
+/addmode Anime | Rarity
+/addanime Anime Name
+/addhelp
+```
+
 
 Create a private channel named **Bika Database**, add the bot as admin, then set `CARD_DATABASE_CHANNEL_ID` in `.env`. Every `/add` will post the card media to that private channel first, then save `fileId`, `fileUniqueId`, `storageChatId`, and `storageMessageId` in MongoDB.
 

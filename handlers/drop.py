@@ -782,7 +782,7 @@ async def drop_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # Forwarded media still has the forwarding user as effective_user and will be counted.
     # Rare sender-chat/no-user messages are counted, but mute logic is skipped safely.
     if user:
-        await ensure_user(user)
+        await ensure_user(user, include_cards=False)
 
         if await is_bot_muted(chat.id, user.id):
             return

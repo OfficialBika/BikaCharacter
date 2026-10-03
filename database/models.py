@@ -1,6 +1,6 @@
 """Document shape notes.
 
-Motor is schema-less, so the app writes MongoDB dictionaries directly. This file is
+PyMongo Async is schema-less, so the app writes MongoDB dictionaries directly. This file is
 kept as readable documentation of the main collections.
 
 photos:

@@ -1,10 +1,9 @@
-python-telegram-bot>=21.6,<23
-motor>=3.6
-pymongo>=4.8
-python-dotenv>=1.0
-aiohttp>=3.9
-Pillow>=10.0.0
+python-telegram-bot==22.8
+pymongo==4.18.2
+python-dotenv==1.2.4
+aiohttp==3.14.3
+Pillow==12.3.0
 
-uharfbuzz>=0.50
-fonttools>=4.50
-regex>=2024.0.0
+uharfbuzz==0.56.2
+fonttools==4.66.1
+regex==2026.9.29

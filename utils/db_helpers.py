@@ -12,9 +12,10 @@ from database.mongodb import get_db
 from utils.parser import normalized_search_name
 from utils.rarity import get_rarity_exp
 from utils.text import safe_chat_title, utcnow
+from utils.hot_lookup import get_card as hot_get_card, invalidate_user_rank
 
 
-async def ensure_user(tg_user: User | None) -> Optional[dict]:
+async def ensure_user(tg_user: User | None, *, include_cards: bool = True) -> Optional[dict]:
     if not tg_user or not tg_user.id:
         return None
     db = get_db()
@@ -38,10 +39,11 @@ async def ensure_user(tg_user: User | None) -> Optional[dict]:
         },
         upsert=True,
         return_document=ReturnDocument.AFTER,
+        projection=None if include_cards else {"cards": 0},
     )
 
 
-async def ensure_user_by_id(user_id: int, username: str = "", first_name: str = "", last_name: str = "") -> dict:
+async def ensure_user_by_id(user_id: int, username: str = "", first_name: str = "", last_name: str = "", *, include_cards: bool = True) -> dict:
     db = get_db()
     now = utcnow()
     return await db.users.find_one_and_update(
@@ -63,6 +65,7 @@ async def ensure_user_by_id(user_id: int, username: str = "", first_name: str = 
         },
         upsert=True,
         return_document=ReturnDocument.AFTER,
+        projection=None if include_cards else {"cards": 0},
     )
 
 
@@ -109,26 +112,12 @@ async def get_user_doc(user_id: int) -> Optional[dict]:
 
 
 async def get_photo_by_card_id(card_id: str) -> Optional[dict]:
-    """Find a card by ID from normal photos first, then owner-only limited_cards.
-
-    Limited cards are intentionally not used by random drop helpers below because
-    all random drop queries read only from db.photos.
-    """
-    db = get_db()
-    card_id = str(card_id)
-    doc = await db.photos.find_one({"cardId": card_id})
-    if doc:
-        doc = dict(doc)
-        doc["_sourceCollection"] = "photos"
-        doc["ownerOnly"] = False
-        return doc
-
-    doc = await db[LIMITED_CARDS_COLLECTION].find_one({"cardId": card_id})
-    if doc:
-        doc = dict(doc)
-        doc["_sourceCollection"] = LIMITED_CARDS_COLLECTION
-        doc["ownerOnly"] = True
-        return doc
+    """Read the SQLite hot index first, then verify/fallback to MongoDB source of truth."""
+    hot = await hot_get_card(str(card_id))
+    if hot:
+        hot["_sourceCollection"] = hot.get("_sourceCollection") or "photos"
+        hot["ownerOnly"] = hot["_sourceCollection"] == LIMITED_CARDS_COLLECTION
+        return hot
     return None
 
 
@@ -203,26 +192,53 @@ def public_card_snapshot(photo_doc: dict, qty: int = 1) -> dict:
 
 
 async def add_card_to_user_id(user_id: int, card_doc: dict, qty: int = 1) -> dict:
+    """Atomically add a card without a duplicate-array race.
+
+    Existing card entries are incremented first. If the card is absent, the
+    guarded push can win exactly once; a concurrent inserter is then handled by
+    a retry increment instead of creating a second array entry.
+    """
     db = get_db()
     qty = max(1, int(qty or 1))
+    user_id = int(user_id)
     card_id = str(card_doc.get("cardId", ""))
     card = public_card_snapshot(card_doc, qty)
-    now = utcnow()
-
-    user = await db.users.find_one({"userId": int(user_id), "cards.cardId": card_id})
     exp_inc = get_rarity_exp(card.get("rarity")) * qty
-    if user:
-        await db.users.update_one(
-            {"userId": int(user_id), "cards.cardId": card_id},
-            {"$inc": {"cards.$.count": qty, "exp": exp_inc}, "$set": {"updatedAt": now}},
+
+    result = await db.users.update_one(
+        {"userId": user_id, "cards.cardId": card_id},
+        {
+            "$inc": {"cards.$[owned].count": qty, "exp": exp_inc},
+            "$set": {"updatedAt": utcnow()},
+        },
+        array_filters=[{"owned.cardId": card_id}],
+    )
+    if result.modified_count == 1:
+        invalidate_user_rank(user_id)
+        return await db.users.find_one({"userId": user_id})
+
+    result = await db.users.update_one(
+        {"userId": user_id, "cards.cardId": {"$ne": card_id}},
+        {
+            "$push": {"cards": card},
+            "$inc": {"exp": exp_inc},
+            "$set": {"updatedAt": utcnow()},
+        },
+    )
+    if result.modified_count != 1:
+        # Another concurrent claim inserted the same card. Increment that
+        # existing entry instead of pushing a duplicate.
+        result = await db.users.update_one(
+            {"userId": user_id, "cards.cardId": card_id},
+            {
+                "$inc": {"cards.$[owned].count": qty, "exp": exp_inc},
+                "$set": {"updatedAt": utcnow()},
+            },
+            array_filters=[{"owned.cardId": card_id}],
         )
-    else:
-        await db.users.update_one(
-            {"userId": int(user_id)},
-            {"$push": {"cards": card}, "$inc": {"exp": exp_inc}, "$set": {"updatedAt": now}},
-            upsert=False,
-        )
-    return await db.users.find_one({"userId": int(user_id)})
+
+    invalidate_user_rank(user_id)
+    return await db.users.find_one({"userId": user_id})
 
 
 async def add_card_to_user(tg_user: User, card_doc: dict, qty: int = 1) -> dict:
