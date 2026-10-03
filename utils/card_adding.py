@@ -56,6 +56,9 @@ async def _max_numeric_card_id() -> int:
 
 
 async def ensure_card_counter() -> None:
+    global _COUNTER_READY
+    if _COUNTER_READY:
+        return
     db = get_db()
     max_id = await _max_numeric_card_id()
     now = utcnow()
@@ -68,6 +71,7 @@ async def ensure_card_counter() -> None:
         {"_id": CARD_COUNTER_ID, "seq": {"$lt": max_id}},
         {"$set": {"seq": max_id, "updatedAt": now}},
     )
+    _COUNTER_READY = True
 
 
 async def next_card_id() -> str:
