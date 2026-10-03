@@ -463,10 +463,13 @@ def render_profile_card(
     full_name: str,
     profile_id: int,
     unique_cards: int,
-    global_rank: int,
+    total_owned_cards: int = 0,
+    global_rank: int = 0,
     collector_rank: str,
     collector_emoji: str,
     avatar_bytes: Optional[bytes] = None,
+    favorite_name: str = "No Favourite Set",
+    favorite_rarity: str = "",
     next_rank_name: str = "",
     next_rank_target: int = 0,
 ) -> BytesIO:
@@ -475,6 +478,10 @@ def render_profile_card(
     full_name = normalize_name_for_render(full_name)
     collector_rank = normalize_name_for_render(collector_rank)
     next_rank_name = normalize_name_for_render(next_rank_name)
+    favorite_name = normalize_name_for_render(favorite_name)
+    favorite_rarity = normalize_name_for_render(favorite_rarity)
+    total_owned_cards = max(int(total_owned_cards or 0), int(unique_cards or 0))
+    global_rank = max(1, int(global_rank or 1))
 
     img = _rounded_gradient(
         (CANVAS_W, CANVAS_H),
@@ -523,6 +530,35 @@ def render_profile_card(
         radius=40,
         outline=(52, 64, 101),
         width=2,
+    )
+
+    # Small luminous particles keep the card visually alive without adding
+    # another dependency or making the image expensive to render.
+    particle_points = (
+        (94, 116, 4), (1280, 126, 5), (1210, 238, 3),
+        (302, 430, 4), (1100, 438, 4), (1320, 610, 3),
+        (78, 720, 3), (1240, 748, 4),
+    )
+    for px, py, radius in particle_points:
+        draw.ellipse(
+            (px - radius, py - radius, px + radius, py + radius),
+            fill=(103, 210, 255),
+        )
+
+    # Live status pill.
+    draw.rounded_rectangle(
+        (1080, 72, 1288, 124),
+        radius=24,
+        fill=(20, 35, 58),
+        outline=(64, 104, 145),
+        width=2,
+    )
+    draw.ellipse((1100, 91, 1118, 109), fill=(74, 222, 170))
+    draw.text(
+        (1134, 82),
+        "COLLECTOR ONLINE",
+        font=_font(18, bold=True, text="COLLECTOR ONLINE"),
+        fill=(174, 219, 205),
     )
 
     title_text = "BIKA CHARACTERS PROFILE"
@@ -695,16 +731,28 @@ def render_profile_card(
     )
 
     identity_text = (
-        "Collector Identity • Global Collection Network"
+        f"Favourite • {favorite_name}"
+        + (f"  {favorite_rarity}" if favorite_rarity else "")
     )
     draw.text(
         (392, 370),
         identity_text,
         font=_font(
-            25,
+            24,
             text=identity_text,
         ),
         fill=(140, 153, 184),
+    )
+
+    collection_line = (
+        f"{unique_cards:,} unique  •  {total_owned_cards:,} total  •  "
+        f"Global #{global_rank:,}"
+    )
+    draw.text(
+        (392, 408),
+        collection_line,
+        font=_font(22, bold=True, text=collection_line),
+        fill=(100, 191, 210),
     )
 
     left = 105
@@ -729,7 +777,7 @@ def render_profile_card(
             left + 2 * card_w + gap,
             top + card_h,
         ),
-        "Total Cards",
+        "Collection",
         f"{unique_cards:,} UNIQUE",
         (65, 215, 194),
     )
