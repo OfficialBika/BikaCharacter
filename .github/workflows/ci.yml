@@ -35,6 +35,23 @@ jobs:
       - name: Verify critical imports
         run: python -c "import telegram, pymongo, aiohttp, PIL, regex, uharfbuzz, fontTools; print('imports: OK')"
 
+      - name: Import full application
+        run: python -c "import bot; print('bot import: OK')"
+
+      - name: Verify PyMongo Async client lifecycle
+        run: |
+          python - <<'PY'
+          import asyncio
+          from pymongo import AsyncMongoClient
+
+          async def main():
+              client = AsyncMongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=100)
+              await client.close()
+
+          asyncio.run(main())
+          print("AsyncMongoClient lifecycle: OK")
+          PY
+
       - name: Ensure deprecated Motor is absent
         run: |
           if grep -R --exclude-dir=.git --include='*.py' -nE '(^|[^[:alnum:]_])motor([._]|[^[:alnum:]_]|$)|AsyncIOMotor' .; then
