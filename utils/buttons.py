@@ -11,7 +11,7 @@ from config import (
     LIMITED_FALLBACK_EMOJI,
     LIMITED_RARITY_NAME,
 )
-from utils.rarity import get_rarity_button_emoji
+from utils.rarity import get_rarity_button_emoji, get_rarity_custom_emoji_id
 
 BUTTON_STYLE_PREFIX = {
     # Keep style colors through Bot API fields only. Do not prefix visible
@@ -88,10 +88,12 @@ def action_button(text: str, style: str = "primary", **kwargs) -> InlineKeyboard
 
 def rarity_button(text: str, rarity: str, style: str = "primary", **kwargs) -> InlineKeyboardButton:
     rarity_text = str(rarity or "")
-    custom_emoji_id = ""
+    custom_emoji_id = get_rarity_custom_emoji_id(rarity_text)
     fallback = get_rarity_button_emoji(rarity_text)
+
+    # Keep the legacy Limited settings as a final compatibility fallback.
     if rarity_text == str(LIMITED_RARITY_NAME):
-        custom_emoji_id = str(LIMITED_CUSTOM_EMOJI_ID or "")
+        custom_emoji_id = custom_emoji_id or str(LIMITED_CUSTOM_EMOJI_ID or "")
         fallback = str(LIMITED_FALLBACK_EMOJI or fallback or "🔮")
 
     return make_button(
