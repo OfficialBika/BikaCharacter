@@ -20,6 +20,7 @@ from utils.rarity import get_rarity_emoji, get_rarity_exp
 from utils.text import escape_html, mention_user, utcnow
 from utils.i18n import t
 from utils.buttons import action_button
+from utils.hot_lookup import invalidate_user_rank
 
 
 GIFT_REQUESTS_COLLECTION = "gift_requests"
@@ -509,6 +510,8 @@ async def gift_confirm_callback(
         "completed",
         completedAt=now,
     )
+    invalidate_user_rank(sender_id)
+    invalidate_user_rank(receiver_id)
 
     await query.edit_message_text(
         t(
