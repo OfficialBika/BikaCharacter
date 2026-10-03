@@ -8,6 +8,9 @@ import traceback
 from aiohttp import web
 from telegram import BotCommand, Update
 from telegram.ext import Application, ApplicationBuilder, ContextTypes
+from utils.hot_lookup import init_hot_lookup, hot_lookup_count, rebuild_hot_lookup
+from utils.performance import monitor_event_loop_lag, monitor_memory_ceiling, metrics_snapshot, runtime_snapshot
+from utils.telegram_request import MetricsHTTPXRequest
 
 from config import (
     BOT_TOKEN,
@@ -180,6 +183,16 @@ async def main() -> None:
         raise RuntimeError("Missing WEBHOOK_URL in Render Environment Variables. Example: https://your-service.onrender.com")
 
     await init_db()
+    try:
+        await init_hot_lookup()
+        if hot_lookup_count() == 0:
+            rebuilt = await rebuild_hot_lookup()
+            print(f"HOT LOOKUP SQLITE: rebuilt={rebuilt}", flush=True)
+        else:
+            print(f"HOT LOOKUP SQLITE: ready={hot_lookup_count()}", flush=True)
+    except Exception as exc:
+        # SQLite is a disposable hot cache; MongoDB remains authoritative.
+        print(f"HOT LOOKUP INIT ERROR: {exc!r}; continuing with MongoDB fallback", flush=True)
     await reset_group_state_on_startup()
 
     # 12-vCPU VPS: keep enough parallelism for busy groups without opening
@@ -187,12 +200,25 @@ async def main() -> None:
     app = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
+        .request(
+            MetricsHTTPXRequest(
+                connection_pool_size=64,
+                pool_timeout=10.0,
+                connect_timeout=8.0,
+                read_timeout=20.0,
+                write_timeout=20.0,
+            )
+        )
+        .get_updates_request(
+            MetricsHTTPXRequest(
+                connection_pool_size=8,
+                pool_timeout=10.0,
+                connect_timeout=8.0,
+                read_timeout=35.0,
+                write_timeout=20.0,
+            )
+        )
         .concurrent_updates(32)
-        .connection_pool_size(64)
-        .pool_timeout(10.0)
-        .connect_timeout(8.0)
-        .read_timeout(20.0)
-        .write_timeout(20.0)
         .build()
     )
     register_handlers(app)
@@ -208,6 +234,10 @@ async def main() -> None:
 
     health_runner: web.AppRunner | None = None
     using_polling = RUN_MODE.lower() == "polling"
+    monitor_tasks = [
+        asyncio.create_task(monitor_event_loop_lag(stop_event=stop_event), name="event-loop-lag-monitor"),
+        asyncio.create_task(monitor_memory_ceiling(stop_event=stop_event), name="memory-ceiling-monitor"),
+    ]
 
     await app.initialize()
     await register_commands(app)
@@ -226,6 +256,15 @@ async def main() -> None:
             await app.updater.stop()
         await app.stop()
         await app.shutdown()
+        stop_event.set()
+        for task in monitor_tasks:
+            task.cancel()
+        await asyncio.gather(*monitor_tasks, return_exceptions=True)
+        try:
+            print(f"RUNTIME METRICS: {await metrics_snapshot()}", flush=True)
+            print(f"RUNTIME MEMORY: {await runtime_snapshot()}", flush=True)
+        except Exception as exc:
+            print(f"RUNTIME METRICS ERROR: {exc!r}", flush=True)
         if health_runner is not None:
             await health_runner.cleanup()
         await close_db()
