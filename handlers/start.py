@@ -147,4 +147,4 @@ async def start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 def register_start_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("start", start_cmd))
-    app.add_handler(CallbackQueryHandler(start_callback, pattern=r"^start:\\d+:.+$"))
+    app.add_handler(CallbackQueryHandler(start_callback, pattern=r"^start:\d+:.+$"))
