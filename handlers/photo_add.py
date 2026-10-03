@@ -134,6 +134,7 @@ async def addanime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "created": time.time(),
         "user_id": user.id,
         "anime": anime,
+        "anime_list": list(anime_list),
     }
     await message.reply_text(
         "🌴 <b>ADD ANIME</b>\n\n"
@@ -169,12 +170,12 @@ async def addanime_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     index = int(match.group(3))
-    anime_list = await list_common_anime(12)
+    anime_list = item.get("anime_list") or []
     if index < 0 or index >= len(anime_list):
-        await query.answer("Anime list changed. Use /addanime again.", show_alert=True)
+        await query.answer("Anime selector data changed. Use /addanime again.", show_alert=True)
         return
 
-    anime = await canonical_anime(anime_list[index])
+    anime = await canonical_anime(str(anime_list[index]))
     _, rarity = await get_add_mode(query.from_user.id)
     await set_add_mode(query.from_user.id, anime, rarity)
     _ANIME_PICKERS.pop(token, None)
