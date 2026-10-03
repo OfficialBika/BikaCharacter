@@ -82,7 +82,7 @@ def parse_add_caption(caption: str = "") -> Optional[dict]:
 
     body = re.sub(r"^/add(?:@[^\s]+)?", "", first_line, flags=re.I).strip()
     parts = [x.strip() for x in body.split("|") if x.strip()]
-    if len(parts) < 2:
+    if not parts:
         return None
 
     card_id = ""
@@ -91,11 +91,12 @@ def parse_add_caption(caption: str = "") -> Optional[dict]:
         card_id, name, rarity_raw, anime = parts[:4]
         card_id_provided = True
     else:
-        name, rarity_raw = parts[:2]
+        name = parts[0]
+        rarity_raw = parts[1] if len(parts) >= 2 else ""
         anime = parts[2] if len(parts) >= 3 else ""
 
-    rarity = normalize_add_rarity(rarity_raw)
-    if not name or rarity is None:
+    rarity = normalize_add_rarity(rarity_raw) if rarity_raw else None
+    if not name:
         return None
 
     return {
@@ -106,6 +107,7 @@ def parse_add_caption(caption: str = "") -> Optional[dict]:
         "anime": anime.strip(),
         "_cardIdProvided": card_id_provided,
         "_animeProvided": bool(anime.strip()),
+        "_rarityProvided": bool(rarity_raw.strip()),
     }
 
 
