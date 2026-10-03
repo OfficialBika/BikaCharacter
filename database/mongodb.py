@@ -67,7 +67,7 @@ async def ensure_indexes() -> None:
     await limited.create_index([("fileUniqueId", ASCENDING)])
 
     animes = db[ANIMES_COLLECTION]
-    await animes.create_index([("normalizedName", ASCENDING)], unique=True)
+    await animes.create_index([("normalizedName", ASCENDING)])
     await animes.create_index([("updatedAt", DESCENDING)])
 
     await db.users.create_index([("userId", ASCENDING)], unique=True)
