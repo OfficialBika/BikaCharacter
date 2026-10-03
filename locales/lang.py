@@ -10,9 +10,17 @@ from __future__ import annotations
 LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ',
         'start_button_support': '💬 ꜱᴜᴘᴘᴏʀᴛ ɢʀᴏᴜᴘ',
         'start_button_update': '📢 ᴜᴘᴅᴀᴛᴇ ᴄʜᴀɴɴᴇʟ',
-        'start_message': 'ʜᴇʟʟᴏ {mention} !\n'
-                         '\n'
-                         "ɪ'ᴍ <b> AuraChest Characters Bot </b> .\n"
+        'start_button_harem': '🎴 ʜᴀʀᴇᴍ',
+        'start_button_profile': '👤 ᴘʀᴏꜰɪʟᴇ',
+        'start_button_search': '🔎 ꜱᴇᴀʀᴄʜ',
+        'start_button_favourite': '💖 ꜰᴀᴠᴏᴜʀɪᴛᴇ',
+        'start_button_rankings': '🏆 ʟᴇᴀᴅᴇʀʙᴏᴀʀᴅ',
+        'start_button_settings': '⚙️ ꜱᴇᴛᴛɪɴɢꜱ',
+        'start_message': '✦ <b>𝐁𝐈𝐊𝐀 𝐂𝐇𝐀𝐑𝐀𝐂𝐓𝐄𝐑𝐒</b> ✦\n'
+                         '━━━━━━━━━━━━━━━━━━\n'
+                         'ʜᴇʟʟᴏ {mention} !\n\n'
+                         '🎴 ᴄᴏʟʟᴇᴄᴛ • ᴄʟᴀɪᴍ • ᴄᴏᴍᴘʟᴇᴛᴇ ʏᴏᴜʀ ʜᴀʀᴇᴍ.\n'
+                         '🏆 ʀᴀɴᴋ ᴜᴘ • 📚 ᴇxᴘʟᴏʀᴇ • 💖 ᴋᴇᴇᴘ ғᴀᴠᴏᴜʀɪᴛᴇꜱ.\n"
                          '\n'
                          'ᴀ ᴄᴜᴛᴇ ᴄʜᴀʀᴀᴄᴛᴇʀ ᴄᴀᴛᴄʜɪɴɢ ᴀᴅᴠᴇɴᴛᴜʀᴇ. ᴀᴅᴅ ᴍᴇ ᴛᴏ ᴀ ɢʀᴏᴜᴘ, ᴄᴏʟʟᴇᴄᴛ ꜰᴀꜱᴛ, ᴀɴᴅ ʙᴜɪʟᴅ ʏᴏᴜʀ ʜᴀʀᴇᴍ.',
         'not_your_action': 'ɴᴏᴛ ʏᴏᴜʀ ᴀᴄᴛɪᴏɴ.',
@@ -85,6 +93,14 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'gift_confirmed': 'ɢɪꜰᴛ ᴄᴏɴꜰɪʀᴍᴇᴅ.',
         'gift_not_your_cancel': 'ɴᴏᴛ ʏᴏᴜʀ ᴄᴀɴᴄᴇʟ ᴀᴄᴛɪᴏɴ.',
         'gift_cancelled': '❌ ɢɪꜰᴛ ᴄᴀɴᴄᴇʟʟᴇᴅ.',
+        'rank_button_global': '🌍 ɢʟᴏʙᴀʟ',
+        'rank_button_today': '📅 ᴛᴏᴅᴀʏ',
+        'rank_button_week': '🗓 ᴡᴇᴇᴋ',
+        'rank_button_month': '📆 ᴍᴏɴᴛʜ',
+        'rank_button_group': '👥 ɢʀᴏᴜᴘ',
+        'rank_button_close': '✕ ᴄʟᴏꜱᴇ',
+        'rank_month_header': '📆 <b>𝐌𝐎𝐍𝐓𝐇𝐋𝐘 𝐓𝐎𝐏 𝟏𝟎</b>',
+        'rank_week_header': '🗓 <b>𝐖𝐄𝐄𝐊𝐋𝐘 𝐓𝐎𝐏 𝟏𝟎</b>',
         'rank_no_group': 'ɴᴏ ɢʀᴏᴜᴘ ᴄᴀᴛᴄʜ ʀᴀɴᴋɪɴɢ ʏᴇᴛ.',
         'rank_group_header': '🏆 <b>𝐓𝐎𝐏 𝐆𝐑𝐎𝐔𝐏 𝐑𝐀𝐍𝐊𝐈𝐍𝐆</b>',
         'rank_group_subtitle': '<b>𝐂𝐚𝐭𝐜𝐡𝐞𝐬 𝐫𝐚𝐧𝐤𝐢𝐧𝐠</b>',
@@ -243,11 +259,15 @@ LANG = {'en': {'start_button_add_group': '➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ
         'hmode_choose_sort': '❄️ <b>𝐂𝐚𝐧 𝐂𝐡𝐨𝐨𝐬𝐞 𝐇𝐨𝐰 𝐓𝐨 𝐒𝐨𝐫𝐭 𝐘𝐨𝐮𝐫 𝐇𝐚𝐫𝐞𝐦:</b>',
         'hmode_sort_by_rarity': '💮 𝐒𝐎𝐑𝐓 𝐁𝐘 𝐑𝐀𝐑𝐈𝐓𝐘',
         'hmode_sort_by_anime': '📘 𝐒𝐎𝐑𝐓 𝐁𝐘 𝐀𝐍𝐈𝐌𝐄',
+        'hmode_sort_compact': '▦ 𝐂𝐎𝐌𝐏𝐀𝐂𝐓 𝐕𝐈𝐄𝐖',
+        'hmode_home': '⌂ 𝐇𝐎𝐌𝐄',
+        'settings_message': '⚙️ <b>𝐁𝐈𝐊𝐀 𝐒𝐄𝐓𝐓𝐈𝐍𝐆𝐒</b>\n\n🎴 <b>𝐇𝐀𝐑𝐄𝐌 𝐕𝐈𝐄𝐖</b>\nChoose how your collection is displayed.',
         'hmode_close': '🚮 𝐂𝐋𝐎𝐒𝐄',
         'hmode_back': '⬅️ 𝐁𝐀𝐂𝐊',
         'hmode_choose_rarity': '❄️ <b>𝐂𝐇𝐎𝐎𝐒𝐄 𝐘𝐎𝐔𝐑 𝐏𝐑𝐄𝐅𝐅𝐄𝐑𝐄𝐃 𝐑𝐀𝐑𝐈𝐓𝐘</b>',
         'hmode_rarity_button': '{emoji} 𝐑𝐀𝐑𝐈𝐓𝐘: {rarity}',
         'hmode_set_anime': '✅ ʜᴀʀᴇᴍ ꜱᴏʀᴛ ᴍᴏᴅᴇ ꜱᴇᴛ ᴛᴏ <b>𝐀𝐍𝐈𝐌𝐄</b>.\n\nᴜꜱᴇ /harem ᴛᴏ ᴠɪᴇᴡ ʏᴏᴜʀ ᴄᴀʀᴅꜱ.',
+        'hmode_set_compact': '✅ ʜᴀʀᴇᴍ ᴠɪᴇᴡ ᴍᴏᴅᴇ ꜱᴇᴛ ᴛᴏ <b>𝐂𝐎𝐌𝐏𝐀𝐂𝐓</b>.\n\nᴜꜱᴇ /harem ᴛᴏ ᴠɪᴇᴡ ʏᴏᴜʀ ᴄᴏʟʟᴇᴄᴛɪᴏɴ.',
         'hmode_set_rarity': '✅ ʜᴀʀᴇᴍ ꜱᴏʀᴛ ᴍᴏᴅᴇ ꜱᴇᴛ ᴛᴏ {emoji} <b>{rarity}</b>.\n\nᴜꜱᴇ /harem ᴛᴏ ᴠɪᴇᴡ ᴏɴʟʏ ᴛʜɪꜱ ʀᴀʀɪᴛʏ.',
         'harem_summary_anime': '🎴 ᴛᴏᴛᴀʟ ᴄᴀʀᴅꜱ: {total_cards} | 📚 ᴛᴏᴛᴀʟ ꜱᴇʀɪᴇꜱ: {total_series} | 📘 ᴍᴏᴅᴇ: 𝐀𝐍𝐈𝐌𝐄',
         'harem_summary_rarity': '{emoji} ʀᴀʀɪᴛʏ: <b>{rarity}</b> | 🎴 ꜱʜᴏᴡɪɴɢ: {shown_cards}/{total_cards} | 📚 ꜱᴇʀɪᴇꜱ: '
