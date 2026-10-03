@@ -4,7 +4,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
-from config import ADD_TO_GROUP_URL, BOT_USERNAME, SUPPORT_GROUP_URL, UPDATE_CHANNEL_URL
+from config import ADD_TO_GROUP_URL, BOT_USERNAME, SUPPORT_GROUP_URL, UPDATE_CHANNEL_URL, UI_BRAND_CUSTOM_EMOJI_ID, LIMITED_FALLBACK_EMOJI
 from utils.db_helpers import ensure_user
 from utils.text import escape_html
 from utils.i18n import t
@@ -73,6 +73,9 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     text = t("start_message", mention=mention)
+    if UI_BRAND_CUSTOM_EMOJI_ID:
+        brand = f'<tg-emoji emoji-id="{escape_html(UI_BRAND_CUSTOM_EMOJI_ID)}">{escape_html(LIMITED_FALLBACK_EMOJI or "✦")}</tg-emoji>'
+        text = brand + " " + text
 
     await update.effective_message.reply_text(
         text,
