@@ -142,7 +142,8 @@ def invalidate_card(card_id: str) -> None:
 
 
 def invalidate_user_rank(user_id: int) -> None:
-    RANK_CACHE.delete(str(int(user_id)))
+    # Any unique-card change can change every user global rank.
+    RANK_CACHE.clear()
 
 
 def _sqlite_count() -> int:
@@ -174,12 +175,16 @@ async def anime_totals(anime_names: list[str]) -> dict[str, int]:
     result = await asyncio.to_thread(query)
     if not result:
         db = get_db()
-        rows = await observe_awaitable(
-            MONGO_METRICS,
-            "harem_anime_totals",
-            db.photos.aggregate([{"$match":{"anime":{"$in":names}}},{"$group":{"_id":"$anime","total":{"$sum":1}}}]).to_list(None),
-        )
-        result = {str(r.get("_id","")): int(r.get("total",0) or 0) for r in rows}
+        result = {}
+        for collection_name in ("photos", os.getenv("LIMITED_CARDS_COLLECTION", "limited_cards")):
+            rows = await observe_awaitable(
+                MONGO_METRICS,
+                "harem_anime_totals",
+                db[collection_name].aggregate([{"$match":{"anime":{"$in":names}}},{"$group":{"_id":"$anime","total":{"$sum":1}}}]).to_list(None),
+            )
+            for row in rows:
+                key_name = str(row.get("_id",""))
+                result[key_name] = result.get(key_name, 0) + int(row.get("total",0) or 0)
     CATALOG_CACHE.set(key, result, size_hint=max(256, len(result) * 80))
     return result
 
@@ -271,21 +276,21 @@ async def search_cards(search: str, offset: int, limit: int) -> tuple[list[dict]
     query: dict[str, Any] = {}
     if normalized:
         query = {"$or": [{"normalizedName": {"$regex": normalized, "$options": "i"}}, {"cardId": str(search).strip()}]}
-    docs = await observe_awaitable(
-        MONGO_METRICS, "lookup_fallback",
-        db.photos.find(query, {
-            "cardId":1,"name":1,"normalizedName":1,"rarity":1,"anime":1,
-            "fileId":1,"fileUniqueId":1,"mediaType":1,"mimeType":1,"fileName":1,
-        }).to_list(None)
-    )
-    docs = [dict(d) for d in docs]
+    docs: list[dict] = []
+    for collection_name in ("photos", os.getenv("LIMITED_CARDS_COLLECTION", "limited_cards")):
+        part = await observe_awaitable(
+            MONGO_METRICS, "lookup_fallback",
+            db[collection_name].find(query, {
+                "cardId":1,"name":1,"normalizedName":1,"rarity":1,"anime":1,
+                "fileId":1,"fileUniqueId":1,"mediaType":1,"mimeType":1,"fileName":1,
+            }).to_list(None)
+        )
+        docs.extend(dict(d) for d in part)
+        for doc in part:
+            await upsert_card(doc, collection_name)
     docs.sort(key=lambda d: (str(d.get("cardId",""))))
     result = (docs[offset:offset+limit], len(docs) > offset+limit)
-    if result[0]:
-        for doc in result[0]:
-            await upsert_card(doc, "photos")
-        SEARCH_CACHE.set(key, result, size_hint=max(1024, len(result[0]) * 900))
-    return result
+
 
 
 async def get_card(card_id: str) -> dict | None:
