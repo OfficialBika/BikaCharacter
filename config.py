@@ -149,7 +149,7 @@ OWNER_CHANGETIME_MAX = 3000
 
 HAREM_PAGE_SIZE = int(os.getenv("HAREM_PAGE_SIZE", "5") or 5)
 # /profile output mode: generated image is always used; true adds a second Rich Message table.
-PROFILE_TABLE = env_bool("PROFILE_TABLE", "false")
+PROFILE_TABLE = env_bool("PROFILE_TABLE", "true")
 PROFILE_TITLE = os.getenv("PROFILE_TITLE", "Bika Characters Profile").strip() or "Bika Characters Profile"
 ANTI_SPAM_STREAK = int(os.getenv("ANTI_SPAM_STREAK", "6") or 6)
 BOT_MUTE_SECONDS = int(os.getenv("BOT_MUTE_SECONDS", "600") or 600)
