@@ -226,10 +226,10 @@ RARITY_LIMITED_NAME = LIMITED_RARITY_NAME
 # independently to Telegram custom emoji.
 #
 # Limited keeps its historical variables as aliases for compatibility.
-LIMITED_CUSTOM_EMOJI_ID = os.getenv(
+LIMITED_CUSTOM_EMOJI_ID = env_custom_emoji_id(
     "RARITY_LIMITED_CUSTOM_EMOJI_ID",
     os.getenv("LIMITED_CUSTOM_EMOJI_ID", "5361837567463399422"),
-).strip()
+)
 LIMITED_FALLBACK_EMOJI = os.getenv(
     "RARITY_LIMITED_FALLBACK_EMOJI",
     os.getenv("LIMITED_FALLBACK_EMOJI", os.getenv("RARITY_LIMITED_EMOJI", "🔮")),
