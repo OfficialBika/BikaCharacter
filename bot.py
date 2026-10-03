@@ -53,6 +53,7 @@ async def register_commands(app: Application) -> None:
             BotCommand("check", "Check character by ID"),
             BotCommand(CLAIM_COMMAND, "Claim spawned character"),
             BotCommand("hmode", "Change harem view"),
+            BotCommand("settings", "Open bot settings"),
             BotCommand("topgroup", "Top groups by catches"),
             BotCommand("gtop", "Global top harem users"),
             BotCommand("todaygtop", "Today top catchers"),
