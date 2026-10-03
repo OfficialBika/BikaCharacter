@@ -145,6 +145,45 @@ def invalidate_user_rank(user_id: int) -> None:
     RANK_CACHE.delete(str(int(user_id)))
 
 
+def _sqlite_count() -> int:
+    with _conn() as conn:
+        row = conn.execute("SELECT COUNT(*) FROM cards").fetchone()
+    return int(row[0] if row else 0)
+
+
+def hot_lookup_count() -> int:
+    return _sqlite_count()
+
+
+async def anime_totals(anime_names: list[str]) -> dict[str, int]:
+    names = [str(x or "").strip() for x in anime_names if str(x or "").strip()]
+    if not names:
+        return {}
+    key = "anime:" + "|".join(sorted({x.lower() for x in names}))
+    cached = CATALOG_CACHE.get(key)
+    if cached is not None:
+        return dict(cached)
+    def query():
+        placeholders = ",".join("?" for _ in names)
+        with _conn() as conn:
+            rows = conn.execute(
+                f"SELECT anime, COUNT(*) FROM cards WHERE anime IN ({placeholders}) GROUP BY anime",
+                names,
+            ).fetchall()
+        return {str(anime): int(total) for anime, total in rows}
+    result = await asyncio.to_thread(query)
+    if not result:
+        db = get_db()
+        rows = await observe_awaitable(
+            MONGO_METRICS,
+            "harem_anime_totals",
+            db.photos.aggregate([{"$match":{"anime":{"$in":names}}},{"$group":{"_id":"$anime","total":{"$sum":1}}}]).to_list(None),
+        )
+        result = {str(r.get("_id","")): int(r.get("total",0) or 0) for r in rows}
+    CATALOG_CACHE.set(key, result, size_hint=max(256, len(result) * 80))
+    return result
+
+
 async def rebuild_hot_lookup() -> int:
     await init_hot_lookup()
     db = get_db()
