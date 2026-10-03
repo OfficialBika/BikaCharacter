@@ -32,6 +32,9 @@ jobs:
       - name: Compile all Python files
         run: python -m compileall -q .
 
+      - name: Run unit and concurrency tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+
       - name: Verify critical imports
         run: python -c "import telegram, pymongo, aiohttp, PIL, regex, uharfbuzz, fontTools; print('imports: OK')"
 
