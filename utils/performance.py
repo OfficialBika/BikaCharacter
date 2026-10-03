@@ -41,6 +41,45 @@ class MetricStore:
             }
 
 
+class SyncMetricStore:
+    def __init__(self) -> None:
+        import threading
+        self._lock = threading.Lock()
+        self.calls = 0
+        self.errors = 0
+        self.total_ms = 0.0
+        self.max_ms = 0.0
+
+    def observe(self, elapsed_ms: float, error: bool = False) -> None:
+        with self._lock:
+            self.calls += 1
+            self.total_ms += float(elapsed_ms)
+            self.max_ms = max(self.max_ms, float(elapsed_ms))
+            if error:
+                self.errors += 1
+
+    def snapshot(self) -> dict[str, float | int]:
+        with self._lock:
+            return {
+                "calls": self.calls,
+                "errors": self.errors,
+                "avg_ms": round(self.total_ms / self.calls, 3) if self.calls else 0.0,
+                "max_ms": round(self.max_ms, 3),
+                "total_ms": round(self.total_ms, 3),
+            }
+
+
+MONGO_COMMAND_METRICS: dict[str, SyncMetricStore] = {}
+
+
+def observe_mongo_command(name: str, elapsed_ms: float, error: bool = False) -> None:
+    MONGO_COMMAND_METRICS.setdefault(str(name), SyncMetricStore()).observe(elapsed_ms, error)
+
+
+def mongo_command_snapshot() -> dict[str, dict[str, float | int]]:
+    return {name: metric.snapshot() for name, metric in MONGO_COMMAND_METRICS.items()}
+
+
 MONGO_METRICS: dict[str, MetricStore] = {}
 TELEGRAM_METRICS: dict[str, MetricStore] = {}
 EVENT_LOOP_LAG = MetricStore()
@@ -152,6 +191,7 @@ async def monitor_event_loop_lag(interval: float = 1.0, stop_event: asyncio.Even
 async def metrics_snapshot() -> dict[str, Any]:
     return {
         "mongo": {name: await metric.snapshot() for name, metric in MONGO_METRICS.items()},
+        "mongo_commands": mongo_command_snapshot(),
         "telegram": {name: await metric.snapshot() for name, metric in TELEGRAM_METRICS.items()},
         "event_loop_lag": await EVENT_LOOP_LAG.snapshot(),
     }
