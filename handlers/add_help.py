@@ -62,9 +62,9 @@ Full rarity name တွေကိုလည်း ဆက်သုံးနို�
 → Database ထဲမှာ အသုံးများတဲ့ Anime စာရင်းကနေ ရွေးနိုင်ပါတယ်။
 
 <code>/addanime Genshin Impact</code>
-→ Anime default ကို Genshin Impact အဖြစ် သတ်မှတ်မယ်။ လက်ရှိ Rarity ကို မပြောင်းပါ။
+→ Anime အသစ်ဖြစ်ရင် MongoDB ရဲ့ <code>animes</code> catalog ထဲကို အလိုအလျောက်သိမ်းမယ်။ ရှိပြီးသားဆို duplicate မဖန်တီးဘဲ canonical Anime ကို ပြန်သုံးမယ်။ လက်ရှိ Rarity ကို မပြောင်းပါ။
 
-Anime name ရဲ့ စာလုံးအကြီး/အသေး မတူတာတွေရှိရင် Database ထဲက ရှိပြီးသား Canonical spelling ကို အသုံးပြုဖို့ စနစ်တကျ normalize လုပ်ထားပါတယ်။
+Anime name ကို space/စာလုံးအကြီးအသေး normalize လုပ်ပြီး MongoDB <code>animes</code> catalog ထဲမှာ သိမ်းပါတယ်။ ရှိပြီးသား Anime ဆို canonical spelling ကို ပြန်သုံးပြီး duplicate catalog entry မဖန်တီးပါ။
 
 <b>5️⃣ Duplicate ကာကွယ်မှု</b>
 
