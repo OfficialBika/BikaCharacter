@@ -11,17 +11,103 @@ from config import (
     DROP_500_SECONDARY_CHANCE,
     DROP_500_SECONDARY_RARITY,
     DROP_BASE_RARITIES,
+    LIMITED_CUSTOM_EMOJI_ID,
     LIMITED_FALLBACK_EMOJI,
     LIMITED_RARITY_NAME,
+    RARITY_CATAPHRACT_CUSTOM_EMOJI_ID,
+    RARITY_CATAPHRACT_NAME,
+    RARITY_CATAPHRACT_FALLBACK_EMOJI,
+    RARITY_COMMON_CUSTOM_EMOJI_ID,
     RARITY_COMMON_NAME,
+    RARITY_COMMON_FALLBACK_EMOJI,
+    RARITY_CROSSVERSE_CUSTOM_EMOJI_ID,
+    RARITY_CROSSVERSE_NAME,
+    RARITY_CROSSVERSE_FALLBACK_EMOJI,
+    RARITY_DIVINE_CUSTOM_EMOJI_ID,
+    RARITY_DIVINE_NAME,
+    RARITY_DIVINE_FALLBACK_EMOJI,
     RARITY_EMOJI,
     RARITY_EXP,
+    RARITY_LEGENDARY_CUSTOM_EMOJI_ID,
+    RARITY_LEGENDARY_NAME,
+    RARITY_LEGENDARY_FALLBACK_EMOJI,
+    RARITY_MYSTICAL_CUSTOM_EMOJI_ID,
+    RARITY_MYSTICAL_NAME,
+    RARITY_MYSTICAL_FALLBACK_EMOJI,
     RARITY_ORDER,
+    RARITY_RARE_CUSTOM_EMOJI_ID,
+    RARITY_RARE_NAME,
+    RARITY_RARE_FALLBACK_EMOJI,
+    RARITY_SUPREME_CUSTOM_EMOJI_ID,
+    RARITY_SUPREME_NAME,
+    RARITY_SUPREME_FALLBACK_EMOJI,
+    RARITY_UNCOMMON_CUSTOM_EMOJI_ID,
+    RARITY_UNCOMMON_NAME,
+    RARITY_UNCOMMON_FALLBACK_EMOJI,
 )
 
 
+_RARITY_CUSTOM_EMOJI_IDS = {
+    str(LIMITED_RARITY_NAME): str(LIMITED_CUSTOM_EMOJI_ID or ""),
+    # These keys are resolved from the configured rarity names via RARITY_EMOJI,
+    # so renamed rarities continue to use their configured custom emoji.
+}
+
+_RARITY_FALLBACK_EMOJIS = {
+    str(LIMITED_RARITY_NAME): str(LIMITED_FALLBACK_EMOJI or "🔮"),
+}
+
+
+def _register_rarity_custom_emoji(rarity: str, emoji_id: str, fallback: str) -> None:
+    _RARITY_CUSTOM_EMOJI_IDS[str(rarity)] = str(emoji_id or "").strip()
+    _RARITY_FALLBACK_EMOJIS[str(rarity)] = str(fallback or "🎴").strip() or "🎴"
+
+
+# Populate by position-independent configured rarity names.
+_register_rarity_custom_emoji(
+    RARITY_COMMON_NAME, RARITY_COMMON_CUSTOM_EMOJI_ID, RARITY_COMMON_FALLBACK_EMOJI
+)
+_register_rarity_custom_emoji(
+    RARITY_UNCOMMON_NAME, RARITY_UNCOMMON_CUSTOM_EMOJI_ID, RARITY_UNCOMMON_FALLBACK_EMOJI
+)
+_register_rarity_custom_emoji(
+    RARITY_RARE_NAME, RARITY_RARE_CUSTOM_EMOJI_ID, RARITY_RARE_FALLBACK_EMOJI
+)
+_register_rarity_custom_emoji(
+    RARITY_LEGENDARY_NAME, RARITY_LEGENDARY_CUSTOM_EMOJI_ID, RARITY_LEGENDARY_FALLBACK_EMOJI
+)
+_register_rarity_custom_emoji(
+    RARITY_MYSTICAL_NAME, RARITY_MYSTICAL_CUSTOM_EMOJI_ID, RARITY_MYSTICAL_FALLBACK_EMOJI
+)
+_register_rarity_custom_emoji(
+    RARITY_DIVINE_NAME, RARITY_DIVINE_CUSTOM_EMOJI_ID, RARITY_DIVINE_FALLBACK_EMOJI
+)
+_register_rarity_custom_emoji(
+    RARITY_CROSSVERSE_NAME, RARITY_CROSSVERSE_CUSTOM_EMOJI_ID, RARITY_CROSSVERSE_FALLBACK_EMOJI
+)
+_register_rarity_custom_emoji(
+    RARITY_CATAPHRACT_NAME, RARITY_CATAPHRACT_CUSTOM_EMOJI_ID, RARITY_CATAPHRACT_FALLBACK_EMOJI
+)
+_register_rarity_custom_emoji(
+    RARITY_SUPREME_NAME, RARITY_SUPREME_CUSTOM_EMOJI_ID, RARITY_SUPREME_FALLBACK_EMOJI
+)
+
+
+def get_rarity_custom_emoji_id(rarity: str | None) -> str:
+    return str(_RARITY_CUSTOM_EMOJI_IDS.get(str(rarity or ""), "") or "")
+
+
+def get_rarity_fallback_emoji(rarity: str | None) -> str:
+    return str(_RARITY_FALLBACK_EMOJIS.get(str(rarity or ""), "🎴") or "🎴")
+
+
 def get_rarity_emoji(rarity: str | None) -> str:
-    return RARITY_EMOJI.get(str(rarity or ""), "🎴")
+    rarity_text = str(rarity or "")
+    custom_id = get_rarity_custom_emoji_id(rarity_text)
+    fallback = get_rarity_fallback_emoji(rarity_text)
+    if custom_id:
+        return f'<tg-emoji emoji-id="{custom_id}">{fallback}</tg-emoji>'
+    return str(RARITY_EMOJI.get(rarity_text, fallback) or fallback)
 
 
 def get_rarity_exp(rarity: str | None) -> int:
@@ -35,12 +121,8 @@ def get_rarity_button_emoji(rarity: str | None) -> str:
     Limited buttons use icon_custom_emoji_id when available and this fallback emoji
     when custom emoji icons are disabled or unsupported.
     """
-    if str(rarity or "") == str(LIMITED_RARITY_NAME):
-        return LIMITED_FALLBACK_EMOJI
-    emoji = RARITY_EMOJI.get(str(rarity or ""), "🎴")
-    if isinstance(emoji, str) and emoji.startswith("<tg-emoji"):
-        return LIMITED_FALLBACK_EMOJI
-    return emoji
+    rarity_text = str(rarity or "")
+    return get_rarity_fallback_emoji(rarity_text)
 
 
 def normalize_rarity(raw: str | None) -> str | None:

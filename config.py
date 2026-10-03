@@ -34,6 +34,14 @@ def env_float(name: str, default: float, min_value: float | None = None, max_val
         value = min(float(max_value), value)
     return value
 
+def env_custom_emoji_id(name: str, default: str = "") -> str:
+    """Read a Telegram custom emoji ID and reject malformed values safely."""
+    value = str(os.getenv(name, default) or "").strip()
+    if not value:
+        return ""
+    return value if value.isdigit() else str(default or "").strip()
+
+
 def env_command(name: str, default: str = "bika") -> str:
     """Read and validate a Telegram bot command name from environment variables.
 
@@ -205,31 +213,74 @@ LIMITED_RARITY_NAME = os.getenv(
 ).strip() or "Limited"
 RARITY_LIMITED_NAME = LIMITED_RARITY_NAME
 
-LIMITED_CUSTOM_EMOJI_ID = os.getenv("LIMITED_CUSTOM_EMOJI_ID", "5361837567463399422").strip()
-LIMITED_FALLBACK_EMOJI = os.getenv("LIMITED_FALLBACK_EMOJI", os.getenv("RARITY_LIMITED_EMOJI", "🔮")).strip() or "🔮"
+# ---------------------------------------------------------------------------
+# RARITY CUSTOM EMOJI SETTINGS
+# ---------------------------------------------------------------------------
+# Each rarity has its own Telegram custom emoji ID.
+# *_CUSTOM_EMOJI_ID is the authoritative Telegram custom emoji source.
+# *_FALLBACK_EMOJI is used only when the custom ID is empty/disabled or when a
+# client/API surface cannot carry a custom emoji entity.
+#
+# Legacy *_EMOJI variables remain supported as fallback-only compatibility keys.
+# This keeps existing deployments safe while allowing every rarity to migrate
+# independently to Telegram custom emoji.
+#
+# Limited keeps its historical variables as aliases for compatibility.
+LIMITED_CUSTOM_EMOJI_ID = env_custom_emoji_id(
+    "RARITY_LIMITED_CUSTOM_EMOJI_ID",
+    os.getenv("LIMITED_CUSTOM_EMOJI_ID", "5361837567463399422"),
+)
+LIMITED_FALLBACK_EMOJI = os.getenv(
+    "RARITY_LIMITED_FALLBACK_EMOJI",
+    os.getenv("LIMITED_FALLBACK_EMOJI", os.getenv("RARITY_LIMITED_EMOJI", "🔮")),
+).strip() or "🔮"
+
+RARITY_COMMON_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_COMMON_CUSTOM_EMOJI_ID")
+RARITY_UNCOMMON_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_UNCOMMON_CUSTOM_EMOJI_ID")
+RARITY_RARE_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_RARE_CUSTOM_EMOJI_ID")
+RARITY_LEGENDARY_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_LEGENDARY_CUSTOM_EMOJI_ID")
+RARITY_MYSTICAL_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_MYSTICAL_CUSTOM_EMOJI_ID")
+RARITY_DIVINE_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_DIVINE_CUSTOM_EMOJI_ID")
+RARITY_CROSSVERSE_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_CROSSVERSE_CUSTOM_EMOJI_ID")
+RARITY_CATAPHRACT_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_CATAPHRACT_CUSTOM_EMOJI_ID")
+RARITY_SUPREME_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_SUPREME_CUSTOM_EMOJI_ID")
+
+RARITY_COMMON_FALLBACK_EMOJI = os.getenv("RARITY_COMMON_FALLBACK_EMOJI", os.getenv("RARITY_COMMON_EMOJI", "🔵")).strip() or "🔵"
+RARITY_UNCOMMON_FALLBACK_EMOJI = os.getenv("RARITY_UNCOMMON_FALLBACK_EMOJI", os.getenv("RARITY_UNCOMMON_EMOJI", "🟣")).strip() or "🟣"
+RARITY_RARE_FALLBACK_EMOJI = os.getenv("RARITY_RARE_FALLBACK_EMOJI", os.getenv("RARITY_RARE_EMOJI", "🟠")).strip() or "🟠"
+RARITY_LEGENDARY_FALLBACK_EMOJI = os.getenv("RARITY_LEGENDARY_FALLBACK_EMOJI", os.getenv("RARITY_LEGENDARY_EMOJI", "🟡")).strip() or "🟡"
+RARITY_MYSTICAL_FALLBACK_EMOJI = os.getenv("RARITY_MYSTICAL_FALLBACK_EMOJI", os.getenv("RARITY_MYSTICAL_EMOJI", "💮")).strip() or "💮"
+RARITY_DIVINE_FALLBACK_EMOJI = os.getenv("RARITY_DIVINE_FALLBACK_EMOJI", os.getenv("RARITY_DIVINE_EMOJI", "⚜️")).strip() or "⚜️"
+RARITY_CROSSVERSE_FALLBACK_EMOJI = os.getenv("RARITY_CROSSVERSE_FALLBACK_EMOJI", os.getenv("RARITY_CROSSVERSE_EMOJI", "⚡")).strip() or "⚡"
+RARITY_CATAPHRACT_FALLBACK_EMOJI = os.getenv("RARITY_CATAPHRACT_FALLBACK_EMOJI", os.getenv("RARITY_CATAPHRACT_EMOJI", "✨")).strip() or "✨"
+RARITY_SUPREME_FALLBACK_EMOJI = os.getenv("RARITY_SUPREME_FALLBACK_EMOJI", os.getenv("RARITY_SUPREME_EMOJI", "🪞")).strip() or "🪞"
+
 # Generic brand custom emoji used by the premium Telegram UI. Empty disables it.
 UI_BRAND_CUSTOM_EMOJI_ID = os.getenv("UI_BRAND_CUSTOM_EMOJI_ID", LIMITED_CUSTOM_EMOJI_ID).strip()
 
 # Bot API supports custom emoji icons and colored button styles on InlineKeyboardButton.
-# These toggles make rollback easy if a self-hosted/old Bot API server is used.
 ENABLE_BUTTON_CUSTOM_EMOJI = env_bool("ENABLE_BUTTON_CUSTOM_EMOJI", "true")
 ENABLE_BUTTON_STYLE = env_bool("ENABLE_BUTTON_STYLE", "true")
 
-LIMITED_EMOJI = (
-    f'<tg-emoji emoji-id="{LIMITED_CUSTOM_EMOJI_ID}">{LIMITED_FALLBACK_EMOJI}</tg-emoji>'
-    if LIMITED_CUSTOM_EMOJI_ID
-    else LIMITED_FALLBACK_EMOJI
-)
+def _custom_emoji_markup(custom_emoji_id: str, fallback: str) -> str:
+    emoji_id = str(custom_emoji_id or "").strip()
+    return (
+        f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+        if emoji_id
+        else str(fallback or "🎴")
+    )
 
-RARITY_COMMON_EMOJI = os.getenv("RARITY_COMMON_EMOJI", "🔵").strip() or "🔵"
-RARITY_UNCOMMON_EMOJI = os.getenv("RARITY_UNCOMMON_EMOJI", "🟣").strip() or "🟣"
-RARITY_RARE_EMOJI = os.getenv("RARITY_RARE_EMOJI", "🟠").strip() or "🟠"
-RARITY_LEGENDARY_EMOJI = os.getenv("RARITY_LEGENDARY_EMOJI", "🟡").strip() or "🟡"
-RARITY_MYSTICAL_EMOJI = os.getenv("RARITY_MYSTICAL_EMOJI", "💮").strip() or "💮"
-RARITY_DIVINE_EMOJI = os.getenv("RARITY_DIVINE_EMOJI", "⚜️").strip() or "⚜️"
-RARITY_CROSSVERSE_EMOJI = os.getenv("RARITY_CROSSVERSE_EMOJI", "⚡").strip() or "⚡"
-RARITY_CATAPHRACT_EMOJI = os.getenv("RARITY_CATAPHRACT_EMOJI", "✨").strip() or "✨"
-RARITY_SUPREME_EMOJI = os.getenv("RARITY_SUPREME_EMOJI", "🪞").strip() or "🪞"
+LIMITED_EMOJI = _custom_emoji_markup(LIMITED_CUSTOM_EMOJI_ID, LIMITED_FALLBACK_EMOJI)
+
+RARITY_COMMON_EMOJI = _custom_emoji_markup(RARITY_COMMON_CUSTOM_EMOJI_ID, RARITY_COMMON_FALLBACK_EMOJI)
+RARITY_UNCOMMON_EMOJI = _custom_emoji_markup(RARITY_UNCOMMON_CUSTOM_EMOJI_ID, RARITY_UNCOMMON_FALLBACK_EMOJI)
+RARITY_RARE_EMOJI = _custom_emoji_markup(RARITY_RARE_CUSTOM_EMOJI_ID, RARITY_RARE_FALLBACK_EMOJI)
+RARITY_LEGENDARY_EMOJI = _custom_emoji_markup(RARITY_LEGENDARY_CUSTOM_EMOJI_ID, RARITY_LEGENDARY_FALLBACK_EMOJI)
+RARITY_MYSTICAL_EMOJI = _custom_emoji_markup(RARITY_MYSTICAL_CUSTOM_EMOJI_ID, RARITY_MYSTICAL_FALLBACK_EMOJI)
+RARITY_DIVINE_EMOJI = _custom_emoji_markup(RARITY_DIVINE_CUSTOM_EMOJI_ID, RARITY_DIVINE_FALLBACK_EMOJI)
+RARITY_CROSSVERSE_EMOJI = _custom_emoji_markup(RARITY_CROSSVERSE_CUSTOM_EMOJI_ID, RARITY_CROSSVERSE_FALLBACK_EMOJI)
+RARITY_CATAPHRACT_EMOJI = _custom_emoji_markup(RARITY_CATAPHRACT_CUSTOM_EMOJI_ID, RARITY_CATAPHRACT_FALLBACK_EMOJI)
+RARITY_SUPREME_EMOJI = _custom_emoji_markup(RARITY_SUPREME_CUSTOM_EMOJI_ID, RARITY_SUPREME_FALLBACK_EMOJI)
 
 RARITY_ORDER = [
     RARITY_LIMITED_NAME,
