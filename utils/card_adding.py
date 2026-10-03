@@ -21,6 +21,7 @@ _SHORT_CODES = ("su", "cv", "ca", "dv", "my", "lg", "ra", "un", "co")
 
 _MODE_CACHE: dict[int, tuple[float, str, str]] = {}
 _MODE_LOCK = asyncio.Lock()
+_COUNTER_READY = False
 _ANIME_CACHE: dict[str, tuple[float, str]] = {}
 _ANIME_CACHE_TTL = 600
 _ANIME_CACHE_MAX = 5000
