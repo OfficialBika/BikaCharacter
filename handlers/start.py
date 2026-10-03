@@ -104,8 +104,15 @@ async def start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     if action == "home":
+        home_text = t(
+            "start_message",
+            mention=f'<a href="tg://user?id={user_id}">{escape_html(query.from_user.full_name or query.from_user.username or "User")}</a>',
+        )
+        if UI_BRAND_CUSTOM_EMOJI_ID:
+            brand = f'<tg-emoji emoji-id="{escape_html(UI_BRAND_CUSTOM_EMOJI_ID)}">{escape_html(LIMITED_FALLBACK_EMOJI or "✦")}</tg-emoji>'
+            home_text = brand + " " + home_text
         await query.edit_message_text(
-            t("start_message", mention=f'<a href="tg://user?id={user_id}">{escape_html(query.from_user.full_name or query.from_user.username or "User")}</a>'),
+            home_text,
             parse_mode=ParseMode.HTML,
             reply_markup=_start_keyboard(user_id),
             disable_web_page_preview=True,
