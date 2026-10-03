@@ -54,6 +54,10 @@ _PENDING: dict[str, dict] = {}
 _PENDING_TTL = 600
 _PENDING_MAX = 2000
 
+_ANIME_PICKERS: dict[str, dict] = {}
+_ANIME_PICKER_TTL = 600
+_ANIME_PICKER_MAX = 2000
+
 
 def _prune_pending() -> None:
     now = time.time()
@@ -64,6 +68,124 @@ def _prune_pending() -> None:
         oldest = sorted(_PENDING.items(), key=lambda x: x[1].get("created", 0))
         for key, _ in oldest[: len(_PENDING) - _PENDING_MAX]:
             _PENDING.pop(key, None)
+
+
+def _prune_anime_pickers() -> None:
+    now = time.time()
+    stale = [
+        key for key, value in _ANIME_PICKERS.items()
+        if now - float(value.get("created", 0)) > _ANIME_PICKER_TTL
+    ]
+    for key in stale:
+        _ANIME_PICKERS.pop(key, None)
+    if len(_ANIME_PICKERS) > _ANIME_PICKER_MAX:
+        oldest = sorted(_ANIME_PICKERS.items(), key=lambda item: item[1].get("created", 0))
+        for key, _ in oldest[: len(_ANIME_PICKERS) - _ANIME_PICKER_MAX]:
+            _ANIME_PICKERS.pop(key, None)
+
+
+def _anime_picker_token() -> str:
+    _prune_anime_pickers()
+    token = secrets.token_hex(4)
+    while token in _ANIME_PICKERS:
+        token = secrets.token_hex(4)
+    return token
+
+
+def _addanime_keyboard(user_id: int, token: str, anime_list: list[str], current_anime: str) -> InlineKeyboardMarkup:
+    rows = []
+    for index, anime in enumerate(anime_list):
+        label = ("✅ " if anime.lower() == current_anime.lower() else "") + anime
+        rows.append([
+            InlineKeyboardButton(
+                label[:60],
+                callback_data=f"addanime:{user_id}:{token}:{index}",
+            )
+        ])
+    rows.append([InlineKeyboardButton("✕ Close", callback_data=f"addanime:{user_id}:{token}:close")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def addanime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message or not await is_allowed_adder(user):
+        return
+
+    args = list(context.args or [])
+    if args:
+        anime = " ".join(args).strip()
+        _, rarity = await get_add_mode(user.id)
+        anime = await canonical_anime(anime)
+        await set_add_mode(user.id, anime, rarity)
+        await message.reply_text(
+            "✅ <b>Anime default set</b>\n\n"
+            f"🌴 Anime: <b>{escape_html(anime)}</b>\n"
+            f"🏷 Rarity: <b>{escape_html(rarity or 'Not set')}</b>\n\n"
+            "ယခု <code>/add Name</code> သုံးလျှင် ဒီ Anime ကို default အဖြစ် အသုံးပြုပါမယ်။",
+            parse_mode="HTML",
+        )
+        return
+
+    anime, rarity = await get_add_mode(user.id)
+    anime_list = await list_common_anime(12)
+    token = _anime_picker_token()
+    _ANIME_PICKERS[token] = {
+        "created": time.time(),
+        "user_id": user.id,
+        "anime": anime,
+    }
+    await message.reply_text(
+        "🌴 <b>ADD ANIME</b>\n\n"
+        f"လက်ရှိ Anime: <b>{escape_html(anime or 'Not set')}</b>\n"
+        f"လက်ရှိ Rarity: <b>{escape_html(rarity or 'Not set')}</b>\n\n"
+        "အောက်ကစာရင်းထဲက Anime ကိုရွေးပါ။\n"
+        "အသစ်တစ်ခုသတ်မှတ်ချင်ရင် <code>/addanime Anime Name</code> ကိုသုံးနိုင်ပါတယ်။",
+        parse_mode="HTML",
+        reply_markup=_addanime_keyboard(user.id, token, anime_list, anime),
+    )
+
+
+async def addanime_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not query.data or not query.from_user:
+        return
+    match = re.match(r"^addanime:(\d+):([a-f0-9]{8}):(close|\d+)$", query.data)
+    if not match or int(match.group(1)) != int(query.from_user.id):
+        await query.answer("Not your anime selector.", show_alert=True)
+        return
+
+    token = match.group(2)
+    item = _ANIME_PICKERS.get(token)
+    if not item or item.get("user_id") != query.from_user.id or time.time() - item.get("created", 0) > _ANIME_PICKER_TTL:
+        _ANIME_PICKERS.pop(token, None)
+        await query.answer("Anime selector expired. Use /addanime again.", show_alert=True)
+        return
+
+    if match.group(3) == "close":
+        _ANIME_PICKERS.pop(token, None)
+        await query.answer()
+        await query.edit_message_reply_markup(reply_markup=None)
+        return
+
+    index = int(match.group(3))
+    anime_list = await list_common_anime(12)
+    if index < 0 or index >= len(anime_list):
+        await query.answer("Anime list changed. Use /addanime again.", show_alert=True)
+        return
+
+    anime = await canonical_anime(anime_list[index])
+    _, rarity = await get_add_mode(query.from_user.id)
+    await set_add_mode(query.from_user.id, anime, rarity)
+    _ANIME_PICKERS.pop(token, None)
+    await query.answer("Anime selected.")
+    await query.edit_message_text(
+        "✅ <b>Anime default updated</b>\n\n"
+        f"🌴 Anime: <b>{escape_html(anime)}</b>\n"
+        f"🏷 Rarity: <b>{escape_html(rarity or 'Not set')}</b>\n\n"
+        "ယခု <code>/add Name</code> နဲ့ မြန်မြန် Card ထည့်နိုင်ပါပြီ။",
+        parse_mode="HTML",
+    )
 
 
 def _token() -> str:
@@ -555,6 +677,8 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 def register_photo_add_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("addmode", addmode_cmd))
+    app.add_handler(CommandHandler("addanime", addanime_cmd))
     app.add_handler(CallbackQueryHandler(addmode_callback, pattern=r"^addmode:\d+:.+$"))
+    app.add_handler(CallbackQueryHandler(addanime_callback, pattern=r"^addanime:\d+:[a-f0-9]{8}:(?:close|\d+)$"))
     app.add_handler(CallbackQueryHandler(add_duplicate_callback, pattern=r"^adddup:\d+:[a-f0-9]+:(?:update|new|cancel)$"))
     app.add_handler(MessageHandler(filters.ATTACHMENT, photo_add_handler))

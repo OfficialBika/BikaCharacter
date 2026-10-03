@@ -1,6 +1,7 @@
 from telegram.ext import Application
 
 from handlers.admin import register_admin_handlers
+from handlers.add_help import register_add_help_handlers
 from handlers.broadcast import register_broadcast_handlers
 from handlers.check import register_check_handlers
 from handlers.claim import register_claim_handlers
@@ -48,6 +49,7 @@ def register_handlers(app: Application) -> None:
 
     # Specific command handlers first.
     register_start_handlers(app)
+    register_add_help_handlers(app)
     register_search_handlers(app)
     register_admin_handlers(app)
     register_broadcast_handlers(app)
