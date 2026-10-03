@@ -41,6 +41,25 @@ class PerformanceTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_transfer_like_concurrency(self):
+        async def worker(lock, state):
+            async with lock:
+                if state["source"] <= 0:
+                    return False
+                state["source"] -= 1
+                state["target"] += 1
+                return True
+
+        async def run():
+            lock = asyncio.Lock()
+            state = {"source": 7, "target": 0}
+            results = await asyncio.gather(*(worker(lock, state) for _ in range(100)))
+            self.assertEqual(sum(results), 7)
+            self.assertEqual(state["source"], 0)
+            self.assertEqual(state["target"], 7)
+
+        asyncio.run(run())
+
     def test_gift_like_concurrency(self):
         async def worker(lock, state):
             async with lock:
