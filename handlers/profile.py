@@ -12,6 +12,7 @@ from config import PROFILE_TABLE as CONFIG_PROFILE_TABLE, PROFILE_TITLE, RARITY_
 from database.mongodb import get_db
 from utils.cooldown import should_ignore_update
 from utils.db_helpers import ensure_user, get_photo_by_card_id, rarity_counts
+from utils.hot_lookup import get_global_rank, catalog_stats
 from utils.profile_renderer import render_profile_card, normalize_name_for_render
 from utils.rarity import get_rarity_emoji, get_rarity_button_emoji
 from utils.text import escape_html, level_from_exp, progress_bar
@@ -107,16 +108,13 @@ async def ensure_profile_id(user_id: int) -> int:
     return int((latest or {}).get("profileId", candidate) or candidate)
 
 
-async def get_global_unique_rank(unique_cards: int) -> int:
-    higher = await get_db().users.count_documents(
-        {
-            "$expr": {
-                "$gt": [
-                    {"$size": {"$ifNull": ["$cards", []]}},
-                    int(unique_cards),
-                ]
-            }
-        }
+async def get_global_unique_rank(unique_cards: int, user_id: int | None = None) -> int:
+    if user_id is not None:
+        return await get_global_rank(int(user_id), int(unique_cards))
+    # Compatibility path for callers without a user id.
+    db = get_db()
+    higher = await db.users.count_documents(
+        {"$expr": {"$gt": [{"$size": {"$ifNull": ["$cards", []]}}, int(unique_cards)]}}
     )
     return int(higher) + 1
 
@@ -598,7 +596,7 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             profile_id = await ensure_profile_id(
                 int(update.effective_user.id)
             )
-            global_rank = await get_global_unique_rank(unique_cards)
+            global_rank = await get_global_unique_rank(unique_cards, int(update.effective_user.id))
             rank = collector_rank(unique_cards)
 
             avatar_bytes = await get_profile_avatar_bytes(
@@ -779,7 +777,7 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # Restore the original normal profile flow.
         # No Rich Message API and no generated image pipeline.
         # ============================================================
-        total_photo_count = await get_db().photos.count_documents({})
+        total_photo_count = int((await catalog_stats()).get("total", 0))
         legacy_text = build_public_profile_text(
             user_doc,
             total_photo_count,
