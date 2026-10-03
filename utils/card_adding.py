@@ -5,9 +5,10 @@ import re
 import time
 
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from database.mongodb import get_db
-from config import LIMITED_CARDS_COLLECTION, RARITY_ORDER
+from config import ANIMES_COLLECTION, LIMITED_CARDS_COLLECTION, RARITY_ORDER
 from utils.parser import normalized_search_name
 from utils.text import utcnow
 
@@ -98,6 +99,47 @@ async def sync_counter_at_least(card_id: str) -> None:
     )
 
 
+async def add_anime_to_catalog(anime: str, user_id: int = 0) -> str:
+    """Create/reuse an Anime catalog entry without touching card documents."""
+    value = " ".join(str(anime or "").strip().split())
+    normalized = normalized_search_name(value)
+    if not normalized:
+        raise ValueError("Anime name cannot be empty.")
+    now = utcnow()
+    db = get_db()
+    try:
+        await db[ANIMES_COLLECTION].update_one(
+            {"normalizedName": normalized},
+            {
+                "$set": {"updatedAt": now, "updatedBy": int(user_id or 0)},
+                "$setOnInsert": {
+                    "name": value,
+                    "normalizedName": normalized,
+                    "createdAt": now,
+                    "createdBy": int(user_id or 0),
+                },
+            },
+            upsert=True,
+        )
+    except DuplicateKeyError:
+        pass
+    doc = await db[ANIMES_COLLECTION].find_one(
+        {"normalizedName": normalized},
+        {"name": 1},
+    )
+    return str((doc or {}).get("name") or value).strip()
+
+
+async def anime_catalog_exists(anime: str) -> bool:
+    normalized = normalized_search_name(anime)
+    if not normalized:
+        return False
+    return bool(await get_db()[ANIMES_COLLECTION].find_one(
+        {"normalizedName": normalized},
+        {"_id": 1},
+    ))
+
+
 async def canonical_anime(raw: str) -> str:
     value = " ".join(str(raw or "").strip().split())
     if not value:
@@ -109,6 +151,15 @@ async def canonical_anime(raw: str) -> str:
         return cached[1]
 
     db = get_db()
+    catalog_doc = await db[ANIMES_COLLECTION].find_one(
+        {"normalizedName": key},
+        {"name": 1},
+    )
+    if catalog_doc and catalog_doc.get("name"):
+        result = str(catalog_doc["name"]).strip()
+        _ANIME_CACHE[key] = (now, result)
+        return result
+
     escaped = re.escape(value)
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
         doc = await db[collection_name].find_one(
@@ -196,6 +247,15 @@ async def clear_add_mode(user_id: int) -> None:
 async def list_common_anime(limit: int = 12) -> list[str]:
     db = get_db()
     rows: dict[str, int] = {}
+    catalog_limit = max(100, int(limit) * 10)
+    catalog_docs = await db[ANIMES_COLLECTION].find(
+        {"name": {"$type": "string", "$ne": ""}},
+        {"name": 1},
+    ).sort("updatedAt", -1).limit(catalog_limit).to_list(catalog_limit)
+    for row in catalog_docs:
+        anime = str(row.get("name", "")).strip()
+        if anime:
+            rows.setdefault(anime, 0)
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
         pipeline = [
             {"$match": {"anime": {"$type": "string", "$ne": ""}}},
