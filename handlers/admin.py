@@ -18,6 +18,7 @@ from config import (
 )
 from database.mongodb import get_db
 from utils.db_helpers import add_card_to_user_id, ensure_group, ensure_user, ensure_user_by_id, get_photo_by_card_id
+from utils.hot_lookup import invalidate_user_rank
 from utils.permissions import is_global_admin, is_group_admin_or_owner, is_owner
 from utils.rarity import get_rarity_emoji
 from utils.text import escape_html, mention_user, safe_chat_title, uptime_text, utcnow
@@ -280,6 +281,8 @@ async def transfer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         {"userId": int(old_id)},
         {"$set": {"cards": [], "exp": 0, "favoriteCardId": "", "updatedAt": now}},
     )
+    invalidate_user_rank(int(old_id))
+    invalidate_user_rank(int(new_id))
     await db.harem_transfers.insert_one(
         {
             "fromUserId": int(old_id),
