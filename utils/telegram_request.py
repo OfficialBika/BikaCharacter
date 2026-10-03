@@ -27,6 +27,6 @@ class MetricsHTTPXRequest(HTTPXRequest):
             return result
         except Exception:
             elapsed = (time.perf_counter() - started) * 1000
-            metric = TELEGRAM_METRICS.setdefault(endpoint, __import__("utils.performance", fromlist=["MetricStore"]).MetricStore())
+            metric = TELEGRAM_METRICS.setdefault(endpoint, MetricStore())
             await metric.observe(elapsed, True)
             raise
