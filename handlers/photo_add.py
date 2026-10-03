@@ -10,6 +10,7 @@ from database.mongodb import get_db
 from utils.parser import parse_add_caption
 from utils.permissions import is_owner
 from utils.text import escape_html, mention_user, utcnow
+from utils.hot_lookup import upsert_card
 
 CARD_DATABASE_CHANNEL_ID = config.CARD_DATABASE_CHANNEL_ID
 RARITY_ORDER = config.RARITY_ORDER
@@ -457,6 +458,7 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             {"$set": doc, "$setOnInsert": {"createdAt": now}},
             upsert=True,
         )
+        await upsert_card(doc, collection_name)
 
         if not limited_card:
             await _sync_card_counter_at_least(parsed["cardId"])
