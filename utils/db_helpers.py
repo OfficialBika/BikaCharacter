@@ -12,6 +12,7 @@ from database.mongodb import get_db
 from utils.parser import normalized_search_name
 from utils.rarity import get_rarity_exp
 from utils.text import safe_chat_title, utcnow
+from utils.hot_lookup import get_card as hot_get_card, invalidate_user_rank
 
 
 async def ensure_user(tg_user: User | None, *, include_cards: bool = True) -> Optional[dict]:
@@ -111,26 +112,12 @@ async def get_user_doc(user_id: int) -> Optional[dict]:
 
 
 async def get_photo_by_card_id(card_id: str) -> Optional[dict]:
-    """Find a card by ID from normal photos first, then owner-only limited_cards.
-
-    Limited cards are intentionally not used by random drop helpers below because
-    all random drop queries read only from db.photos.
-    """
-    db = get_db()
-    card_id = str(card_id)
-    doc = await db.photos.find_one({"cardId": card_id})
-    if doc:
-        doc = dict(doc)
-        doc["_sourceCollection"] = "photos"
-        doc["ownerOnly"] = False
-        return doc
-
-    doc = await db[LIMITED_CARDS_COLLECTION].find_one({"cardId": card_id})
-    if doc:
-        doc = dict(doc)
-        doc["_sourceCollection"] = LIMITED_CARDS_COLLECTION
-        doc["ownerOnly"] = True
-        return doc
+    """Read the SQLite hot index first, then verify/fallback to MongoDB source of truth."""
+    hot = await hot_get_card(str(card_id))
+    if hot:
+        hot["_sourceCollection"] = hot.get("_sourceCollection") or "photos"
+        hot["ownerOnly"] = hot["_sourceCollection"] == LIMITED_CARDS_COLLECTION
+        return hot
     return None
 
 
@@ -227,6 +214,7 @@ async def add_card_to_user_id(user_id: int, card_doc: dict, qty: int = 1) -> dic
         array_filters=[{"owned.cardId": card_id}],
     )
     if result.modified_count == 1:
+        invalidate_user_rank(user_id)
         return await db.users.find_one({"userId": user_id})
 
     result = await db.users.update_one(
@@ -249,6 +237,7 @@ async def add_card_to_user_id(user_id: int, card_doc: dict, qty: int = 1) -> dic
             array_filters=[{"owned.cardId": card_id}],
         )
 
+    invalidate_user_rank(user_id)
     return await db.users.find_one({"userId": user_id})
 
 
