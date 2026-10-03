@@ -115,16 +115,19 @@ async def addanime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     args = list(context.args or [])
     if args:
-        anime = " ".join(args).strip()
+        raw_anime = " ".join(args).strip()
+        if len(raw_anime) > 120:
+            await message.reply_text("❌ Anime name is too long. Please keep it within 120 characters.")
+            return
         _, rarity = await get_add_mode(user.id)
+        anime = await add_anime_to_catalog(raw_anime, user.id)
         anime = await canonical_anime(anime)
         await set_add_mode(user.id, anime, rarity)
         await message.reply_text(
-            "✅ <b>Anime default set</b>\n\n"
+            "✅ <b>Anime added / selected</b>\n\n"
             f"🌴 Anime: <b>{escape_html(anime)}</b>\n"
             f"🏷 Rarity: <b>{escape_html(rarity or 'Not set')}</b>\n\n"
-            "ဒီ Anime ကို MongoDB Anime catalog ထဲမှာ သိမ်းထားပြီးသားဖြစ်ပါတယ်။
-"
+            "ဒီ Anime ကို MongoDB Anime catalog ထဲမှာ သိမ်းထားပြီးသားဖြစ်ပါတယ်။\n"
             "ယခု <code>/add Name</code> သုံးလျှင် ဒီ Anime ကို default အဖြစ် အသုံးပြုပါမယ်။",
             parse_mode="HTML",
         )
@@ -148,7 +151,6 @@ async def addanime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         parse_mode="HTML",
         reply_markup=_addanime_keyboard(user.id, token, anime_list, anime),
     )
-
 
 async def addanime_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
