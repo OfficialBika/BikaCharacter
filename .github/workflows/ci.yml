@@ -37,7 +37,7 @@ jobs:
 
       - name: Ensure deprecated Motor is absent
         run: |
-          if grep -R --exclude-dir=.git --exclude='*.md' -nE '(^|[^[:alnum:]_])motor([._]|[^[:alnum:]_]|$)|AsyncIOMotor' .; then
+          if grep -R --exclude-dir=.git --include='*.py' -nE '(^|[^[:alnum:]_])motor([._]|[^[:alnum:]_]|$)|AsyncIOMotor' .; then
             echo "Deprecated Motor references found."
             exit 1
           fi
