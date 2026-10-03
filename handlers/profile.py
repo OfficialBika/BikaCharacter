@@ -670,7 +670,7 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             profile_id = await ensure_profile_id(
                 int(update.effective_user.id)
             )
-            global_rank = await get_global_unique_rank(unique_cards)
+            global_rank = await get_global_unique_rank(unique_cards, int(update.effective_user.id))
             rank = collector_rank(unique_cards)
 
             avatar_bytes = await get_profile_avatar_bytes(
