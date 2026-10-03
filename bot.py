@@ -122,14 +122,21 @@ async def run_webhook(app: Application) -> tuple[web.AppRunner, str]:
     return runner, webhook_url
 
 
-async def run_polling(app: Application) -> web.AppRunner:
-    health_runner = await start_web_server(app)
+async def run_polling(app: Application) -> web.AppRunner | None:
+    # VPS polling does not need an HTTP listener unless explicitly enabled.
+    health_runner: web.AppRunner | None = None
+    if ENABLE_HEALTH_SERVER:
+        health_runner = await start_web_server(app)
 
     await app.updater.start_polling(
         allowed_updates=allowed_updates_for_bot(),
         drop_pending_updates=True,
     )
-    print("BIKA Character Bot launched in polling mode", flush=True)
+    print(
+        "BIKA Character Bot launched in polling mode "
+        f"(health_server={bool(health_runner)})",
+        flush=True,
+    )
     return health_runner
 
 
