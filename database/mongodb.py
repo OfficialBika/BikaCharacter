@@ -55,6 +55,8 @@ async def ensure_indexes() -> None:
     await db.photos.create_index([("normalizedName", ASCENDING)])
     await db.photos.create_index([("rarity", ASCENDING)])
     await db.photos.create_index([("anime", ASCENDING)])
+    await db.photos.create_index([("normalizedName", ASCENDING), ("anime", ASCENDING)])
+    await db.photos.create_index([("fileUniqueId", ASCENDING)])
 
     limited = db[LIMITED_CARDS_COLLECTION]
     await limited.create_index([("cardId", ASCENDING)], unique=True)
