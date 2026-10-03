@@ -19,16 +19,22 @@ def _add_to_group_url() -> str:
     return "https://t.me/"
 
 
+def _bot_deep_link(action: str) -> str:
+    if BOT_USERNAME:
+        return f"https://t.me/{BOT_USERNAME}?start={action}"
+    return "https://t.me/"
+
+
 def _start_keyboard(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                action_button(t("start_button_harem"), "primary", callback_data=f"start:{user_id}:harem"),
-                action_button(t("start_button_profile"), "primary", callback_data=f"start:{user_id}:profile"),
+                InlineKeyboardButton(t("start_button_harem"), url=_bot_deep_link("harem")),
+                InlineKeyboardButton(t("start_button_profile"), url=_bot_deep_link("profile")),
             ],
             [
-                action_button(t("start_button_search"), "primary", callback_data=f"start:{user_id}:search"),
-                action_button(t("start_button_favourite"), "primary", callback_data=f"start:{user_id}:fav"),
+                InlineKeyboardButton(t("start_button_search"), url=_bot_deep_link("search")),
+                InlineKeyboardButton(t("start_button_favourite"), url=_bot_deep_link("fav")),
             ],
             [
                 action_button(t("start_button_rankings"), "primary", callback_data=f"start:{user_id}:rank"),
@@ -52,6 +58,19 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         mention = f'<a href="tg://user?id={user.id}">{escape_html(user.full_name or user.username or "User")}</a>'
     else:
         mention = "User"
+
+    action = str(context.args[0]).strip().lower() if context.args else ""
+    deep_link_handlers = {
+        "harem": ("handlers.harem", "harem_cmd"),
+        "profile": ("handlers.profile", "profile_cmd"),
+        "search": ("handlers.search", "search_cmd"),
+        "fav": ("handlers.fav", "fav_cmd"),
+    }
+    target = deep_link_handlers.get(action)
+    if target and update.effective_message and update.effective_user:
+        module = __import__(target[0], fromlist=[target[1]])
+        await getattr(module, target[1])(update, context)
+        return
 
     text = t("start_message", mention=mention)
 
