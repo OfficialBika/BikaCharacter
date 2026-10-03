@@ -44,7 +44,7 @@ class MetricStore:
 MONGO_METRICS: dict[str, MetricStore] = {}
 TELEGRAM_METRICS: dict[str, MetricStore] = {}
 EVENT_LOOP_LAG = MetricStore()
-_CACHE_REGISTRY: list[BoundedTTLCache] = []
+_CACHE_REGISTRY: list[Any] = []
 
 
 def _metric(registry: dict[str, MetricStore], name: str) -> MetricStore:
