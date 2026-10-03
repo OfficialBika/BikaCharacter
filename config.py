@@ -174,8 +174,13 @@ INLINE_CACHE_TIME = env_int("INLINE_CACHE_TIME", 60, 0, 300)
 # BROADCAST SETTINGS
 # ---------------------------------------------------------------------------
 ENABLE_BROADCAST = env_bool("ENABLE_BROADCAST", "true")
-BROADCAST_WORKERS = env_int("BROADCAST_WORKERS", 20, 1, 50)
-BROADCAST_DELAY = env_float("BROADCAST_DELAY", 0.05, 0.0, 5.0)
+# Telegram's normal bulk-user broadcast ceiling is about 30 msg/s.
+# Keep a small safety margin so concurrent workers do not intentionally hit 429.
+BROADCAST_RATE = env_int("BROADCAST_RATE", 28, 1, 30)
+# Paid Broadcasts can raise the user-broadcast ceiling to 1000 msg/s.
+# This is only used when the owner explicitly passes -paid.
+BROADCAST_PAID_RATE = env_int("BROADCAST_PAID_RATE", 800, 1, 1000)
+BROADCAST_WORKERS = env_int("BROADCAST_WORKERS", 30, 1, 100)
 BROADCAST_MAX_RETRY = env_int("BROADCAST_MAX_RETRY", 3, 1, 10)
 ENABLE_BROADCAST_LOG = env_bool("ENABLE_BROADCAST_LOG", "true")
 
