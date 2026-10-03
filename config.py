@@ -205,6 +205,8 @@ RARITY_LIMITED_NAME = LIMITED_RARITY_NAME
 
 LIMITED_CUSTOM_EMOJI_ID = os.getenv("LIMITED_CUSTOM_EMOJI_ID", "5361837567463399422").strip()
 LIMITED_FALLBACK_EMOJI = os.getenv("LIMITED_FALLBACK_EMOJI", os.getenv("RARITY_LIMITED_EMOJI", "🔮")).strip() or "🔮"
+# Generic brand custom emoji used by the premium Telegram UI. Empty disables it.
+UI_BRAND_CUSTOM_EMOJI_ID = os.getenv("UI_BRAND_CUSTOM_EMOJI_ID", LIMITED_CUSTOM_EMOJI_ID).strip()
 
 # Bot API supports custom emoji icons and colored button styles on InlineKeyboardButton.
 # These toggles make rollback easy if a self-hosted/old Bot API server is used.
