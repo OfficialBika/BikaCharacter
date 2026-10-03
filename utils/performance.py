@@ -4,6 +4,7 @@ import asyncio
 import math
 import os
 import sys
+import pathlib
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -43,6 +44,7 @@ class MetricStore:
 MONGO_METRICS: dict[str, MetricStore] = {}
 TELEGRAM_METRICS: dict[str, MetricStore] = {}
 EVENT_LOOP_LAG = MetricStore()
+_CACHE_REGISTRY: list[BoundedTTLCache] = []
 
 
 def _metric(registry: dict[str, MetricStore], name: str) -> MetricStore:
@@ -73,6 +75,7 @@ class BoundedTTLCache:
         self.ttl_seconds = max(1.0, float(ttl_seconds))
         self._items: OrderedDict[str, tuple[Any, float, int]] = OrderedDict()
         self._bytes = 0
+        _CACHE_REGISTRY.append(self)
 
     @staticmethod
     def _estimate(value: Any) -> int:
@@ -151,4 +154,34 @@ async def metrics_snapshot() -> dict[str, Any]:
         "mongo": {name: await metric.snapshot() for name, metric in MONGO_METRICS.items()},
         "telegram": {name: await metric.snapshot() for name, metric in TELEGRAM_METRICS.items()},
         "event_loop_lag": await EVENT_LOOP_LAG.snapshot(),
+    }
+
+
+
+def process_rss_bytes() -> int:
+    try:
+        statm = pathlib.Path("/proc/self/statm").read_text().split()
+        return int(statm[1]) * int(os.sysconf("SC_PAGE_SIZE"))
+    except Exception:
+        return 0
+
+
+async def monitor_memory_ceiling(stop_event: asyncio.Event | None = None) -> None:
+    ceiling = max(256, int(os.getenv("PROCESS_MEMORY_CEILING_MB", "4096") or 4096)) * 1024 * 1024
+    interval = max(5.0, float(os.getenv("MEMORY_CHECK_INTERVAL_SECONDS", "15") or 15))
+    while stop_event is None or not stop_event.is_set():
+        await asyncio.sleep(interval)
+        rss = process_rss_bytes()
+        if rss and rss >= ceiling:
+            # Drop non-authoritative caches first. MongoDB remains the source of truth.
+            for cache in sorted(_CACHE_REGISTRY, key=lambda item: item.stats()["bytes"], reverse=True):
+                cache.clear()
+            print(f"MEMORY CEILING: rss={rss / 1024 / 1024:.1f}MB ceiling={ceiling / 1024 / 1024:.0f}MB; caches evicted", flush=True)
+
+
+async def runtime_snapshot() -> dict[str, Any]:
+    return {
+        "rss_bytes": process_rss_bytes(),
+        "memory_ceiling_mb": int(os.getenv("PROCESS_MEMORY_CEILING_MB", "4096") or 4096),
+        "caches": [cache.stats() for cache in _CACHE_REGISTRY],
     }
