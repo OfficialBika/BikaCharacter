@@ -231,4 +231,4 @@ async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 def register_hmode_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("hmode", hmode_cmd))
     app.add_handler(CommandHandler("settings", settings_cmd))
-    app.add_handler(CallbackQueryHandler(hmode_callback, pattern=r"^hmode:\\d+:.+$"))
+    app.add_handler(CallbackQueryHandler(hmode_callback, pattern=r"^hmode:\d+:.+$"))
