@@ -100,16 +100,34 @@ async def sync_counter_at_least(card_id: str) -> None:
 
 
 async def add_anime_to_catalog(anime: str, user_id: int = 0) -> str:
-    """Create/reuse an Anime catalog entry without touching card documents."""
+    """Create/reuse an Anime catalog entry without touching card documents.
+
+    Existing catalog rows are reused by normalizedName. New rows use the
+    normalized name as their MongoDB _id, making concurrent creation atomic
+    without requiring a destructive migration or a unique secondary index.
+    """
     value = " ".join(str(anime or "").strip().split())
     normalized = normalized_search_name(value)
     if not normalized:
         raise ValueError("Anime name cannot be empty.")
     now = utcnow()
     db = get_db()
+
+    existing = await db[ANIMES_COLLECTION].find_one(
+        {"normalizedName": normalized},
+        {"name": 1},
+    )
+    if existing and existing.get("name"):
+        canonical = str(existing["name"]).strip()
+        await db[ANIMES_COLLECTION].update_one(
+            {"_id": existing["_id"]},
+            {"$set": {"updatedAt": now, "updatedBy": int(user_id or 0)}},
+        )
+        return canonical
+
     try:
         await db[ANIMES_COLLECTION].update_one(
-            {"normalizedName": normalized},
+            {"_id": normalized},
             {
                 "$set": {"updatedAt": now, "updatedBy": int(user_id or 0)},
                 "$setOnInsert": {
@@ -123,12 +141,12 @@ async def add_anime_to_catalog(anime: str, user_id: int = 0) -> str:
         )
     except DuplicateKeyError:
         pass
+
     doc = await db[ANIMES_COLLECTION].find_one(
         {"normalizedName": normalized},
         {"name": 1},
     )
     return str((doc or {}).get("name") or value).strip()
-
 
 async def anime_catalog_exists(anime: str) -> bool:
     normalized = normalized_search_name(anime)
