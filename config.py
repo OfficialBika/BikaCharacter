@@ -174,6 +174,8 @@ CLAIM_TIMEZONE = os.getenv("CLAIM_TIMEZONE", "Asia/Yangon").strip() or "Asia/Yan
 # Limited / owner-give-only card collection.
 # Cards with rarity Limited or non-numeric IDs such as 1a, 1s, 1bc are stored here.
 LIMITED_CARDS_COLLECTION = os.getenv("LIMITED_CARDS_COLLECTION", "limited_cards").strip() or "limited_cards"
+# Metadata-only Anime catalog. Card documents remain in photos/limited_cards.
+ANIMES_COLLECTION = os.getenv("ANIMES_COLLECTION", "animes").strip() or "animes"
 
 # ---------------------------------------------------------------------------
 # RARITY SETTINGS

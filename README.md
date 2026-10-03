@@ -80,6 +80,7 @@ Fast adding helpers:
 ```text
 /addmode Anime | Rarity
 /addanime Anime Name
+# အသစ်ဆို MongoDB animes catalog ထဲကို သိမ်းမယ်
 /addhelp
 ```
 
