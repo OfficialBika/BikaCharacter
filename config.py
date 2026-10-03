@@ -34,6 +34,14 @@ def env_float(name: str, default: float, min_value: float | None = None, max_val
         value = min(float(max_value), value)
     return value
 
+def env_custom_emoji_id(name: str, default: str = "") -> str:
+    """Read a Telegram custom emoji ID and reject malformed values safely."""
+    value = str(os.getenv(name, default) or "").strip()
+    if not value:
+        return ""
+    return value if value.isdigit() else str(default or "").strip()
+
+
 def env_command(name: str, default: str = "bika") -> str:
     """Read and validate a Telegram bot command name from environment variables.
 
@@ -227,15 +235,15 @@ LIMITED_FALLBACK_EMOJI = os.getenv(
     os.getenv("LIMITED_FALLBACK_EMOJI", os.getenv("RARITY_LIMITED_EMOJI", "🔮")),
 ).strip() or "🔮"
 
-RARITY_COMMON_CUSTOM_EMOJI_ID = os.getenv("RARITY_COMMON_CUSTOM_EMOJI_ID", "").strip()
-RARITY_UNCOMMON_CUSTOM_EMOJI_ID = os.getenv("RARITY_UNCOMMON_CUSTOM_EMOJI_ID", "").strip()
-RARITY_RARE_CUSTOM_EMOJI_ID = os.getenv("RARITY_RARE_CUSTOM_EMOJI_ID", "").strip()
-RARITY_LEGENDARY_CUSTOM_EMOJI_ID = os.getenv("RARITY_LEGENDARY_CUSTOM_EMOJI_ID", "").strip()
-RARITY_MYSTICAL_CUSTOM_EMOJI_ID = os.getenv("RARITY_MYSTICAL_CUSTOM_EMOJI_ID", "").strip()
-RARITY_DIVINE_CUSTOM_EMOJI_ID = os.getenv("RARITY_DIVINE_CUSTOM_EMOJI_ID", "").strip()
-RARITY_CROSSVERSE_CUSTOM_EMOJI_ID = os.getenv("RARITY_CROSSVERSE_CUSTOM_EMOJI_ID", "").strip()
-RARITY_CATAPHRACT_CUSTOM_EMOJI_ID = os.getenv("RARITY_CATAPHRACT_CUSTOM_EMOJI_ID", "").strip()
-RARITY_SUPREME_CUSTOM_EMOJI_ID = os.getenv("RARITY_SUPREME_CUSTOM_EMOJI_ID", "").strip()
+RARITY_COMMON_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_COMMON_CUSTOM_EMOJI_ID")
+RARITY_UNCOMMON_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_UNCOMMON_CUSTOM_EMOJI_ID")
+RARITY_RARE_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_RARE_CUSTOM_EMOJI_ID")
+RARITY_LEGENDARY_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_LEGENDARY_CUSTOM_EMOJI_ID")
+RARITY_MYSTICAL_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_MYSTICAL_CUSTOM_EMOJI_ID")
+RARITY_DIVINE_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_DIVINE_CUSTOM_EMOJI_ID")
+RARITY_CROSSVERSE_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_CROSSVERSE_CUSTOM_EMOJI_ID")
+RARITY_CATAPHRACT_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_CATAPHRACT_CUSTOM_EMOJI_ID")
+RARITY_SUPREME_CUSTOM_EMOJI_ID = env_custom_emoji_id("RARITY_SUPREME_CUSTOM_EMOJI_ID")
 
 RARITY_COMMON_FALLBACK_EMOJI = os.getenv("RARITY_COMMON_FALLBACK_EMOJI", os.getenv("RARITY_COMMON_EMOJI", "🔵")).strip() or "🔵"
 RARITY_UNCOMMON_FALLBACK_EMOJI = os.getenv("RARITY_UNCOMMON_FALLBACK_EMOJI", os.getenv("RARITY_UNCOMMON_EMOJI", "🟣")).strip() or "🟣"
