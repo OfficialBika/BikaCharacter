@@ -1,6 +1,6 @@
 # BIKA Character Catcher Bot — Python Async Version
 
-A production-ready Telegram character catcher bot built with `python-telegram-bot` and MongoDB/Motor.
+A production-ready Telegram character catcher bot built with `python-telegram-bot` and MongoDB with PyMongo Async.
 
 ## Main features
 
