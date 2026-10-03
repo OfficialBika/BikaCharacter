@@ -183,7 +183,18 @@ async def main() -> None:
     await reset_group_state_on_startup()
 
     # 12-vCPU VPS: keep enough parallelism for busy groups without opening
-    # an unbounded 256-update burst against Telegram/MongoDB.\n    app = (\n        ApplicationBuilder()\n        .token(BOT_TOKEN)\n        .concurrent_updates(32)\n        .connection_pool_size(64)\n        .pool_timeout(10.0)\n        .connect_timeout(8.0)\n        .read_timeout(20.0)\n        .write_timeout(20.0)\n        .build()\n    )
+    # an unbounded 256-update burst against Telegram/MongoDB.
+    app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .concurrent_updates(32)
+        .connection_pool_size(64)
+        .pool_timeout(10.0)
+        .connect_timeout(8.0)
+        .read_timeout(20.0)
+        .write_timeout(20.0)
+        .build()
+    )
     register_handlers(app)
     app.add_error_handler(error_handler)
 
