@@ -3,16 +3,16 @@ from __future__ import annotations
 
 from typing import Optional
 
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from pymongo import ASCENDING, DESCENDING
+from pymongo import ASCENDING, DESCENDING, AsyncMongoClient
+from pymongo.asynchronous.database import AsyncDatabase
 
 from config import DB_NAME, MONGODB_URI, LIMITED_CARDS_COLLECTION
 
-_client: Optional[AsyncIOMotorClient] = None
-_db: Optional[AsyncIOMotorDatabase] = None
+_client: Optional[AsyncMongoClient] = None
+_db: Optional[AsyncDatabase] = None
 
 
-def get_db() -> AsyncIOMotorDatabase:
+def get_db() -> AsyncDatabase:
     if _db is None:
         raise RuntimeError("MongoDB is not initialized. Call init_db() first.")
     return _db
@@ -23,7 +23,15 @@ async def init_db() -> None:
     if not MONGODB_URI:
         raise RuntimeError("Missing MONGODB_URI in .env")
 
-    _client = AsyncIOMotorClient(MONGODB_URI)
+    _client = AsyncMongoClient(
+        MONGODB_URI,
+        maxPoolSize=50,
+        minPoolSize=5,
+        maxConnecting=8,
+        waitQueueTimeoutMS=5000,
+        serverSelectionTimeoutMS=5000,
+        connectTimeoutMS=5000,
+    )
     _db = _client[DB_NAME]
     await _db.command("ping")
     await ensure_indexes()
@@ -77,6 +85,6 @@ async def ensure_indexes() -> None:
 async def close_db() -> None:
     global _client, _db
     if _client is not None:
-        _client.close()
+        await _client.close()
     _client = None
     _db = None
