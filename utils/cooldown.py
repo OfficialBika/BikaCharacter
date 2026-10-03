@@ -1,12 +1,29 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import time
 
 from telegram import Update
 
 from config import ANTI_SPAM_STREAK, BOT_MUTE_SECONDS
 from database.mongodb import get_db
 from utils.text import utcnow
+
+_LOCAL_STREAKS: dict[int, tuple[int, int, float]] = {}
+_LOCAL_STREAK_TTL = 900.0
+_LOCAL_STREAK_MAX = 100_000
+
+
+def _cleanup_local_streaks(now: float) -> None:
+    if len(_LOCAL_STREAKS) <= _LOCAL_STREAK_MAX:
+        expired = [k for k, (_, _, seen) in _LOCAL_STREAKS.items() if now - seen > _LOCAL_STREAK_TTL]
+    else:
+        expired = [k for k, (_, _, seen) in _LOCAL_STREAKS.items() if now - seen > _LOCAL_STREAK_TTL]
+    for key in expired:
+        _LOCAL_STREAKS.pop(key, None)
+    if len(_LOCAL_STREAKS) > _LOCAL_STREAK_MAX:
+        for key, _ in sorted(_LOCAL_STREAKS.items(), key=lambda item: item[1][2])[: len(_LOCAL_STREAKS) - _LOCAL_STREAK_MAX]:
+            _LOCAL_STREAKS.pop(key, None)
 
 
 async def is_free_user(group_id: int, user_id: int) -> bool:
@@ -96,42 +113,27 @@ async def mute_user_for_bot(group_id: int, user_id: int, reason: str = "anti_spa
 
 
 async def record_message_and_maybe_mute(update: Update) -> bool:
-    """Track consecutive group messages.
-
-    Returns True when the user has just been bot-muted.
-    Free users still count as normal chat activity for drops, but their own
-    messages never create a mute and they break another user's consecutive streak.
-    """
+    """Track consecutive group messages in RAM and write Mongo only on mute."""
     if not update.effective_chat or not update.effective_user:
         return False
 
-    db = get_db()
     group_id = int(update.effective_chat.id)
     user_id = int(update.effective_user.id)
+    now_mono = time.monotonic()
+    _cleanup_local_streaks(now_mono)
+    key = group_id
 
     if await is_free_user(group_id, user_id):
-        await db.groups.update_one(
-            {"groupId": group_id},
-            {"$set": {"lastSpeakerId": user_id, "lastSpeakerCount": 0, "updatedAt": utcnow()}},
-        )
+        _LOCAL_STREAKS[key] = (user_id, 0, now_mono)
         return False
 
-    group = await db.groups.find_one({"groupId": group_id}, {"lastSpeakerId": 1, "lastSpeakerCount": 1})
-    last_id = int(group.get("lastSpeakerId", 0) if group else 0)
-    last_count = int(group.get("lastSpeakerCount", 0) if group else 0)
-
+    last_id, last_count, _ = _LOCAL_STREAKS.get(key, (0, 0, now_mono))
     new_count = last_count + 1 if last_id == user_id else 1
-    await db.groups.update_one(
-        {"groupId": group_id},
-        {"$set": {"lastSpeakerId": user_id, "lastSpeakerCount": new_count, "updatedAt": utcnow()}},
-    )
+    _LOCAL_STREAKS[key] = (user_id, new_count, now_mono)
 
     if new_count >= ANTI_SPAM_STREAK:
         await mute_user_for_bot(group_id, user_id, "sent_6_messages_in_a_row")
-        await db.groups.update_one(
-            {"groupId": group_id},
-            {"$set": {"lastSpeakerId": 0, "lastSpeakerCount": 0, "updatedAt": utcnow()}},
-        )
+        _LOCAL_STREAKS[key] = (0, 0, now_mono)
         return True
 
     return False
