@@ -313,6 +313,14 @@ def _build_harem_prefix(user_doc: dict, page: int, total_pages: int, view_cards:
                 total_series=len(grouped),
             )
         )
+    elif sort_mode == "compact":
+        lines.append(
+            t(
+                "harem_summary_compact",
+                total_cards=total_cards,
+                shown_cards=shown_total,
+            )
+        )
     else:
         lines.append(
             t(
