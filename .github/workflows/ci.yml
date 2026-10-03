@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "optimize/**"
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  syntax-and-deps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+
+      - name: Install production dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+
+      - name: Verify dependency health
+        run: python -m pip check
+
+      - name: Compile all Python files
+        run: python -m compileall -q .
+
+      - name: Verify critical imports
+        run: python -c "import telegram, pymongo, aiohttp, PIL, regex, uharfbuzz, fontTools; print('imports: OK')"
+
+      - name: Ensure deprecated Motor is absent
+        run: |
+          if grep -R --exclude-dir=.git --exclude='*.md' -nE '(^|[^[:alnum:]_])motor([._]|[^[:alnum:]_]|$)|AsyncIOMotor' .; then
+            echo "Deprecated Motor references found."
+            exit 1
+          fi
