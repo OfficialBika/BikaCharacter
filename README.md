@@ -60,7 +60,7 @@ Fallback variables (`RARITY_<NAME>_FALLBACK_EMOJI`) are used only when a custom 
 
 ## Important Telegram note
 
-Telegram Bot API does **not** allow bots to choose real inline button background colors. This project uses emoji labels like 🟢 🔴 🟦 🟩 to make buttons visually colored. Regular Unicode emoji are supported. Real custom premium emoji require Telegram custom emoji IDs and message entities; this starter keeps it simple and stable.
+Telegram custom premium emoji are configured through the rarity `*_CUSTOM_EMOJI_ID` environment variables. HTML/Rich Message outputs use Telegram custom-emoji entities, while rarity buttons use the same custom emoji ID through the button API field. Unicode fallbacks remain available for unsupported/empty configurations.
 
 ## Setup
 
