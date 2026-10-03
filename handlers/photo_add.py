@@ -27,6 +27,7 @@ from telegram.ext import (
 
 from database.mongodb import get_db
 from utils.card_adding import (
+    add_anime_to_catalog,
     canonical_anime,
     find_duplicate_media,
     find_possible_duplicate,
@@ -122,6 +123,8 @@ async def addanime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "✅ <b>Anime default set</b>\n\n"
             f"🌴 Anime: <b>{escape_html(anime)}</b>\n"
             f"🏷 Rarity: <b>{escape_html(rarity or 'Not set')}</b>\n\n"
+            "ဒီ Anime ကို MongoDB Anime catalog ထဲမှာ သိမ်းထားပြီးသားဖြစ်ပါတယ်။
+"
             "ယခု <code>/add Name</code> သုံးလျှင် ဒီ Anime ကို default အဖြစ် အသုံးပြုပါမယ်။",
             parse_mode="HTML",
         )
