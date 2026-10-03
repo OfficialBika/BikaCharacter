@@ -37,6 +37,27 @@ A production-ready Telegram character catcher bot built with `python-telegram-bo
 - Each user can catch only 25 cards per Myanmar/Yangon day by default
 - `/mylimit` checks used and remaining daily catch slots
 
+## Rarity custom emoji configuration
+
+All 10 rarities use one centralized environment-driven custom emoji system. Each rarity has its own `RARITY_<NAME>_CUSTOM_EMOJI_ID`, so changing one rarity does not affect the others.
+
+```env
+RARITY_LIMITED_CUSTOM_EMOJI_ID=
+RARITY_COMMON_CUSTOM_EMOJI_ID=
+RARITY_UNCOMMON_CUSTOM_EMOJI_ID=
+RARITY_RARE_CUSTOM_EMOJI_ID=
+RARITY_LEGENDARY_CUSTOM_EMOJI_ID=
+RARITY_MYSTICAL_CUSTOM_EMOJI_ID=
+RARITY_DIVINE_CUSTOM_EMOJI_ID=
+RARITY_CROSSVERSE_CUSTOM_EMOJI_ID=
+RARITY_CATAPHRACT_CUSTOM_EMOJI_ID=
+RARITY_SUPREME_CUSTOM_EMOJI_ID=
+```
+
+When a custom ID is configured, the central rarity formatter emits Telegram `<tg-emoji>` markup for HTML/Rich Message surfaces, and rarity buttons send the same ID through Telegram's button custom-emoji field. This keeps rarity output consistent across drops, claims, checks, favourites, gifts, inline results, harem, profile tables, admin views, and rarity-selection buttons.
+
+Fallback variables (`RARITY_<NAME>_FALLBACK_EMOJI`) are used only when a custom ID is empty or a surface cannot carry the custom icon. Existing `LIMITED_CUSTOM_EMOJI_ID` / `LIMITED_FALLBACK_EMOJI` deployments remain compatible.
+
 ## Important Telegram note
 
 Telegram Bot API does **not** allow bots to choose real inline button background colors. This project uses emoji labels like 🟢 🔴 🟦 🟩 to make buttons visually colored. Regular Unicode emoji are supported. Real custom premium emoji require Telegram custom emoji IDs and message entities; this starter keeps it simple and stable.
