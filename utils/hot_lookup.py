@@ -290,7 +290,9 @@ async def search_cards(search: str, offset: int, limit: int) -> tuple[list[dict]
             await upsert_card(doc, collection_name)
     docs.sort(key=lambda d: (str(d.get("cardId",""))))
     result = (docs[offset:offset+limit], len(docs) > offset+limit)
-
+    if result[0]:
+        SEARCH_CACHE.set(key, result, size_hint=max(1024, len(result[0]) * 900))
+    return result
 
 
 async def get_card(card_id: str) -> dict | None:
