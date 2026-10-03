@@ -8,7 +8,7 @@ from pymongo.monitoring import CommandListener
 from utils.performance import observe_mongo_command
 from pymongo.asynchronous.database import AsyncDatabase
 
-from config import DB_NAME, MONGODB_URI, LIMITED_CARDS_COLLECTION
+from config import DB_NAME, MONGODB_URI, LIMITED_CARDS_COLLECTION, ANIMES_COLLECTION
 
 
 class MongoLatencyListener(CommandListener):
@@ -65,6 +65,10 @@ async def ensure_indexes() -> None:
     await limited.create_index([("anime", ASCENDING)])
     await limited.create_index([("normalizedName", ASCENDING), ("anime", ASCENDING)])
     await limited.create_index([("fileUniqueId", ASCENDING)])
+
+    animes = db[ANIMES_COLLECTION]
+    await animes.create_index([("normalizedName", ASCENDING)], unique=True)
+    await animes.create_index([("updatedAt", DESCENDING)])
 
     await db.users.create_index([("userId", ASCENDING)], unique=True)
     await db.users.create_index([("updatedAt", DESCENDING)])
