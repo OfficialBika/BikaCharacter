@@ -4,7 +4,7 @@ import time
 
 from telegram.request import HTTPXRequest
 
-from utils.performance import TELEGRAM_METRICS
+from utils.performance import MetricStore, TELEGRAM_METRICS
 
 
 class MetricsHTTPXRequest(HTTPXRequest):
@@ -22,7 +22,7 @@ class MetricsHTTPXRequest(HTTPXRequest):
                 pool_timeout=pool_timeout,
             )
             elapsed = (time.perf_counter() - started) * 1000
-            metric = TELEGRAM_METRICS.setdefault(endpoint, __import__("utils.performance", fromlist=["MetricStore"]).MetricStore())
+            metric = TELEGRAM_METRICS.setdefault(endpoint, MetricStore())
             await metric.observe(elapsed, False)
             return result
         except Exception:
