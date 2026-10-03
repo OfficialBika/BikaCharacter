@@ -1,6 +1,6 @@
 import unittest
 
-from utils.card_adding import rarity_aliases, normalize_add_rarity
+from utils.card_adding import rarity_aliases, normalize_add_rarity, add_anime_to_catalog
 from utils.parser import parse_add_caption
 from handlers.add_help import ADD_HELP_TEXT
 
@@ -33,6 +33,9 @@ class CardAddingParserTest(unittest.TestCase):
         self.assertIn("/addhelp", ADD_HELP_TEXT)
         self.assertIn("Update Existing", ADD_HELP_TEXT)
         self.assertIn("Create New", ADD_HELP_TEXT)
+
+    def test_anime_catalog_helper_is_available(self):
+        self.assertTrue(callable(add_anime_to_catalog))
 
     def test_explicit_numeric_id_is_preserved(self):
         parsed = parse_add_caption("/add 123 | Yelan | Lg | Genshin Impact")
