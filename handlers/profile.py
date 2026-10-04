@@ -542,6 +542,21 @@ async def send_profile_rich_message(
 
     form = aiohttp.FormData()
     form.add_field("chat_id", str(int(update.effective_chat.id)))
+
+    # Make the final Rich Profile message a reply to the user's /profile
+    # command instead of only replying to the temporary loading message.
+    if update.effective_message:
+        form.add_field(
+            "reply_parameters",
+            json.dumps(
+                {
+                    "message_id": int(update.effective_message.message_id),
+                    "allow_sending_without_reply": True,
+                },
+                separators=(",", ":"),
+            ),
+        )
+
     form.add_field(
         "rich_message",
         json.dumps(
@@ -768,13 +783,9 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 include_table=True,
             )
 
-            if await edit_loading_to_rich_message(
-                loading_message,
-                context,
-                rich_html,
-            ):
-                return
-
+            # Send the final Rich Message as a reply to the user's
+            # /profile command. Do not edit the loading message here,
+            # because an edited loading message would not be a reply.
             if await send_profile_rich_message(
                 update,
                 context,
