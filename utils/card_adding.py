@@ -281,7 +281,7 @@ async def list_common_anime(limit: int = 12) -> list[str]:
             {"$sort": {"count": -1, "_id": 1}},
             {"$limit": int(limit)},
         ]
-        docs = await (await (await db[collection_name].aggregate(pipeline)).to_list(limit)
+        docs = await (await db[collection_name].aggregate(pipeline)).to_list(limit)
         for row in docs:
             anime = str(row.get("_id", "")).strip()
             if anime:
