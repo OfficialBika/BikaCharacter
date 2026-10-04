@@ -24,18 +24,31 @@ CANVAS_H = 900
 
 EMOJI_FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/truetype/noto/NotoEmoji-VariableFont_wght.ttf",
+    "/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf",
     "/usr/share/fonts/truetype/ancient-scripts/Symbola_hint.ttf",
     "/usr/share/fonts/truetype/unifont/unifont_sample.ttf",
+    "/usr/share/fonts/truetype/unifont/unifont.otf",
 )
 
 
 def normalize_name_for_render(text: str) -> str:
-    raw = str(text or "").replace("\n", " ").strip()
+    raw = str(text or "").replace("\r", " ").replace("\n", " ").strip()
     if not raw:
         return "Unknown"
 
     normalized = unicodedata.normalize("NFKC", raw)
-    normalized = " ".join(normalized.split())
+    cleaned: list[str] = []
+
+    # Keep ZWJ/variation selectors/keycap marks because they are part of emoji
+    # grapheme clusters. Drop other control/format characters that destabilize PIL.
+    for ch in normalized:
+        category = unicodedata.category(ch)
+        if category.startswith("C") and ch not in {"\u200d", "\ufe0f", "\u20e3"}:
+            continue
+        cleaned.append(ch)
+
+    normalized = " ".join("".join(cleaned).split())
     return normalized or "Unknown"
 
 
@@ -193,64 +206,54 @@ def _split_runs(text: str) -> list[tuple[bool, str]]:
     return runs
 
 
-@lru_cache(maxsize=16)
-def _emoji_font_path() -> str | None:
-    for path in EMOJI_FONT_CANDIDATES:
-        if os.path.exists(path):
-            return path
-    return None
-
-
-@lru_cache(maxsize=8)
-def _emoji_font():
-    path = _emoji_font_path()
-    if not path:
+@lru_cache(maxsize=32)
+def _emoji_font_for_path(path: str, size: int):
+    if not path or not os.path.exists(path):
         return None
 
-    # Noto Color Emoji on Ubuntu commonly exposes one bitmap strike at 109 px.
-    for size in (109, 128, 96, 64, 48, 32):
+    requested = max(16, int(size))
+    sizes = (109, 128, 96, 64, 48, 32) if "NotoColorEmoji" in path else (requested, 128, 96, 64, 48, 32)
+    for font_size in sizes:
         try:
-            return ImageFont.truetype(path, size=size)
+            return ImageFont.truetype(path, size=font_size)
         except Exception:
             continue
-
     return None
 
 
-@lru_cache(maxsize=512)
 def _render_emoji_cluster(cluster: str, target_size: int) -> Image.Image | None:
-    font = _emoji_font()
-    if font is None:
+    if not cluster:
         return None
 
-    try:
-        canvas = Image.new("RGBA", (180, 180), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(canvas)
-
-        draw.text(
-            (90, 90),
-            cluster,
-            font=font,
-            anchor="mm",
-            embedded_color=True,
-        )
-
-        bbox = canvas.getbbox()
-        if not bbox:
-            return None
-
-        cropped = canvas.crop(bbox)
-        target = max(8, int(target_size))
-        ratio = min(target / cropped.width, target / cropped.height)
-        new_w = max(1, int(cropped.width * ratio))
-        new_h = max(1, int(cropped.height * ratio))
-
-        return cropped.resize(
-            (new_w, new_h),
-            Image.Resampling.LANCZOS,
-        )
-    except Exception:
-        return None
+    target = max(12, int(target_size))
+    for path in EMOJI_FONT_CANDIDATES:
+        font = _emoji_font_for_path(path, target)
+        if font is None:
+            continue
+        try:
+            canvas_size = max(180, target * 3)
+            canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(canvas)
+            draw.text(
+                (canvas_size // 2, canvas_size // 2),
+                cluster,
+                font=font,
+                anchor="mm",
+                embedded_color=("ColorEmoji" in path or "NotoColorEmoji" in path),
+                fill=(255, 255, 255, 255),
+            )
+            bbox = canvas.getbbox()
+            if not bbox:
+                continue
+            cropped = canvas.crop(bbox)
+            ratio = min(target / cropped.width, target / cropped.height)
+            return cropped.resize(
+                (max(1, int(cropped.width * ratio)), max(1, int(cropped.height * ratio))),
+                Image.Resampling.LANCZOS,
+            )
+        except Exception:
+            continue
+    return None
 
 
 def _text_width(
@@ -298,6 +301,26 @@ def _fit_mixed_text_size(
         size -= 2
 
     return int(min_size)
+
+
+def _truncate_mixed_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    max_width: int,
+    size: int,
+    bold: bool = False,
+) -> str:
+    value = normalize_name_for_render(text)
+    if _text_width(draw, value, size, bold) <= max_width:
+        return value
+
+    clusters = _graphemes(value)
+    while clusters:
+        candidate = "".join(clusters).rstrip() + "…"
+        if _text_width(draw, candidate, size, bold) <= max_width:
+            return candidate
+        clusters.pop()
+    return "…"
 
 
 def _draw_mixed_text(
@@ -469,377 +492,262 @@ def render_profile_card(
     next_rank_name: str = "",
     next_rank_target: int = 0,
 ) -> BytesIO:
-    """Render profile card with Unicode text + color emoji support."""
+    """Render a premium profile card with robust Unicode + emoji handling."""
 
     full_name = normalize_name_for_render(full_name)
     collector_rank = normalize_name_for_render(collector_rank)
+    collector_emoji = normalize_name_for_render(collector_emoji)
     next_rank_name = normalize_name_for_render(next_rank_name)
 
     img = _rounded_gradient(
         (CANVAS_W, CANVAS_H),
-        (12, 18, 39),
-        (28, 18, 58),
-    )
+        (8, 13, 30),
+        (23, 14, 48),
+    ).convert("RGBA")
+
+    glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    gd.ellipse((-260, -260, 620, 620), fill=(64, 122, 255, 92))
+    gd.ellipse((1030, -180, 1690, 500), fill=(188, 74, 255, 82))
+    gd.ellipse((760, 660, 1560, 1280), fill=(34, 226, 198, 50))
+    glow = glow.filter(ImageFilter.GaussianBlur(115))
+    img = Image.alpha_composite(img, glow)
     draw = ImageDraw.Draw(img)
 
-    glow_layer = Image.new(
-        "RGBA",
-        img.size,
-        (0, 0, 0, 0),
-    )
-    gd = ImageDraw.Draw(glow_layer)
-
-    gd.ellipse(
-        (-180, -220, 520, 480),
-        fill=(61, 121, 255, 90),
-    )
-    gd.ellipse(
-        (980, -100, 1580, 500),
-        fill=(174, 72, 255, 75),
-    )
-    gd.ellipse(
-        (830, 620, 1500, 1200),
-        fill=(43, 218, 190, 40),
-    )
-
-    glow_layer = glow_layer.filter(
-        ImageFilter.GaussianBlur(100)
-    )
-    img = Image.alpha_composite(
-        img.convert("RGBA"),
-        glow_layer,
-    ).convert("RGB")
-    draw = ImageDraw.Draw(img)
-
+    panel = (34, 34, CANVAS_W - 34, CANVAS_H - 34)
     draw.rounded_rectangle(
-        (38, 38, CANVAS_W - 38, CANVAS_H - 38),
-        radius=46,
-        outline=(95, 122, 190),
-        width=3,
+        panel, radius=48, fill=(12, 19, 40, 236),
+        outline=(104, 127, 194, 210), width=3,
     )
     draw.rounded_rectangle(
-        (50, 50, CANVAS_W - 50, CANVAS_H - 50),
-        radius=40,
-        outline=(52, 64, 101),
-        width=2,
+        (48, 48, CANVAS_W - 48, CANVAS_H - 48),
+        radius=40, outline=(53, 70, 111, 190), width=2,
     )
 
-    title_text = "BIKA CHARACTERS PROFILE"
-    title_font = _fit_text(
-        draw,
-        title_text,
-        1120,
-        62,
-        42,
-        bold=True,
+    draw.rounded_rectangle(
+        (88, 88, 1512, 94), radius=3, fill=(87, 132, 255, 190),
     )
+    draw.ellipse((86, 78, 104, 96), fill=(71, 220, 204, 235))
+    draw.ellipse((1496, 78, 1514, 96), fill=(190, 91, 255, 235))
 
+    title_text = "BIKA CHARACTERS"
+    title_font = _fit_text(draw, title_text, 980, 58, 36, bold=True)
     draw.text(
-        (CANVAS_W // 2, 74),
-        title_text,
-        font=title_font,
-        fill=(244, 247, 255),
-        anchor="ma",
+        (CANVAS_W // 2, 116), title_text, font=title_font,
+        fill=(247, 250, 255), anchor="ma",
+    )
+    subtitle = "COLLECTOR PROFILE  •  COLLECTION NETWORK"
+    subtitle_font = _fit_text(draw, subtitle, 1050, 23, 18, bold=True)
+    draw.text(
+        (CANVAS_W // 2, 176), subtitle, font=subtitle_font,
+        fill=(135, 156, 198), anchor="ma",
     )
 
-    draw.rounded_rectangle(
-        (460, 145, 940, 151),
-        radius=3,
-        fill=(107, 112, 255),
+    avatar_size = 250
+    avatar_x, avatar_y = 100, 250
+
+    shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    sd.ellipse(
+        (avatar_x - 18, avatar_y - 6, avatar_x + avatar_size + 28, avatar_y + avatar_size + 40),
+        fill=(0, 0, 0, 155),
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(24))
+    img = Image.alpha_composite(img, shadow)
+    draw = ImageDraw.Draw(img)
+
+    draw.ellipse(
+        (avatar_x - 17, avatar_y - 17, avatar_x + avatar_size + 17, avatar_y + avatar_size + 17),
+        fill=(14, 23, 49, 255), outline=(104, 91, 255, 235), width=8,
+    )
+    draw.ellipse(
+        (avatar_x - 7, avatar_y - 7, avatar_x + avatar_size + 7, avatar_y + avatar_size + 7),
+        outline=(63, 211, 232, 235), width=4,
     )
 
-    avatar_size = 230
-    avatar_x, avatar_y = 105, 205
-
+    avatar = None
     if avatar_bytes:
         try:
-            avatar = Image.open(
-                BytesIO(avatar_bytes)
-            ).convert("RGB")
-
+            avatar = Image.open(BytesIO(avatar_bytes)).convert("RGB")
             avatar = ImageOps.fit(
-                avatar,
-                (avatar_size, avatar_size),
+                avatar, (avatar_size, avatar_size),
                 method=Image.Resampling.LANCZOS,
             )
         except Exception:
             avatar = None
-    else:
-        avatar = None
 
-    mask = Image.new(
-        "L",
-        (avatar_size, avatar_size),
-        0,
-    )
-    ImageDraw.Draw(mask).ellipse(
-        (0, 0, avatar_size - 1, avatar_size - 1),
-        fill=255,
-    )
-
-    draw.ellipse(
-        (
-            avatar_x - 16,
-            avatar_y - 16,
-            avatar_x + avatar_size + 16,
-            avatar_y + avatar_size + 16,
-        ),
-        outline=(111, 88, 255),
-        width=8,
-    )
-    draw.ellipse(
-        (
-            avatar_x - 7,
-            avatar_y - 7,
-            avatar_x + avatar_size + 7,
-            avatar_y + avatar_size + 7,
-        ),
-        outline=(72, 204, 255),
-        width=4,
-    )
+    mask = Image.new("L", (avatar_size, avatar_size), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, avatar_size - 1, avatar_size - 1), fill=255)
 
     if avatar is not None:
-        img.paste(
-            avatar,
-            (avatar_x, avatar_y),
-            mask,
-        )
+        img.paste(avatar.convert("RGBA"), (avatar_x, avatar_y), mask)
     else:
         draw.ellipse(
-            (
-                avatar_x,
-                avatar_y,
-                avatar_x + avatar_size,
-                avatar_y + avatar_size,
-            ),
-            fill=(41, 54, 92),
+            (avatar_x, avatar_y, avatar_x + avatar_size, avatar_y + avatar_size),
+            fill=(34, 48, 84, 255),
         )
-
-        first_cluster = (
-            _graphemes(full_name.strip())[0]
-            if _graphemes(full_name.strip())
-            else "?"
-        )
-
+        clusters = _graphemes(full_name.strip())
+        first_cluster = clusters[0] if clusters else "?"
         if _is_emoji_cluster(first_cluster):
-            emoji_img = _render_emoji_cluster(
-                first_cluster,
-                110,
-            )
+            emoji_img = _render_emoji_cluster(first_cluster, 118)
             if emoji_img is not None:
-                px = (
-                    avatar_x
-                    + avatar_size // 2
-                    - emoji_img.width // 2
-                )
-                py = (
-                    avatar_y
-                    + avatar_size // 2
-                    - emoji_img.height // 2
-                )
-                img.paste(
-                    emoji_img,
-                    (px, py),
-                    emoji_img,
+                px = avatar_x + avatar_size // 2 - emoji_img.width // 2
+                py = avatar_y + avatar_size // 2 - emoji_img.height // 2
+                img.paste(emoji_img, (px, py), emoji_img)
+            else:
+                draw.text(
+                    (avatar_x + avatar_size // 2, avatar_y + avatar_size // 2),
+                    first_cluster, font=_font(90, bold=True, text=first_cluster),
+                    fill=(235, 241, 255), anchor="mm",
                 )
         else:
             draw.text(
-                (
-                    avatar_x + avatar_size // 2,
-                    avatar_y + avatar_size // 2,
-                ),
+                (avatar_x + avatar_size // 2, avatar_y + avatar_size // 2),
                 first_cluster.upper(),
-                font=_font(
-                    96,
-                    bold=True,
-                    text=first_cluster,
-                ),
-                fill=(226, 233, 255),
-                anchor="mm",
+                font=_font(98, bold=True, text=first_cluster),
+                fill=(235, 241, 255), anchor="mm",
             )
 
-    name_size = _fit_mixed_text_size(
-        draw,
-        full_name,
-        870,
-        58,
-        30,
-        bold=True,
-    )
-    _draw_mixed_text(
-        img,
-        (390, 245),
-        full_name,
-        size=name_size,
-        fill=(255, 255, 255),
-        bold=True,
-    )
+    name_max = 840
+    name_size = _fit_mixed_text_size(draw, full_name, name_max, 58, 28, bold=True)
+    safe_name = _truncate_mixed_text(draw, full_name, name_max, name_size, bold=True)
+    _draw_mixed_text(img, (405, 265), safe_name, size=name_size,
+                     fill=(255, 255, 255), bold=True)
 
     rank_line = f"{collector_emoji}  {collector_rank}"
-    rank_size = _fit_mixed_text_size(
-        draw,
-        rank_line,
-        870,
-        34,
-        26,
-        bold=True,
-    )
-    _draw_mixed_text(
-        img,
-        (392, 320),
-        rank_line,
-        size=rank_size,
-        fill=(166, 184, 255),
-        bold=True,
-    )
+    rank_size = _fit_mixed_text_size(draw, rank_line, 840, 36, 24, bold=True)
+    safe_rank = _truncate_mixed_text(draw, rank_line, 840, rank_size, bold=True)
+    _draw_mixed_text(img, (407, 342), safe_rank, size=rank_size,
+                     fill=(172, 193, 255), bold=True)
 
-    identity_text = (
-        "Collector Identity • Global Collection Network"
-    )
+    identity_text = f"ID #{int(profile_id):,}   •   VERIFIED COLLECTOR"
     draw.text(
-        (392, 370),
-        identity_text,
-        font=_font(
-            25,
-            text=identity_text,
-        ),
-        fill=(140, 153, 184),
+        (407, 401), identity_text, font=_font(23, text=identity_text),
+        fill=(123, 143, 183),
     )
 
-    left = 105
-    top = 500
-    gap = 28
-    card_w = 580
-    card_h = 135
-
-    _draw_stat_card(
-        draw,
-        (left, top, left + card_w, top + card_h),
-        "Profile ID",
-        f"#{profile_id:,}",
-        (104, 129, 255),
+    badge_x1, badge_y1, badge_x2, badge_y2 = 1110, 250, 1470, 410
+    draw.rounded_rectangle(
+        (badge_x1, badge_y1, badge_x2, badge_y2),
+        radius=32, fill=(25, 32, 62, 245),
+        outline=(94, 108, 177, 210), width=2,
+    )
+    badge_label = "COLLECTOR LEVEL"
+    draw.text(
+        (badge_x1 + 28, badge_y1 + 24), badge_label,
+        font=_font(20, bold=True, text=badge_label),
+        fill=(119, 140, 185),
+    )
+    badge_size = _fit_mixed_text_size(draw, collector_emoji, 70, 44, 28, bold=True)
+    _draw_mixed_text(
+        img, (badge_x1 + 28, badge_y1 + 66), collector_emoji,
+        size=badge_size, fill=(255, 255, 255), bold=True,
+    )
+    badge_rank = _truncate_mixed_text(draw, collector_rank, 265, 28, bold=True)
+    draw.text(
+        (badge_x1 + 96, badge_y1 + 75), badge_rank,
+        font=_font(28, bold=True, text=badge_rank),
+        fill=(230, 235, 255),
     )
 
-    _draw_stat_card(
-        draw,
-        (
-            left + card_w + gap,
-            top,
-            left + 2 * card_w + gap,
-            top + card_h,
-        ),
-        "Total Cards",
-        f"{unique_cards:,} UNIQUE",
-        (65, 215, 194),
-    )
+    top = 475
+    left = 100
+    gap = 26
+    card_w = 345
+    card_h = 145
+    stat_boxes = [
+        ("TOTAL CARDS", f"{int(unique_cards):,}", (65, 218, 199)),
+        ("GLOBAL RANK", f"#{max(0, int(global_rank)):,}", (104, 135, 255)),
+        ("PROFILE ID", f"#{int(profile_id):,}", (190, 101, 255)),
+        ("COLLECTOR", collector_rank, (246, 181, 76)),
+    ]
 
-    _draw_stat_card(
-        draw,
-        (
-            left,
-            top + card_h + gap,
-            left + card_w,
-            top + 2 * card_h + gap,
-        ),
-        "Global Rank",
-        f"#{global_rank:,}",
-        (246, 179, 67),
-    )
+    for i, (label, value, accent) in enumerate(stat_boxes):
+        x1 = left + i * (card_w + gap)
+        x2 = x1 + card_w
+        draw.rounded_rectangle(
+            (x1, top, x2, top + card_h),
+            radius=28, fill=(18, 28, 54, 235),
+            outline=(58, 77, 119, 190), width=2,
+        )
+        draw.rounded_rectangle(
+            (x1, top, x1 + 9, top + card_h),
+            radius=5, fill=accent,
+        )
+        draw.text(
+            (x1 + 28, top + 22), label,
+            font=_font(19, bold=True, text=label),
+            fill=(133, 151, 190),
+        )
+        value_size = _fit_mixed_text_size(
+            draw, value, card_w - 55, 38, 22, bold=True,
+        )
+        safe_value = _truncate_mixed_text(
+            draw, value, card_w - 55, value_size, bold=True,
+        )
+        draw.text(
+            (x1 + 28, top + 67), safe_value,
+            font=_font(value_size, bold=True, text=safe_value),
+            fill=(242, 246, 255),
+        )
 
-    _draw_stat_card(
-        draw,
-        (
-            left + card_w + gap,
-            top + card_h + gap,
-            left + 2 * card_w + gap,
-            top + 2 * card_h + gap,
-        ),
-        "Collector Rank",
-        collector_rank,
-        (194, 99, 255),
+    progress_y = 675
+    draw.rounded_rectangle(
+        (100, progress_y, 1500, 825),
+        radius=32, fill=(15, 24, 48, 238),
+        outline=(58, 78, 120, 185), width=2,
     )
-
-    footer_y = 826
 
     if next_rank_target > 0 and next_rank_name:
-        progress = min(
-            1.0,
-            max(
-                0.0,
-                unique_cards / next_rank_target,
-            ),
-        )
-
-        next_label = f"NEXT: {next_rank_name}"
-
+        target = max(1, int(next_rank_target))
+        progress = min(1.0, max(0.0, int(unique_cards) / target))
+        next_label = f"NEXT LEVEL  •  {next_rank_name}"
+        next_label = _truncate_mixed_text(draw, next_label, 700, 25, bold=True)
         draw.text(
-            (105, footer_y - 30),
-            next_label,
-            font=_font(
-                21,
-                bold=True,
-                text=next_label,
-            ),
-            fill=(150, 164, 198),
+            (135, progress_y + 27), next_label,
+            font=_font(25, bold=True, text=next_label),
+            fill=(222, 229, 248),
         )
 
-        draw.rounded_rectangle(
-            (420, footer_y - 20, 1270, footer_y),
-            radius=10,
-            fill=(34, 43, 73),
-        )
-
-        draw.rounded_rectangle(
-            (
-                420,
-                footer_y - 20,
-                420 + int(850 * progress),
-                footer_y,
-            ),
-            radius=10,
-            fill=(105, 117, 255),
-        )
-
-        progress_text = (
-            f"{unique_cards:,}/{next_rank_target:,}"
-        )
-
+        progress_value = f"{int(unique_cards):,} / {target:,}"
         draw.text(
-            (1290, footer_y - 30),
-            progress_text,
-            font=_font(
-                20,
-                bold=True,
-                text=progress_text,
-            ),
-            fill=(191, 203, 232),
-            anchor="ra",
+            (1460, progress_y + 27), progress_value,
+            font=_font(22, bold=True, text=progress_value),
+            fill=(154, 173, 212), anchor="ra",
         )
 
+        bar_x1, bar_y1, bar_x2, bar_y2 = 135, progress_y + 78, 1465, progress_y + 104
+        draw.rounded_rectangle(
+            (bar_x1, bar_y1, bar_x2, bar_y2),
+            radius=13, fill=(35, 45, 76, 255),
+        )
+        fill_x2 = bar_x1 + max(18, int((bar_x2 - bar_x1) * progress))
+        draw.rounded_rectangle(
+            (bar_x1, bar_y1, min(bar_x2, fill_x2), bar_y2),
+            radius=13, fill=(103, 122, 255, 255),
+        )
     else:
-        end_text = "LEGENDARY COLLECTION STATUS"
-
-        draw.text(
-            (CANVAS_W // 2, footer_y - 8),
-            end_text,
-            font=_font(
-                24,
-                bold=True,
-                text=end_text,
-            ),
-            fill=(232, 198, 98),
-            anchor="ma",
+        end_text = "✦  LEGENDARY COLLECTION STATUS  ✦"
+        end_text = _truncate_mixed_text(draw, end_text, 1240, 30, bold=True)
+        end_width = _text_width(draw, end_text, 30, True)
+        _draw_mixed_text(
+            img, (CANVAS_W // 2 - end_width // 2, progress_y + 50),
+            end_text, size=30, fill=(238, 204, 104), bold=True,
         )
+
+    footer = "BIKA  •  COLLECT • CLAIM • COLLECT AGAIN"
+    footer = _truncate_mixed_text(draw, footer, 900, 18, bold=True)
+    draw.text(
+        (CANVAS_W // 2, 852), footer,
+        font=_font(18, bold=True, text=footer),
+        fill=(88, 105, 143), anchor="ma",
+    )
 
     out = BytesIO()
     out.name = "bika_profile.jpg"
-
-    img.save(
-        out,
-        format="JPEG",
-        quality=93,
-        optimize=True,
+    img.convert("RGB").save(
+        out, format="JPEG", quality=94, optimize=True, progressive=True,
     )
-
     out.seek(0)
     return out
+
