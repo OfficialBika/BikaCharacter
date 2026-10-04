@@ -257,10 +257,14 @@ async def mark_group_drop_skipped(
         "updatedAt": now,
     }
     unset_data = dict(DROP_LOCK_UNSET)
-    inc_data = {"skippedDrops": 1}
-
+    # lastDropSendError cannot be present in both $set and $unset in the same
+    # MongoDB update document; that produces WriteError code 40.
     if exc is not None:
+        unset_data.pop("lastDropSendError", None)
         set_data["lastDropSendError"] = repr(exc)[:500]
+
+    inc_data = {"skippedDrops": 1}
+    if exc is not None:
         inc_data["dropSendErrors"] = 1
 
     if AUTO_SKIP_BAD_GROUPS and pause_group:
