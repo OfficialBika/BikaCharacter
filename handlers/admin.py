@@ -435,11 +435,11 @@ async def raritylist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     counts = {str(rarity): 0 for rarity in RARITY_ORDER}
 
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
-        rows = await db[collection_name].aggregate(
+        rows = await (await db[collection_name].aggregate(
             [
                 {"$group": {"_id": "$rarity", "count": {"$sum": 1}}},
             ]
-        ).to_list(None)
+        )).to_list(None)
         for row in rows:
             rarity = str(row.get("_id") or "")
             counts[rarity] = counts.get(rarity, 0) + int(row.get("count", 0) or 0)
