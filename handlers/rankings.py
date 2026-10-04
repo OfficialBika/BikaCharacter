@@ -43,7 +43,7 @@ def _user_doc_from_row(row: dict) -> dict:
 
 
 async def _global_rows() -> list[dict]:
-    return await get_db().users.aggregate(
+    return await (await get_db().users.aggregate(
         [
             {
                 "$project": {
@@ -66,13 +66,13 @@ async def _global_rows() -> list[dict]:
             {"$sort": {"unique": -1, "total": -1, "firstName": 1}},
             {"$limit": 10},
         ]
-    ).to_list(10)
+    )).to_list(10)
 
 
 async def _today_rows() -> tuple[list[dict], str]:
     today = yangon_date_key()
     daily_limit = int(CLAIM_DAILY_LIMIT)
-    rows = await get_db().claim_logs.aggregate(
+    rows = await (await get_db().claim_logs.aggregate(
         [
             {"$match": {"yangonDate": today}},
             {"$sort": {"createdAt": 1}},
@@ -110,12 +110,12 @@ async def _today_rows() -> tuple[list[dict], str]:
             },
             {"$limit": 10},
         ]
-    ).to_list(10)
+    )).to_list(10)
     return rows, today
 
 
 async def _group_rows() -> list[dict]:
-    return await get_db().claim_logs.aggregate(
+    return await (await get_db().claim_logs.aggregate(
         [
             {
                 "$group": {
@@ -128,7 +128,7 @@ async def _group_rows() -> list[dict]:
             {"$sort": {"count": -1, "groupTitle": 1}},
             {"$limit": 10},
         ]
-    ).to_list(10)
+    )).to_list(10)
 
 
 def _period_bounds(period: str) -> tuple[datetime, datetime, str]:
@@ -170,7 +170,7 @@ async def _period_top_rows(period: str) -> tuple[list[dict], str]:
         {"$sort": {"count": -1, "lastClaimAt": 1, "firstName": 1}},
         {"$limit": 10},
     ]
-    rows = await get_db().claim_logs.aggregate(pipeline).to_list(10)
+    rows = await (await get_db().claim_logs.aggregate(pipeline).to_list(10)
     return rows, label
 
 
