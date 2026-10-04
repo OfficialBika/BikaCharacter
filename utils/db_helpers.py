@@ -125,7 +125,7 @@ async def get_random_photo(query: Optional[dict] = None) -> Optional[dict]:
     """Return one random photo matching query. Falls back to skip if $sample fails."""
     db = get_db()
     query = query or {}
-    docs = await db.photos.aggregate([{"$match": query}, {"$sample": {"size": 1}}]).to_list(1)
+    docs = await (await db.photos.aggregate([{"$match": query}, {"$sample": {"size": 1}}])).to_list(1)
     if docs:
         return docs[0]
 
@@ -335,7 +335,7 @@ async def global_card_stats(card_id: str) -> dict:
                     }
                 },
             ]
-        ).to_list(None)
+        )).to_list(None)
 
         claim_times_by_user = {
             int(row.get("_id", 0) or 0): list(row.get("claimTimes", []))
