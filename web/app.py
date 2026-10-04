@@ -90,6 +90,7 @@ def store_profile_image(
 
 
 async def profile_image(request: web.Request) -> web.Response:
+    global _PROFILE_IMAGE_CACHE_BYTES
     _purge_profile_image_cache()
     token = str(request.match_info.get("token", "") or "")
     cached = _PROFILE_IMAGE_CACHE.get(token)
@@ -100,7 +101,6 @@ async def profile_image(request: web.Request) -> web.Response:
     if expires_at <= time.monotonic():
         item = _PROFILE_IMAGE_CACHE.pop(token, None)
         if item:
-            global _PROFILE_IMAGE_CACHE_BYTES
             _PROFILE_IMAGE_CACHE_BYTES = max(0, _PROFILE_IMAGE_CACHE_BYTES - len(item[0]))
         raise web.HTTPNotFound(text="profile image expired")
 

@@ -285,7 +285,7 @@ async def global_card_stats(card_id: str) -> dict:
     users = await db.users.find(
         {"cards.cardId": str(card_id)},
         {"userId": 1, "username": 1, "firstName": 1, "lastName": 1, "cards": 1},
-    ).to_list(500)
+    ).to_list(None)
 
     def _time_sort_value(value) -> float:
         try:
