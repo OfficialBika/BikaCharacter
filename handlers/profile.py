@@ -579,8 +579,8 @@ async def send_profile_rich_message(
         form.add_field(
             PROFILE_RICH_IMAGE_FIELD,
             image_bytes,
-            filename="bika_profile.jpg",
-            content_type="image/jpeg",
+            filename="bika_profile.png",
+            content_type="image/png",
         )
 
     url = f"https://api.telegram.org/bot{context.bot.token}/sendRichMessage"
