@@ -180,7 +180,7 @@ async def anime_totals(anime_names: list[str]) -> dict[str, int]:
             rows = await observe_awaitable(
                 MONGO_METRICS,
                 "harem_anime_totals",
-                db[collection_name].aggregate([{"$match":{"anime":{"$in":names}}},{"$group":{"_id":"$anime","total":{"$sum":1}}}]).to_list(None),
+                (await (await db[collection_name].aggregate([{"$match":{"anime":{"$in":names}}},{"$group":{"_id":"$anime","total":{"$sum":1}}}])).to_list(None),
             )
             for row in rows:
                 key_name = str(row.get("_id",""))
@@ -336,7 +336,7 @@ async def catalog_stats() -> dict[str, Any]:
     rarities = await observe_awaitable(
         MONGO_METRICS,
         "catalog_rarity",
-        db.photos.aggregate([{"$group":{"_id":"$rarity","count":{"$sum":1}}}]).to_list(None),
+        (await db.photos.aggregate([{"$group":{"_id":"$rarity","count":{"$sum":1}}}])).to_list(None),
     )
     value = {"total": int(total), "rarities": {str(r.get("_id","")): int(r.get("count",0)) for r in rarities}}
     CATALOG_CACHE.set("stats", value, size_hint=4096)
