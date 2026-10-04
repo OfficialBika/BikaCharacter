@@ -255,11 +255,9 @@ async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if action == "rarity":
         if len(parts) < 4:
-            await query.answer(t("invalid_mode"), show_alert=True)
             return
         rarity = parts[3]
         if rarity not in RARITY_ORDER:
-            await query.answer(t("invalid_mode"), show_alert=True)
             return
         await get_db().users.update_one(
             {"userId": user_id},
@@ -298,11 +296,7 @@ async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    await context.bot.answer_callback_query(
-        callback_query_id=query.id,
-        text=t("invalid_mode"),
-        show_alert=True,
-    )
+    return
 
 
 def register_hmode_handlers(app: Application) -> None:
