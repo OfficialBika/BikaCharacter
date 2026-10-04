@@ -15,6 +15,7 @@ from config import (
     BROADCAST_PAID_RATE,
     BROADCAST_RATE,
     BROADCAST_WORKERS,
+    ENABLE_BROADCAST_LOG,
 )
 from database.mongodb import get_db
 from utils.permissions import is_owner
@@ -448,27 +449,28 @@ async def broadcast_cmd(
 
             final_status = "Stopped" if _BROADCAST_STOP.is_set() else "Completed"
 
-            await get_db().broadcast_logs.insert_one(
-                {
-                    "ownerId": int(user.id),
-                    "sourceChatId": int(source.chat_id),
-                    "sourceMessageId": int(source.message_id),
-                    "copyMode": bool(copy_mode),
-                    "paidMode": bool(paid_requested),
-                    "includeGroups": bool(include_groups),
-                    "includeUsers": bool(include_users),
-                    "haremOnly": bool(harem_only),
-                    "targetCount": len(targets),
-                    "processed": worker_results["processed"],
-                    "groupsSent": worker_results["groups_success"],
-                    "usersSent": worker_results["users_success"],
-                    "failed": worker_results["failed"],
-                    "skipped": worker_results["skipped"],
-                    "status": final_status.lower(),
-                    "durationSeconds": round(time.monotonic() - started_at, 3),
-                    "createdAt": utcnow(),
-                }
-            )
+            if ENABLE_BROADCAST_LOG:
+                await get_db().broadcast_logs.insert_one(
+                    {
+                        "ownerId": int(user.id),
+                        "sourceChatId": int(source.chat_id),
+                        "sourceMessageId": int(source.message_id),
+                        "copyMode": bool(copy_mode),
+                        "paidMode": bool(paid_requested),
+                        "includeGroups": bool(include_groups),
+                        "includeUsers": bool(include_users),
+                        "haremOnly": bool(harem_only),
+                        "targetCount": len(targets),
+                        "processed": worker_results["processed"],
+                        "groupsSent": worker_results["groups_success"],
+                        "usersSent": worker_results["users_success"],
+                        "failed": worker_results["failed"],
+                        "skipped": worker_results["skipped"],
+                        "status": final_status.lower(),
+                        "durationSeconds": round(time.monotonic() - started_at, 3),
+                        "createdAt": utcnow(),
+                    }
+                )
 
             await status_msg.edit_text(
                 _status_text(
