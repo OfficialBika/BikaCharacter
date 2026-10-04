@@ -5,6 +5,8 @@ import unicodedata
 from functools import lru_cache
 from io import BytesIO
 from typing import Optional
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
@@ -21,6 +23,12 @@ except Exception:  # pragma: no cover
 
 CANVAS_W = 1400
 CANVAS_H = 900
+
+TWEMOJI_VERSION = "17.0.3"
+TWEMOJI_PNG_BASE = (
+    "https://cdn.jsdelivr.net/gh/jdecked/"
+    f"twemoji@{TWEMOJI_VERSION}/assets/72x72"
+)
 
 EMOJI_FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
@@ -221,6 +229,59 @@ def _emoji_font_for_path(path: str, size: int):
     return None
 
 
+@lru_cache(maxsize=256)
+def _twemoji_asset(cluster: str) -> bytes | None:
+    """Fetch a version-pinned Twemoji PNG for a Unicode emoji grapheme."""
+    if not cluster:
+        return None
+
+    codepoints = "-".join(
+        f"{ord(ch):x}"
+        for ch in cluster
+        if ord(ch) != 0xFE0F
+    )
+    if not codepoints:
+        return None
+
+    url = f"{TWEMOJI_PNG_BASE}/{codepoints}.png"
+    try:
+        request = Request(
+            url,
+            headers={"User-Agent": "BikaCharacter/1.0 profile-renderer"},
+        )
+        with urlopen(request, timeout=3.5) as response:
+            data = response.read(128 * 1024)
+        if not data.startswith(b"\x89PNG"):
+            return None
+        return data
+    except (OSError, URLError, TimeoutError):
+        return None
+
+
+def _render_twemoji_cluster(cluster: str, target_size: int) -> Image.Image | None:
+    data = _twemoji_asset(cluster)
+    if not data:
+        return None
+
+    try:
+        emoji = Image.open(BytesIO(data)).convert("RGBA")
+        bbox = emoji.getbbox()
+        if not bbox:
+            return None
+        emoji = emoji.crop(bbox)
+        target = max(12, int(target_size))
+        ratio = min(target / emoji.width, target / emoji.height)
+        return emoji.resize(
+            (
+                max(1, int(emoji.width * ratio)),
+                max(1, int(emoji.height * ratio)),
+            ),
+            Image.Resampling.LANCZOS,
+        )
+    except Exception:
+        return None
+
+
 def _render_emoji_cluster(cluster: str, target_size: int) -> Image.Image | None:
     if not cluster:
         return None
@@ -253,9 +314,14 @@ def _render_emoji_cluster(cluster: str, target_size: int) -> Image.Image | None:
             )
         except Exception:
             continue
-    return None
 
+    # Last-resort, deterministic Unicode emoji fallback. Twemoji publishes
+    # versioned PNG assets for RGI Unicode emoji, including flags, skin tones,
+    # keycaps, and ZWJ sequences. Keep this after local fonts so normal
+    # rendering remains fast and offline-safe when Noto Color Emoji works.
+    return _render_twemoji_cluster(cluster, target)
 
+    
 def _text_width(
     draw: ImageDraw.ImageDraw,
     text: str,
@@ -501,32 +567,41 @@ def render_profile_card(
 
     img = _rounded_gradient(
         (CANVAS_W, CANVAS_H),
-        (8, 13, 30),
-        (23, 14, 48),
+        (7, 12, 32),
+        (34, 10, 58),
     ).convert("RGBA")
 
     glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
-    gd.ellipse((-260, -260, 620, 620), fill=(64, 122, 255, 92))
-    gd.ellipse((1030, -180, 1690, 500), fill=(188, 74, 255, 82))
-    gd.ellipse((760, 660, 1560, 1280), fill=(34, 226, 198, 50))
+    gd.ellipse((-300, -300, 620, 620), fill=(41, 137, 255, 105))
+    gd.ellipse((820, -250, 1580, 520), fill=(221, 62, 255, 92))
+    gd.ellipse((610, 560, 1450, 1210), fill=(25, 229, 202, 64))
+    gd.ellipse((-180, 540, 520, 1040), fill=(255, 72, 145, 48))
     glow = glow.filter(ImageFilter.GaussianBlur(115))
     img = Image.alpha_composite(img, glow)
     draw = ImageDraw.Draw(img)
 
     panel = (34, 34, CANVAS_W - 34, CANVAS_H - 34)
     draw.rounded_rectangle(
-        panel, radius=48, fill=(12, 19, 40, 236),
-        outline=(104, 127, 194, 210), width=3,
+        panel, radius=48, fill=(10, 18, 43, 242),
+        outline=(109, 126, 211, 225), width=3,
     )
     draw.rounded_rectangle(
         (48, 48, CANVAS_W - 48, CANVAS_H - 48),
-        radius=40, outline=(53, 70, 111, 190), width=2,
+        radius=40, outline=(72, 83, 145, 190), width=2,
     )
 
-    draw.rounded_rectangle(
-        (88, 88, 1312, 94), radius=3, fill=(87, 132, 255, 190),
+    # Multi-accent neon header: cyan -> violet -> pink -> gold.
+    accent_segments = (
+        (88, 394, (55, 226, 215, 235)),
+        (394, 700, (92, 130, 255, 235)),
+        (700, 1006, (191, 88, 255, 235)),
+        (1006, 1312, (255, 91, 164, 235)),
     )
+    for x1, x2, accent in accent_segments:
+        draw.rounded_rectangle(
+            (x1, 88, x2, 94), radius=3, fill=accent,
+        )
     draw.ellipse((84, 78, 104, 98), fill=(71, 220, 204, 235))
     draw.ellipse((1296, 78, 1316, 98), fill=(190, 91, 255, 235))
 
@@ -735,7 +810,7 @@ def render_profile_card(
             end_text, size=30, fill=(238, 204, 104), bold=True,
         )
 
-    footer = "BIKA  •  COLLECT • CLAIM • COLLECT AGAIN"
+    footer = "BIKA  •  COLLECT • CLAIM • COLLECT AGAIN  •  TWEMOJI CC-BY 4.0"
     footer = _truncate_mixed_text(draw, footer, 900, 17, bold=True)
     draw.text(
         (CANVAS_W // 2, 835), footer,
