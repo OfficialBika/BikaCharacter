@@ -319,7 +319,7 @@ async def global_card_stats(card_id: str) -> dict:
         })
 
     if user_ids:
-        log_rows = await db.claim_logs.aggregate(
+        cursor = await db.claim_logs.aggregate(
             [
                 {
                     "$match": {
@@ -335,7 +335,8 @@ async def global_card_stats(card_id: str) -> dict:
                     }
                 },
             ]
-        )).to_list(None)
+        )
+        log_rows = await cursor.to_list(None)
 
         claim_times_by_user = {
             int(row.get("_id", 0) or 0): list(row.get("claimTimes", []))
