@@ -170,7 +170,7 @@ async def _period_top_rows(period: str) -> tuple[list[dict], str]:
         {"$sort": {"count": -1, "lastClaimAt": 1, "firstName": 1}},
         {"$limit": 10},
     ]
-    rows = await (await get_db().claim_logs.aggregate(pipeline).to_list(10)
+    rows = await (await get_db().claim_logs.aggregate(pipeline)).to_list(10)
     return rows, label
 
 
