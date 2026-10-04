@@ -525,10 +525,10 @@ def render_profile_card(
     )
 
     draw.rounded_rectangle(
-        (88, 88, 1512, 94), radius=3, fill=(87, 132, 255, 190),
+        (88, 88, 1312, 94), radius=3, fill=(87, 132, 255, 190),
     )
-    draw.ellipse((86, 78, 104, 96), fill=(71, 220, 204, 235))
-    draw.ellipse((1496, 78, 1514, 96), fill=(190, 91, 255, 235))
+    draw.ellipse((84, 78, 104, 98), fill=(71, 220, 204, 235))
+    draw.ellipse((1296, 78, 1316, 98), fill=(190, 91, 255, 235))
 
     title_text = "BIKA CHARACTERS"
     title_font = _fit_text(draw, title_text, 980, 58, 36, bold=True)
@@ -543,13 +543,13 @@ def render_profile_card(
         fill=(135, 156, 198), anchor="ma",
     )
 
-    avatar_size = 250
-    avatar_x, avatar_y = 100, 250
+    avatar_size = 240
+    avatar_x, avatar_y = 90, 228
 
     shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
     sd = ImageDraw.Draw(shadow)
     sd.ellipse(
-        (avatar_x - 18, avatar_y - 6, avatar_x + avatar_size + 28, avatar_y + avatar_size + 40),
+        (avatar_x - 16, avatar_y + 2, avatar_x + avatar_size + 24, avatar_y + avatar_size + 42),
         fill=(0, 0, 0, 155),
     )
     shadow = shadow.filter(ImageFilter.GaussianBlur(24))
@@ -608,25 +608,25 @@ def render_profile_card(
                 fill=(235, 241, 255), anchor="mm",
             )
 
-    name_max = 840
+    name_max = 580
     name_size = _fit_mixed_text_size(draw, full_name, name_max, 58, 28, bold=True)
     safe_name = _truncate_mixed_text(draw, full_name, name_max, name_size, bold=True)
-    _draw_mixed_text(img, (405, 265), safe_name, size=name_size,
+    _draw_mixed_text(img, (370, 248), safe_name, size=name_size,
                      fill=(255, 255, 255), bold=True)
 
     rank_line = f"{collector_emoji}  {collector_rank}"
-    rank_size = _fit_mixed_text_size(draw, rank_line, 840, 36, 24, bold=True)
-    safe_rank = _truncate_mixed_text(draw, rank_line, 840, rank_size, bold=True)
-    _draw_mixed_text(img, (407, 342), safe_rank, size=rank_size,
+    rank_size = _fit_mixed_text_size(draw, rank_line, 580, 34, 24, bold=True)
+    safe_rank = _truncate_mixed_text(draw, rank_line, 580, rank_size, bold=True)
+    _draw_mixed_text(img, (370, 318), safe_rank, size=rank_size,
                      fill=(172, 193, 255), bold=True)
 
     identity_text = f"ID #{int(profile_id):,}   •   VERIFIED COLLECTOR"
     draw.text(
-        (407, 401), identity_text, font=_font(23, text=identity_text),
+        (370, 378), identity_text, font=_font(23, text=identity_text),
         fill=(123, 143, 183),
     )
 
-    badge_x1, badge_y1, badge_x2, badge_y2 = 1110, 250, 1470, 410
+    badge_x1, badge_y1, badge_x2, badge_y2 = 1000, 228, 1310, 420
     draw.rounded_rectangle(
         (badge_x1, badge_y1, badge_x2, badge_y2),
         radius=32, fill=(25, 32, 62, 245),
@@ -634,27 +634,27 @@ def render_profile_card(
     )
     badge_label = "COLLECTOR LEVEL"
     draw.text(
-        (badge_x1 + 28, badge_y1 + 24), badge_label,
-        font=_font(20, bold=True, text=badge_label),
+        (badge_x1 + 24, badge_y1 + 22), badge_label,
+        font=_font(18, bold=True, text=badge_label),
         fill=(119, 140, 185),
     )
     badge_size = _fit_mixed_text_size(draw, collector_emoji, 70, 44, 28, bold=True)
     _draw_mixed_text(
-        img, (badge_x1 + 28, badge_y1 + 66), collector_emoji,
+        img, (badge_x1 + 24, badge_y1 + 64), collector_emoji,
         size=badge_size, fill=(255, 255, 255), bold=True,
     )
-    badge_rank = _truncate_mixed_text(draw, collector_rank, 265, 28, bold=True)
+    badge_rank = _truncate_mixed_text(draw, collector_rank, 190, 27, bold=True)
     draw.text(
-        (badge_x1 + 96, badge_y1 + 75), badge_rank,
-        font=_font(28, bold=True, text=badge_rank),
+        (badge_x1 + 92, badge_y1 + 77), badge_rank,
+        font=_font(27, bold=True, text=badge_rank),
         fill=(230, 235, 255),
     )
 
-    top = 475
+    top = 465
     left = 100
-    gap = 26
-    card_w = 345
-    card_h = 145
+    gap = 18
+    card_w = 300
+    card_h = 135
     stat_boxes = [
         ("TOTAL CARDS", f"{int(unique_cards):,}", (65, 218, 199)),
         ("GLOBAL RANK", f"#{max(0, int(global_rank)):,}", (104, 135, 255)),
@@ -691,9 +691,9 @@ def render_profile_card(
             fill=(242, 246, 255),
         )
 
-    progress_y = 675
+    progress_y = 635
     draw.rounded_rectangle(
-        (100, progress_y, 1500, 825),
+        (100, progress_y, 1300, 805),
         radius=32, fill=(15, 24, 48, 238),
         outline=(58, 78, 120, 185), width=2,
     )
@@ -702,21 +702,21 @@ def render_profile_card(
         target = max(1, int(next_rank_target))
         progress = min(1.0, max(0.0, int(unique_cards) / target))
         next_label = f"NEXT LEVEL  •  {next_rank_name}"
-        next_label = _truncate_mixed_text(draw, next_label, 700, 25, bold=True)
+        next_label = _truncate_mixed_text(draw, next_label, 720, 24, bold=True)
         draw.text(
-            (135, progress_y + 27), next_label,
-            font=_font(25, bold=True, text=next_label),
+            (132, progress_y + 25), next_label,
+            font=_font(24, bold=True, text=next_label),
             fill=(222, 229, 248),
         )
 
         progress_value = f"{int(unique_cards):,} / {target:,}"
         draw.text(
-            (1460, progress_y + 27), progress_value,
-            font=_font(22, bold=True, text=progress_value),
+            (1268, progress_y + 25), progress_value,
+            font=_font(21, bold=True, text=progress_value),
             fill=(154, 173, 212), anchor="ra",
         )
 
-        bar_x1, bar_y1, bar_x2, bar_y2 = 135, progress_y + 78, 1465, progress_y + 104
+        bar_x1, bar_y1, bar_x2, bar_y2 = 132, progress_y + 75, 1268, progress_y + 101
         draw.rounded_rectangle(
             (bar_x1, bar_y1, bar_x2, bar_y2),
             radius=13, fill=(35, 45, 76, 255),
@@ -736,10 +736,10 @@ def render_profile_card(
         )
 
     footer = "BIKA  •  COLLECT • CLAIM • COLLECT AGAIN"
-    footer = _truncate_mixed_text(draw, footer, 900, 18, bold=True)
+    footer = _truncate_mixed_text(draw, footer, 900, 17, bold=True)
     draw.text(
-        (CANVAS_W // 2, 852), footer,
-        font=_font(18, bold=True, text=footer),
+        (CANVAS_W // 2, 835), footer,
+        font=_font(17, bold=True, text=footer),
         fill=(88, 105, 143), anchor="ma",
     )
 
