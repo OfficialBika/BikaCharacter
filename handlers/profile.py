@@ -800,7 +800,8 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 user_id=int(update.effective_user.id),
                 include_table=True,
             )
-            await loading_message.edit_text(
+            await _delete_loading_message(loading_message)
+            await update.effective_message.reply_text(
                 fallback,
                 parse_mode="HTML",
             )
