@@ -50,7 +50,7 @@ async def _max_numeric_card_id() -> int:
             {"$project": {"cardIdNum": {"$toInt": "$cardId"}}},
             {"$sort": {"cardIdNum": -1}},
             {"$limit": 1},
-        ]).to_list(1)
+        ])).to_list(1)
         if docs:
             max_id = max(max_id, int(docs[0].get("cardIdNum", 0) or 0))
     return max_id
