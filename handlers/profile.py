@@ -27,13 +27,13 @@ PROFILE_RICH_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 
 
 RANKS = (
-    (3000, "✨", "Legendary Monarch", 0, ""),
-    (2001, "👑", "Grand Collector", 3000, "Legendary Monarch"),
-    (1001, "💎", "Master Collector", 2001, "Grand Collector"),
-    (501, "⚔️", "Elite Collector", 1001, "Master Collector"),
-    (101, "🀄", "Card Hunter", 501, "Elite Collector"),
-    (1, "🌱", "Novice Collector", 101, "Card Hunter"),
-    (0, "🌑", "New Collector", 1, "Novice Collector"),
+    (6000, "✨", "Legendary Monarch", 0, ""),
+    (3001, "👑", "Grand Collector", 6000, "Legendary Monarch"),
+    (2001, "💎", "Master Collector", 3001, "Grand Collector"),
+    (901, "⚔️", "Elite Collector", 2001, "Master Collector"),
+    (201, "🀄", "Card Hunter", 901, "Elite Collector"),
+    (51, "🌱", "Novice Collector", 201, "Card Hunter"),
+    (0, "🌑", "New Collector", 51, "Novice Collector"),
 )
 
 
