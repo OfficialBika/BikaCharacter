@@ -665,13 +665,6 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             )
 
             # Preferred path: edit the loading message in place.
-            if await edit_loading_to_rich_message(
-                loading_message,
-                context,
-                rich_html,
-            ):
-                return
-
             # Second Rich Message path: if editing fails, send a real
             # Rich Message, then remove the temporary loading message.
             if await send_profile_rich_message(
@@ -737,13 +730,6 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 image_url=image_url,
                 include_table=False,
             )
-
-            if await edit_loading_to_rich_message(
-                loading_message,
-                context,
-                rich_html,
-            ):
-                return
 
             if await send_profile_rich_message(
                 update,
