@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import urllib.error
+import urllib.request
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
@@ -11,6 +16,71 @@ from utils.rarity import get_rarity_button_emoji, get_rarity_emoji
 from utils.text import utcnow
 from utils.i18n import t
 from utils.buttons import action_button, rarity_button
+
+
+RICH_API_TIMEOUT_SECONDS = 20
+
+
+def _bot_api_json_sync(token: str, method: str, payload: dict) -> dict:
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=RICH_API_TIMEOUT_SECONDS) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"{method} HTTP {exc.code}: {detail}") from exc
+    if not result.get("ok"):
+        raise RuntimeError(f"{method}: {result.get('description')}")
+    return result
+
+
+async def _edit_hmode_message(
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    reply_markup: InlineKeyboardMarkup,
+) -> None:
+    """Edit both normal and Rich Messages reliably.
+
+    Harem table mode uses Telegram's new Rich Message API, while PTB 22.8 does
+    not expose the Bot API's rich_message parameter on editMessageText.
+    Calling the Bot API directly with normal text is supported for editing a
+    Rich Message and prevents the Settings/Harem Mode callback from appearing
+    to do nothing.
+    """
+    payload = {
+        "chat_id": int(query.message.chat.id),
+        "message_id": int(query.message.message_id),
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+        "reply_markup": reply_markup.to_dict(),
+    }
+    try:
+        await asyncio.to_thread(
+            _bot_api_json_sync,
+            str(context.bot.token),
+            "editMessageText",
+            payload,
+        )
+    except Exception as exc:
+        try:
+            await query.edit_message_text(
+                text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            print("HMODE EDIT ERROR:", repr(exc), flush=True)
+            raise
 
 
 def build_hmode_menu(user_id: int, *, include_home: bool = False) -> InlineKeyboardMarkup:
@@ -84,7 +154,7 @@ async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    if not query or not query.data:
+    if not query or not query.data or not query.message:
         return
 
     parts = query.data.split(":", 3)
@@ -103,42 +173,45 @@ async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.answer(t("not_your_action"), show_alert=True)
         return
 
+    # Answer immediately so Telegram stops the callback spinner.
+    await query.answer()
+
     if action == "close":
         try:
             await query.message.delete()
         except Exception:
-            await query.edit_message_text(t("cancelled"))
-        await query.answer(t("cancelled"))
+            await _edit_hmode_message(
+                query, context, t("cancelled"), InlineKeyboardMarkup([])
+            )
         return
 
     if action == "home":
         from handlers.start import _start_keyboard
         mention = f'<a href="tg://user?id={user_id}">{query.from_user.full_name or query.from_user.username or "User"}</a>'
-        await query.edit_message_text(
+        await _edit_hmode_message(
+            query,
+            context,
             t("start_message", mention=mention),
-            parse_mode="HTML",
-            reply_markup=_start_keyboard(user_id),
-            disable_web_page_preview=True,
+            _start_keyboard(user_id),
         )
-        await query.answer()
         return
 
     if action == "main":
-        await query.edit_message_text(
+        await _edit_hmode_message(
+            query,
+            context,
             t("hmode_choose_sort"),
-            parse_mode="HTML",
-            reply_markup=build_hmode_menu(user_id),
+            build_hmode_menu(user_id),
         )
-        await query.answer()
         return
 
     if action == "rarity_menu":
-        await query.edit_message_text(
+        await _edit_hmode_message(
+            query,
+            context,
             t("hmode_choose_rarity"),
-            parse_mode="HTML",
-            reply_markup=_rarity_keyboard(user_id),
+            _rarity_keyboard(user_id),
         )
-        await query.answer()
         return
 
     now = utcnow()
@@ -153,12 +226,12 @@ async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             }},
             upsert=True,
         )
-        await query.edit_message_text(
+        await _edit_hmode_message(
+            query,
+            context,
             t("hmode_set_anime"),
-            parse_mode="HTML",
-            reply_markup=build_hmode_menu(user_id),
+            build_hmode_menu(user_id),
         )
-        await query.answer(t("updated"))
         return
 
     if action == "compact":
@@ -172,12 +245,12 @@ async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             }},
             upsert=True,
         )
-        await query.edit_message_text(
+        await _edit_hmode_message(
+            query,
+            context,
             t("hmode_set_compact"),
-            parse_mode="HTML",
-            reply_markup=build_hmode_menu(user_id),
+            build_hmode_menu(user_id),
         )
-        await query.answer(t("updated"))
         return
 
     if action == "rarity":
@@ -198,12 +271,12 @@ async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             }},
             upsert=True,
         )
-        await query.edit_message_text(
+        await _edit_hmode_message(
+            query,
+            context,
             t("hmode_set_rarity", emoji=get_rarity_emoji(rarity), rarity=rarity),
-            parse_mode="HTML",
-            reply_markup=build_hmode_menu(user_id),
+            build_hmode_menu(user_id),
         )
-        await query.answer(t("updated"))
         return
 
     if action in ("default", "detailed", "reset"):
@@ -217,15 +290,19 @@ async def hmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             }},
             upsert=True,
         )
-        await query.edit_message_text(
+        await _edit_hmode_message(
+            query,
+            context,
             t("hmode_set_anime"),
-            parse_mode="HTML",
-            reply_markup=build_hmode_menu(user_id),
+            build_hmode_menu(user_id),
         )
-        await query.answer(t("updated"))
         return
 
-    await query.answer(t("invalid_mode"), show_alert=True)
+    await context.bot.answer_callback_query(
+        callback_query_id=query.id,
+        text=t("invalid_mode"),
+        show_alert=True,
+    )
 
 
 def register_hmode_handlers(app: Application) -> None:
