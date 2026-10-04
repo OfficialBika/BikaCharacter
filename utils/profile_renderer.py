@@ -638,421 +638,252 @@ def render_profile_card(
     next_rank_name: str = "",
     next_rank_target: int = 0,
 ) -> BytesIO:
-    """Render a high-resolution neon mechanical / transformer-inspired profile card."""
+    """Render the BIKA Neon Transformer HUD profile card at high resolution."""
 
     full_name = normalize_name_for_render(full_name)
     collector_rank = normalize_name_for_render(collector_rank)
     collector_emoji = normalize_name_for_render(collector_emoji)
     next_rank_name = normalize_name_for_render(next_rank_name)
 
-    # 1600x1000 keeps Telegram text and avatar details sharp while remaining
-    # compact enough for a profile-card image. PNG is used to avoid JPEG ringing
-    # around thin neon lines and small glyphs.
-    img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (4, 8, 15, 255))
-    bg = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    bd = ImageDraw.Draw(bg)
+    # High-resolution master canvas. Telegram gets a lossless PNG so thin HUD
+    # lines, small typography and emoji composites stay crisp.
+    W, H = 1800, 1125
+    img = Image.new("RGBA", (W, H), (3, 7, 16, 255))
+    draw = ImageDraw.Draw(img)
 
-    # Layered reactor glows.
-    for box, color in (
-        ((-320, -260, 700, 620), (0, 224, 255, 72)),
-        ((1000, -240, 1780, 520), (255, 82, 183, 55)),
-        ((760, 650, 1760, 1230), (255, 143, 42, 52)),
-        ((-260, 700, 650, 1240), (74, 112, 255, 48)),
+    # ---------- ATMOSPHERE ----------
+    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    gd.ellipse((-420, -360, 650, 620), fill=(0, 229, 255, 72))
+    gd.ellipse((1110, -260, 2050, 580), fill=(94, 54, 255, 70))
+    gd.ellipse((650, 690, 1650, 1350), fill=(255, 0, 166, 45))
+    gd.ellipse((-250, 700, 620, 1320), fill=(0, 130, 255, 38))
+    glow = glow.filter(ImageFilter.GaussianBlur(125))
+    img = Image.alpha_composite(img, glow)
+    draw = ImageDraw.Draw(img)
+
+    # Fine technical grid.
+    for x in range(60, W - 40, 45):
+        draw.line((x, 45, x, H - 45), fill=(34, 72, 101, 42), width=1)
+    for y in range(45, H - 40, 45):
+        draw.line((45, y, W - 45, y), fill=(34, 72, 101, 42), width=1)
+
+    # Scanlines, deliberately subtle.
+    for y in range(58, H - 58, 8):
+        draw.line((58, y, W - 58, y), fill=(120, 210, 255, 11), width=1)
+
+    # ---------- OUTER ARMORED FRAME ----------
+    outer = [(42, 88), (88, 42), (W - 88, 42), (W - 42, 88),
+             (W - 42, H - 88), (W - 88, H - 42), (88, H - 42), (42, H - 88)]
+    inner = [(58, 101), (101, 58), (W - 101, 58), (W - 58, 101),
+             (W - 58, H - 101), (W - 101, H - 58), (101, H - 58), (58, H - 101)]
+    draw.polygon(outer, fill=(5, 12, 24, 248), outline=(53, 99, 126, 230), width=3)
+    draw.line(outer + [outer[0]], fill=(0, 220, 255, 150), width=2, joint="curve")
+    draw.line(inner + [inner[0]], fill=(65, 79, 113, 175), width=2, joint="curve")
+
+    # Corner power nodes.
+    for cx, cy, accent in (
+        (88, 88, (0, 238, 255, 255)),
+        (W - 88, 88, (139, 90, 255, 255)),
+        (88, H - 88, (0, 151, 255, 255)),
+        (W - 88, H - 88, (255, 46, 173, 255)),
     ):
-        bd.ellipse(box, fill=color)
-    bg = bg.filter(ImageFilter.GaussianBlur(120))
-    img.alpha_composite(bg)
+        draw.ellipse((cx - 8, cy - 8, cx + 8, cy + 8), fill=(5, 13, 24, 255), outline=accent, width=3)
+        draw.line((cx - 26, cy, cx - 11, cy), fill=accent, width=2)
+        draw.line((cx + 11, cy, cx + 26, cy), fill=accent, width=2)
+        draw.line((cx, cy - 26, cx, cy - 11), fill=accent, width=2)
+        draw.line((cx, cy + 11, cx, cy + 26), fill=accent, width=2)
 
+    # ---------- HEADER ----------
+    header_y = 86
+    _neon_line(img, [(110, header_y + 70), (510, header_y + 70), (548, header_y + 48)],
+                fill=(0, 230, 255, 225), width=3, glow_width=18)
+    _neon_line(img, [(1252, header_y + 48), (1290, header_y + 70), (1690, header_y + 70)],
+                fill=(184, 85, 255, 225), width=3, glow_width=18)
+
+    title = "BIKA // CHARACTER NETWORK"
+    title_font = _fit_text(draw, title, 820, 54, 34, bold=True)
+    draw.text((W // 2, 92), title, font=title_font, fill=(239, 251, 255), anchor="ma")
+    sub = "TRANSFORMER HUD  •  COLLECTOR CORE  •  PROFILE ONLINE"
+    sub_font = _fit_text(draw, sub, 850, 21, 16, bold=True)
+    draw.text((W // 2, 145), sub, font=sub_font, fill=(88, 177, 207), anchor="ma")
+
+    # Small live-status module.
+    status_box = (1400, 103, 1650, 158)
+    draw.rounded_rectangle(status_box, radius=14, fill=(6, 22, 30, 240), outline=(0, 225, 255, 170), width=2)
+    draw.ellipse((1420, 122, 1438, 140), fill=(0, 255, 204, 255))
+    draw.text((1452, 113), "CORE ONLINE", font=_font(18, bold=True, text="CORE ONLINE"), fill=(144, 244, 225))
+
+    # ---------- MAIN IDENTITY BAY ----------
+    bay = [(94, 202), (124, 172), (1690, 172), (1720, 202),
+           (1720, 505), (1690, 535), (124, 535), (94, 505)]
+    _angular_panel(draw, bay, fill=(6, 15, 29, 242), outline=(41, 83, 113, 230), width=2)
+
+    # Accent rail.
+    _neon_line(img, [(120, 222), (120, 486)], fill=(0, 224, 255, 210), width=4, glow_width=16)
+    _neon_line(img, [(1694, 222), (1694, 486)], fill=(178, 74, 255, 200), width=4, glow_width=16)
+
+    # ---------- AVATAR REACTOR ----------
+    ax, ay, size = 150, 230, 250
+    reactor = Image.new("RGBA", (430, 430), (0, 0, 0, 0))
+    rg = ImageDraw.Draw(reactor)
+    rc = (215, 340)
+    rg.ellipse((55, 55, 375, 375), fill=(0, 219, 255, 20), outline=(0, 229, 255, 105), width=7)
+    reactor = reactor.filter(ImageFilter.GaussianBlur(20))
+    img.alpha_composite(reactor, (ax - 90, ay - 90))
     draw = ImageDraw.Draw(img)
 
-    # Technical grid / scanline texture.
-    for x in range(70, CANVAS_W - 50, 55):
-        draw.line((x, 70, x, CANVAS_H - 55), fill=(31, 75, 99, 34), width=1)
-    for y in range(70, CANVAS_H - 55, 55):
-        draw.line((70, y, CANVAS_W - 50, y), fill=(31, 75, 99, 28), width=1)
+    # Mechanical concentric housing.
+    cx, cy = ax + size // 2, ay + size // 2
+    for rr, col, ww in (
+        (174, (0, 225, 255, 175), 4),
+        (164, (99, 94, 255, 230), 7),
+        (151, (180, 211, 230, 135), 2),
+    ):
+        draw.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), outline=col, width=ww)
 
-    # Main armored shell: chamfered rather than a soft rounded card.
-    shell = [
-        (70, 60), (1530, 60), (1560, 90), (1560, 910),
-        (1530, 940), (70, 940), (40, 910), (40, 90),
-    ]
-    _angular_panel(
-        draw, shell,
-        fill=(7, 15, 27, 246),
-        outline=(76, 120, 148, 220),
-        width=3,
-    )
-    inner_shell = [
-        (86, 78), (1514, 78), (1538, 102), (1538, 898),
-        (1514, 922), (86, 922), (62, 898), (62, 102),
-    ]
-    _angular_panel(
-        draw, inner_shell,
-        fill=(8, 18, 32, 150),
-        outline=(22, 65, 91, 210),
-        width=2,
-    )
-
-    # Neon perimeter segments.
-    _neon_line(
-        img,
-        [(95, 92), (560, 92)],
-        fill=(46, 232, 255, 235),
-        width=5,
-        glow_width=20,
-    )
-    _neon_line(
-        img,
-        [(580, 92), (1030, 92)],
-        fill=(78, 133, 255, 235),
-        width=5,
-        glow_width=20,
-    )
-    _neon_line(
-        img,
-        [(1050, 92), (1505, 92)],
-        fill=(255, 75, 175, 230),
-        width=5,
-        glow_width=20,
-    )
-    _neon_line(
-        img,
-        [(1508, 105), (1508, 350)],
-        fill=(255, 146, 49, 210),
-        width=4,
-        glow_width=16,
-    )
-
-    # Header / identity.
-    draw.text(
-        (112, 122),
-        "BIKA // CHARACTER NETWORK",
-        font=_font(27, bold=True, text="BIKA // CHARACTER NETWORK"),
-        fill=(92, 229, 255),
-    )
-    draw.text(
-        (112, 166),
-        "NEON COLLECTOR SYSTEM  •  PROFILE CORE",
-        font=_font(19, bold=True, text="NEON COLLECTOR SYSTEM  •  PROFILE CORE"),
-        fill=(113, 139, 163),
-    )
-    _draw_transformer_chip(img, (1450, 151), 42, accent=(55, 232, 255, 225))
-
-    # Avatar reactor housing.
-    avatar_size = 270
-    avatar_x, avatar_y = 112, 270
-    reactor_glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    rg = ImageDraw.Draw(reactor_glow)
-    rg.ellipse(
-        (avatar_x - 42, avatar_y - 42, avatar_x + avatar_size + 42, avatar_y + avatar_size + 42),
-        fill=(0, 218, 255, 88),
-    )
-    reactor_glow = reactor_glow.filter(ImageFilter.GaussianBlur(32))
-    img.alpha_composite(reactor_glow)
-    draw = ImageDraw.Draw(img)
-
-    # Mechanical ring.
-    draw.ellipse(
-        (avatar_x - 22, avatar_y - 22, avatar_x + avatar_size + 22, avatar_y + avatar_size + 22),
-        fill=(5, 13, 23, 255),
-        outline=(46, 227, 255, 240),
-        width=7,
-    )
-    draw.ellipse(
-        (avatar_x - 10, avatar_y - 10, avatar_x + avatar_size + 10, avatar_y + avatar_size + 10),
-        outline=(139, 85, 255, 210),
-        width=3,
-    )
-    for angle in range(0, 360, 45):
-        # Small armor ticks around the reactor.
-        import math
-        rad = math.radians(angle)
-        cx = avatar_x + avatar_size // 2
-        cy = avatar_y + avatar_size // 2
-        r1 = avatar_size // 2 + 28
-        r2 = avatar_size // 2 + 42
-        p1 = (int(cx + r1 * math.cos(rad)), int(cy + r1 * math.sin(rad)))
-        p2 = (int(cx + r2 * math.cos(rad)), int(cy + r2 * math.sin(rad)))
-        draw.line((p1, p2), fill=(76, 129, 153, 190), width=4)
+    # Rotational tick marks.
+    import math
+    for i in range(24):
+        angle = math.radians(i * 15)
+        r1, r2 = 156, 171
+        x1 = cx + int(math.cos(angle) * r1)
+        y1 = cy + int(math.sin(angle) * r1)
+        x2 = cx + int(math.cos(angle) * r2)
+        y2 = cy + int(math.sin(angle) * r2)
+        accent = (0, 239, 255, 225) if i % 3 else (194, 83, 255, 235)
+        draw.line((x1, y1, x2, y2), fill=accent, width=3)
 
     avatar = None
     if avatar_bytes:
         try:
             avatar = Image.open(BytesIO(avatar_bytes)).convert("RGB")
-            avatar = ImageOps.fit(
-                avatar,
-                (avatar_size, avatar_size),
-                method=Image.Resampling.LANCZOS,
-            )
+            avatar = ImageOps.fit(avatar, (size, size), method=Image.Resampling.LANCZOS)
         except Exception:
             avatar = None
 
-    mask = Image.new("L", (avatar_size, avatar_size), 0)
-    ImageDraw.Draw(mask).ellipse((0, 0, avatar_size - 1, avatar_size - 1), fill=255)
-
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, size - 1, size - 1), fill=255)
     if avatar is not None:
-        # Slight sharpening after fit for a cleaner high-resolution face/avatar.
-        avatar = avatar.filter(ImageFilter.UnsharpMask(radius=1.1, percent=135, threshold=3))
-        img.paste(avatar.convert("RGBA"), (avatar_x, avatar_y), mask)
+        img.paste(avatar.convert("RGBA"), (ax, ay), mask)
     else:
-        draw.ellipse(
-            (avatar_x, avatar_y, avatar_x + avatar_size, avatar_y + avatar_size),
-            fill=(17, 34, 55, 255),
-        )
-        clusters = _graphemes(full_name.strip())
-        first_cluster = clusters[0] if clusters else "?"
-        if _is_emoji_cluster(first_cluster):
-            emoji_img = _render_emoji_cluster(first_cluster, 132)
+        draw.ellipse((ax, ay, ax + size, ay + size), fill=(13, 31, 55, 255))
+        first = _graphemes(full_name)[0] if _graphemes(full_name) else "?"
+        if _is_emoji_cluster(first):
+            emoji_img = _render_emoji_cluster(first, 122)
             if emoji_img is not None:
-                px = avatar_x + avatar_size // 2 - emoji_img.width // 2
-                py = avatar_y + avatar_size // 2 - emoji_img.height // 2
-                img.paste(emoji_img, (px, py), emoji_img)
+                img.paste(emoji_img, (cx - emoji_img.width // 2, cy - emoji_img.height // 2), emoji_img)
             else:
-                draw.text(
-                    (avatar_x + avatar_size // 2, avatar_y + avatar_size // 2),
-                    first_cluster,
-                    font=_font(100, bold=True, text=first_cluster),
-                    fill=(237, 248, 255),
-                    anchor="mm",
-                )
+                draw.text((cx, cy), first, font=_font(92, bold=True, text=first), fill=(241, 248, 255), anchor="mm")
         else:
-            draw.text(
-                (avatar_x + avatar_size // 2, avatar_y + avatar_size // 2),
-                first_cluster.upper(),
-                font=_font(112, bold=True, text=first_cluster),
-                fill=(237, 248, 255),
-                anchor="mm",
-            )
+            draw.text((cx, cy), first.upper(), font=_font(104, bold=True, text=first), fill=(241, 248, 255), anchor="mm")
 
-    # Identity block.
-    name_max = 670
+    # Corner bolts around avatar.
+    for px, py in ((ax - 4, ay - 4), (ax + size + 4, ay - 4), (ax - 4, ay + size + 4), (ax + size + 4, ay + size + 4)):
+        draw.ellipse((px - 6, py - 6, px + 6, py + 6), fill=(6, 14, 25, 255), outline=(112, 170, 201, 220), width=2)
+
+    # ---------- IDENTITY TEXT ----------
+    text_x = 470
+    name_max = 790
     name_size = _fit_mixed_text_size(draw, full_name, name_max, 66, 30, bold=True)
     safe_name = _truncate_mixed_text(draw, full_name, name_max, name_size, bold=True)
-    _draw_mixed_text(
-        img, (438, 300), safe_name,
-        size=name_size, fill=(245, 251, 255), bold=True,
-    )
+    # Crisp dark stroke gives the title a HUD/metallic edge without blurring.
+    _draw_mixed_text(img, (text_x, 246), safe_name, size=name_size, fill=(247, 252, 255), bold=True)
+
     rank_line = f"{collector_emoji}  {collector_rank}"
-    rank_size = _fit_mixed_text_size(draw, rank_line, 650, 38, 24, bold=True)
-    safe_rank = _truncate_mixed_text(draw, rank_line, 650, rank_size, bold=True)
-    _draw_mixed_text(
-        img, (438, 386), safe_rank,
-        size=rank_size, fill=(74, 231, 255), bold=True,
-    )
-    identity_text = f"UNIT ID  #{int(profile_id):,}   //   VERIFIED COLLECTOR"
-    draw.text(
-        (438, 447),
-        identity_text,
-        font=_font(22, bold=True, text=identity_text),
-        fill=(116, 143, 166),
-    )
+    rank_size = _fit_mixed_text_size(draw, rank_line, 760, 36, 24, bold=True)
+    rank_safe = _truncate_mixed_text(draw, rank_line, 760, rank_size, bold=True)
+    _draw_mixed_text(img, (text_x, 327), rank_safe, size=rank_size, fill=(93, 225, 255), bold=True)
 
-    # Accent data rail.
-    _neon_line(
-        img,
-        [(438, 505), (1110, 505)],
-        fill=(43, 184, 218, 155),
-        width=2,
-        glow_width=10,
-    )
+    # Identity metadata rail.
+    meta = f"UNIT ID  #{int(profile_id):,}   /   VERIFIED COLLECTOR"
+    draw.text((text_x, 390), meta, font=_font(22, bold=True, text=meta), fill=(105, 137, 164))
+    draw.text((text_x, 430), "COLLECTION CORE AUTHORIZED", font=_font(18, bold=True, text="COLLECTION CORE AUTHORIZED"), fill=(63, 98, 124))
 
-    # Collector level armor badge.
-    badge = [
-        (1170, 268), (1490, 268), (1510, 288), (1510, 476),
-        (1490, 496), (1170, 496), (1150, 476), (1150, 288),
-    ]
-    _angular_panel(
-        draw, badge,
-        fill=(10, 23, 39, 250),
-        outline=(61, 191, 219, 205),
-        width=3,
-    )
-    draw.text(
-        (1180, 292),
-        "COLLECTOR CORE",
-        font=_font(19, bold=True, text="COLLECTOR CORE"),
-        fill=(108, 141, 164),
-    )
-    badge_size = _fit_mixed_text_size(draw, collector_emoji, 90, 55, 30, bold=True)
-    _draw_mixed_text(
-        img, (1180, 331), collector_emoji,
-        size=badge_size, fill=(255, 255, 255), bold=True,
-    )
-    badge_rank = _truncate_mixed_text(draw, collector_rank, 235, 30, bold=True)
-    draw.text(
-        (1270, 343),
-        badge_rank,
-        font=_font(30, bold=True, text=badge_rank),
-        fill=(239, 246, 255),
-    )
-    draw.text(
-        (1180, 413),
-        "SYSTEM STATUS",
-        font=_font(16, bold=True, text="SYSTEM STATUS"),
-        fill=(89, 119, 141),
-    )
-    draw.text(
-        (1320, 408),
-        "ONLINE",
-        font=_font(20, bold=True, text="ONLINE"),
-        fill=(77, 246, 180),
-    )
-    draw.ellipse((1447, 411, 1465, 429), fill=(77, 246, 180, 255))
+    # ---------- COLLECTOR CORE MODULE ----------
+    core_box = [(1295, 220), (1322, 193), (1658, 193), (1685, 220),
+                (1685, 488), (1658, 515), (1322, 515), (1295, 488)]
+    _angular_panel(draw, core_box, fill=(8, 20, 35, 250), outline=(86, 94, 151, 220), width=2)
+    _draw_transformer_chip(img, (1490, 300), 58, accent=(0, 232, 255, 245))
+    draw.text((1490, 370), "COLLECTOR CORE", font=_font(19, bold=True, text="COLLECTOR CORE"), fill=(100, 143, 170), anchor="ma")
+    core_rank = _truncate_mixed_text(draw, collector_rank, 310, 31, bold=True)
+    core_w = _text_width(draw, core_rank, 31, True)
+    _draw_mixed_text(img, (1490 - core_w // 2, 405), core_rank, size=31, fill=(239, 246, 255), bold=True)
+    draw.text((1490, 460), "SYSTEM STATUS  •  ACTIVE", font=_font(15, bold=True, text="SYSTEM STATUS  •  ACTIVE"), fill=(56, 210, 190), anchor="ma")
 
-    # Stat modules.
-    top = 555
-    left = 110
-    gap = 20
-    card_w = 355
-    card_h = 128
-    stat_boxes = [
-        ("TOTAL CARDS", f"{int(unique_cards):,}", (52, 224, 244)),
-        ("GLOBAL RANK", f"#{max(0, int(global_rank)):,}", (98, 130, 255)),
-        ("PROFILE ID", f"#{int(profile_id):,}", (212, 91, 255)),
-        ("COLLECTOR", collector_rank, (255, 154, 54)),
-    ]
-    for i, (label, value, accent) in enumerate(stat_boxes):
-        x1 = left + i * (card_w + gap)
-        x2 = x1 + card_w
-        panel_points = [
-            (x1 + 18, top), (x2 - 18, top), (x2, top + 18),
-            (x2, top + card_h - 18), (x2 - 18, top + card_h),
-            (x1 + 18, top + card_h), (x1, top + card_h - 18),
-            (x1, top + 18),
-        ]
-        _angular_panel(
-            draw, panel_points,
-            fill=(9, 22, 37, 235),
-            outline=(42, 73, 94, 220),
-            width=2,
-        )
-        draw.rectangle((x1 + 2, top + 18, x1 + 8, top + card_h - 18), fill=accent + (235,))
-        draw.text(
-            (x1 + 30, top + 21),
-            label,
-            font=_font(19, bold=True, text=label),
-            fill=(103, 133, 155),
-        )
-        value_size = _fit_mixed_text_size(
-            draw, value, card_w - 58, 39, 23, bold=True,
-        )
-        safe_value = _truncate_mixed_text(
-            draw, value, card_w - 58, value_size, bold=True,
-        )
-        draw.text(
-            (x1 + 30, top + 61),
-            safe_value,
-            font=_font(value_size, bold=True, text=safe_value),
-            fill=(241, 248, 255),
-        )
-
-    # Progress / power core.
-    progress_y = 735
-    progress_points = [
-        (110, progress_y), (1490, progress_y), (1510, progress_y + 20),
-        (1510, progress_y + 118), (1490, progress_y + 138),
-        (110, progress_y + 138), (90, progress_y + 118), (90, progress_y + 20),
-    ]
-    _angular_panel(
-        draw, progress_points,
-        fill=(7, 19, 32, 245),
-        outline=(45, 84, 108, 225),
-        width=2,
+    # ---------- STAT MATRIX ----------
+    sy = 575
+    sx = 110
+    gap_x, gap_y = 24, 22
+    card_w, card_h = 385, 150
+    stats = (
+        ("TOTAL CARDS", f"{int(unique_cards):,}", (0, 230, 255, 255), "COLLECTION"),
+        ("GLOBAL RANK", f"#{max(0, int(global_rank)):,}", (105, 125, 255, 255), "NETWORK"),
+        ("PROFILE ID", f"#{int(profile_id):,}", (188, 78, 255, 255), "IDENTITY"),
+        ("COLLECTOR", collector_rank, (255, 168, 70, 255), "CORE"),
     )
+    for i, (label, value, accent, tag) in enumerate(stats):
+        row, col = divmod(i, 4)
+        x1 = sx + col * (card_w + gap_x)
+        y1 = sy + row * (card_h + gap_y)
+        x2, y2 = x1 + card_w, y1 + card_h
+        pts = [(x1, y1 + 18), (x1 + 18, y1), (x2 - 32, y1), (x2, y1 + 32),
+               (x2, y2 - 18), (x2 - 18, y2), (x1 + 32, y2), (x1, y2 - 32)]
+        _angular_panel(draw, pts, fill=(7, 18, 32, 245), outline=(48, 78, 103, 220), width=2)
+        _neon_line(img, [(x1 + 22, y2 - 14), (x1 + 100, y2 - 14)], fill=accent, width=3, glow_width=10)
+        draw.text((x1 + 28, y1 + 23), label, font=_font(19, bold=True, text=label), fill=(101, 135, 159))
+        draw.text((x2 - 28, y1 + 23), tag, font=_font(14, bold=True, text=tag), fill=(55, 86, 110), anchor="ra")
+        value_size = _fit_mixed_text_size(draw, value, card_w - 55, 43, 23, bold=True)
+        safe_value = _truncate_mixed_text(draw, value, card_w - 55, value_size, bold=True)
+        if _is_emoji_cluster(safe_value[:1]):
+            _draw_mixed_text(img, (x1 + 28, y1 + 67), safe_value, size=value_size, fill=(242, 247, 255), bold=True)
+        else:
+            draw.text((x1 + 28, y1 + 67), safe_value, font=_font(value_size, bold=True, text=safe_value), fill=(242, 247, 255))
+
+    # ---------- POWER / NEXT-RANK CORE ----------
+    power_y = 760
+    power = [(110, power_y + 28), (138, power_y), (1662, power_y),
+             (1690, power_y + 28), (1690, power_y + 205), (1662, power_y + 233),
+             (138, power_y + 233), (110, power_y + 205)]
+    _angular_panel(draw, power, fill=(6, 16, 30, 248), outline=(55, 84, 112, 225), width=2)
 
     if next_rank_target > 0 and next_rank_name:
         target = max(1, int(next_rank_target))
-        progress = min(1.0, max(0.0, int(unique_cards) / target))
-        next_label = f"NEXT CORE UPGRADE  //  {next_rank_name}"
-        next_label = _truncate_mixed_text(draw, next_label, 830, 23, bold=True)
-        draw.text(
-            (125, progress_y + 24),
-            next_label,
-            font=_font(23, bold=True, text=next_label),
-            fill=(218, 234, 244),
-        )
-        progress_value = f"{int(unique_cards):,} / {target:,}"
-        draw.text(
-            (1470, progress_y + 24),
-            progress_value,
-            font=_font(21, bold=True, text=progress_value),
-            fill=(122, 161, 184),
-            anchor="ra",
-        )
-        bar_x1, bar_y1, bar_x2, bar_y2 = 125, progress_y + 70, 1475, progress_y + 101
-        draw.rounded_rectangle(
-            (bar_x1, bar_y1, bar_x2, bar_y2),
-            radius=15,
-            fill=(22, 43, 59, 255),
-            outline=(43, 75, 95, 200),
-            width=2,
-        )
-        fill_x2 = bar_x1 + max(20, int((bar_x2 - bar_x1) * progress))
-        _neon_line(
-            img,
-            [(bar_x1 + 3, (bar_y1 + bar_y2) // 2), (min(bar_x2 - 3, fill_x2), (bar_y1 + bar_y2) // 2)],
-            fill=(42, 230, 255, 240),
-            width=15,
-            glow_width=28,
-        )
-        draw.ellipse(
-            (min(bar_x2 - 16, fill_x2 - 9), bar_y1 + 7, min(bar_x2 - 2, fill_x2 + 5), bar_y2 - 7),
-            fill=(229, 255, 255, 255),
-        )
-        pct = f"{progress * 100:.1f}%"
-        draw.text(
-            (1470, progress_y + 105),
-            pct,
-            font=_font(16, bold=True, text=pct),
-            fill=(67, 224, 247),
-            anchor="ra",
-        )
-    else:
-        end_text = "✦  MAXIMUM CORE // LEGENDARY STATUS  ✦"
-        end_text = _truncate_mixed_text(draw, end_text, 1250, 31, bold=True)
-        end_width = _text_width(draw, end_text, 31, True)
-        _draw_mixed_text(
-            img,
-            (CANVAS_W // 2 - end_width // 2, progress_y + 48),
-            end_text,
-            size=31,
-            fill=(255, 186, 67),
-            bold=True,
-        )
+        current = max(0, int(unique_cards))
+        progress = min(1.0, current / target)
+        draw.text((145, power_y + 27), "NEXT CORE UPGRADE", font=_font(17, bold=True, text="NEXT CORE UPGRADE"), fill=(70, 112, 138))
+        next_text = f"{collector_emoji}  {next_rank_name}"
+        next_size = _fit_mixed_text_size(draw, next_text, 620, 31, 23, bold=True)
+        _draw_mixed_text(img, (145, power_y + 58), next_text, size=next_size, fill=(234, 244, 255), bold=True)
 
-    # Bottom mechanical telemetry.
-    _neon_line(
-        img,
-        [(112, 900), (520, 900)],
-        fill=(44, 218, 244, 180),
-        width=2,
-        glow_width=10,
-    )
-    footer = "BIKA // COLLECT • CLAIM • BUILD   |   PROFILE CORE v3"
-    footer = _truncate_mixed_text(draw, footer, 640, 17, bold=True)
-    draw.text(
-        (800, 884),
-        footer,
-        font=_font(17, bold=True, text=footer),
-        fill=(83, 113, 136),
-        anchor="ma",
-    )
-    draw.text(
-        (1488, 884),
-        "1600×1000  //  HI-RES",
-        font=_font(15, bold=True, text="1600×1000  //  HI-RES"),
-        fill=(58, 91, 111),
-        anchor="ra",
-    )
+        ratio_text = f"{current:,} / {target:,}"
+        draw.text((1650, power_y + 47), ratio_text, font=_font(25, bold=True, text=ratio_text), fill=(110, 205, 224), anchor="ra")
+
+        bar_x1, bar_y1, bar_x2, bar_y2 = 145, power_y + 123, 1655, power_y + 154
+        draw.rounded_rectangle((bar_x1, bar_y1, bar_x2, bar_y2), radius=15, fill=(21, 37, 55, 255), outline=(55, 80, 103, 220), width=1)
+        fill_x2 = bar_x1 + max(20, int((bar_x2 - bar_x1) * progress))
+        if fill_x2 > bar_x1:
+            _neon_line(img, [(bar_x1 + 4, (bar_y1 + bar_y2) // 2), (fill_x2 - 4, (bar_y1 + bar_y2) // 2)],
+                        fill=(0, 231, 255, 235), width=22, glow_width=34)
+        draw.text((145, power_y + 174), f"POWER OUTPUT  {progress * 100:.1f}%", font=_font(16, bold=True, text="POWER OUTPUT  100.0%"), fill=(72, 113, 137))
+        draw.text((1655, power_y + 174), "UPGRADE PATH  //  ARMED", font=_font(16, bold=True, text="UPGRADE PATH  //  ARMED"), fill=(70, 200, 185), anchor="ra")
+    else:
+        msg = "MAXIMUM CORE  //  LEGENDARY STATUS"
+        msg_font = _fit_text(draw, msg, 1250, 42, 30, bold=True)
+        draw.text((W // 2, power_y + 83), msg, font=msg_font, fill=(255, 197, 91), anchor="ma")
+        draw.text((W // 2, power_y + 136), "COLLECTION LIMIT SURPASSED  •  CORE OUTPUT STABLE", font=_font(17, bold=True, text="COLLECTION LIMIT SURPASSED  •  CORE OUTPUT STABLE"), fill=(105, 145, 164), anchor="ma")
+
+    # ---------- TELEMETRY FOOTER ----------
+    footer_y = 1034
+    _neon_line(img, [(112, footer_y), (540, footer_y)], fill=(0, 205, 240, 180), width=2, glow_width=8)
+    _neon_line(img, [(1260, footer_y), (1688, footer_y)], fill=(173, 75, 255, 180), width=2, glow_width=8)
+    footer = "BIKA NETWORK  •  COLLECT / CLAIM / EVOLVE  •  PROFILE CORE v3"
+    footer = _truncate_mixed_text(draw, footer, 650, 16, bold=True)
+    draw.text((W // 2, footer_y - 17), footer, font=_font(16, bold=True, text=footer), fill=(70, 100, 122), anchor="ma")
 
     out = BytesIO()
     out.name = "bika_profile.png"
-    # Lossless PNG preserves thin neon geometry, text edges and emoji composites.
-    img.convert("RGB").save(
-        out,
-        format="PNG",
-        optimize=True,
-    )
+    img.save(out, format="PNG", optimize=True)
     out.seek(0)
     return out
 
