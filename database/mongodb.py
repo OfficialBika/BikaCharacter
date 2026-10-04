@@ -12,6 +12,13 @@ from config import DB_NAME, MONGODB_URI, LIMITED_CARDS_COLLECTION, ANIMES_COLLEC
 
 
 class MongoLatencyListener(CommandListener):
+    def started(self, event) -> None:
+        # CommandListener.base.started() raises NotImplementedError.  PyMongo
+        # invokes started() for every command before succeeded()/failed().
+        # We only need duration data from the completion callbacks, so this is
+        # intentionally a no-op.
+        pass
+
     def succeeded(self, event) -> None:
         observe_mongo_command(event.command_name, float(event.duration_micros) / 1000.0, False)
 
