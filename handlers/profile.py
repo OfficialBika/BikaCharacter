@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import unicodedata
 
@@ -16,16 +17,13 @@ from utils.hot_lookup import get_global_rank, catalog_stats
 from utils.profile_renderer import render_profile_card, normalize_name_for_render
 from utils.rarity import get_rarity_emoji, get_rarity_button_emoji
 from utils.text import escape_html, level_from_exp, progress_bar
-from web.app import store_profile_image
-
-
 PROFILE_COUNTER_ID = "profile_id"
 
-PROFILE_PUBLIC_URL = str(
-    os.getenv("PROFILE_PUBLIC_URL")
-    or os.getenv("WEBHOOK_URL")
-    or ""
-).strip().rstrip("/")
+# Telegram Rich Messages upload the generated profile image directly.
+# No public URL, webhook URL, or profile-image HTTP endpoint is required.
+PROFILE_RICH_IMAGE_ID = "profile_image"
+PROFILE_RICH_IMAGE_FIELD = "profile_image"
+PROFILE_RICH_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 
 
 RANKS = (
@@ -217,7 +215,7 @@ def build_profile_rich_html(
 
     if image_url:
         blocks.append(
-            f'<img src="{escape_html(image_url)}"/>'
+            f'<img src="tg://photo?id={PROFILE_RICH_IMAGE_ID}"/>'
         )
 
     blocks.extend(
@@ -324,20 +322,6 @@ def build_profile_fallback_caption(
         )
 
     return "\n".join(lines)
-
-
-def make_profile_image_url(image) -> str:
-    if not PROFILE_PUBLIC_URL:
-        raise RuntimeError(
-            "PROFILE_PUBLIC_URL is missing. "
-            "Example: https://bikaprofile.duckdns.org"
-        )
-
-    path = store_profile_image(
-        image,
-        content_type="image/jpeg",
-    )
-    return f"{PROFILE_PUBLIC_URL}{path}"
 
 
 def detect_card_media_type(card: dict) -> str:
@@ -514,29 +498,82 @@ async def send_profile_rich_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     rich_html: str,
+    image=None,
 ) -> bool:
-    payload = {
-        "chat_id": int(update.effective_chat.id),
-        "rich_message": {
-            "html": rich_html,
-            "skip_entity_detection": True,
-        },
+    """Send Rich Message with optional direct multipart image upload."""
+    has_image = image is not None
+    image_bytes = None
+
+    if has_image:
+        try:
+            image.seek(0)
+            image_bytes = image.getvalue()
+        except Exception as exc:
+            print("PROFILE RICH IMAGE READ ERROR:", repr(exc), flush=True)
+            return False
+
+        if not image_bytes:
+            print("PROFILE RICH IMAGE EMPTY", flush=True)
+            return False
+
+        if len(image_bytes) > PROFILE_RICH_IMAGE_MAX_BYTES:
+            print(
+                "PROFILE RICH IMAGE TOO LARGE:",
+                len(image_bytes),
+                flush=True,
+            )
+            return False
+
+    rich_message = {
+        "html": rich_html,
+        "skip_entity_detection": True,
     }
+
+    if has_image:
+        rich_message["media"] = [
+            {
+                "id": PROFILE_RICH_IMAGE_ID,
+                "media": {
+                    "type": "photo",
+                    "media": f"attach://{PROFILE_RICH_IMAGE_FIELD}",
+                },
+            }
+        ]
+
+    form = aiohttp.FormData()
+    form.add_field("chat_id", str(int(update.effective_chat.id)))
+    form.add_field(
+        "rich_message",
+        json.dumps(
+            rich_message,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    )
 
     if (
         update.effective_message
         and getattr(update.effective_message, "message_thread_id", None)
     ):
-        payload["message_thread_id"] = int(
-            update.effective_message.message_thread_id
+        form.add_field(
+            "message_thread_id",
+            str(int(update.effective_message.message_thread_id)),
+        )
+
+    if image_bytes is not None:
+        form.add_field(
+            PROFILE_RICH_IMAGE_FIELD,
+            image_bytes,
+            filename="bika_profile.jpg",
+            content_type="image/jpeg",
         )
 
     url = f"https://api.telegram.org/bot{context.bot.token}/sendRichMessage"
 
     try:
-        timeout = aiohttp.ClientTimeout(total=30)
+        timeout = aiohttp.ClientTimeout(total=60)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, json=payload) as response:
+            async with session.post(url, data=form) as response:
                 data = await response.json(content_type=None)
                 if response.status != 200 or not data.get("ok"):
                     raise RuntimeError(
@@ -617,8 +654,7 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 next_rank_target=rank["nextTarget"],
             )
 
-            image_url = make_profile_image_url(image)
-            print(f"PROFILE IMAGE URL: {image_url}", flush=True)
+            image_url = PROFILE_RICH_IMAGE_ID
 
             rich_html = build_profile_rich_html(
                 cards=cards,
@@ -642,6 +678,7 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 update,
                 context,
                 rich_html,
+                image=image,
             ):
                 await _delete_loading_message(loading_message)
                 return
@@ -691,8 +728,7 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 next_rank_target=rank["nextTarget"],
             )
 
-            image_url = make_profile_image_url(image)
-            print(f"PROFILE IMAGE URL: {image_url}", flush=True)
+            image_url = PROFILE_RICH_IMAGE_ID
 
             rich_html = build_profile_rich_html(
                 cards=cards,
@@ -713,6 +749,7 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 update,
                 context,
                 rich_html,
+                image=image,
             ):
                 await _delete_loading_message(loading_message)
                 return
