@@ -867,7 +867,13 @@ def render_profile_card(
     core_box = [(1295, 220), (1322, 193), (1658, 193), (1685, 220),
                 (1685, 488), (1658, 515), (1322, 515), (1295, 488)]
     _angular_panel(draw, core_box, fill=(8, 20, 35, 250), outline=(86, 94, 151, 220), width=2)
-    _draw_transformer_chip(\n        img,\n        (1490, 300),\n        58,\n        accent=(0, 232, 255, 245),\n        collector_emoji=collector_emoji,\n    )
+    _draw_transformer_chip(
+        img,
+        (1490, 300),
+        58,
+        accent=(0, 232, 255, 245),
+        collector_emoji=collector_emoji,
+    )
     draw.text((1490, 370), "COLLECTOR CORE", font=_font(19, bold=True, text="COLLECTOR CORE"), fill=(100, 143, 170), anchor="ma")
     core_rank = _truncate_mixed_text(draw, collector_rank, 310, 31, bold=True)
     core_w = _text_width(draw, core_rank, 31, True)
