@@ -638,7 +638,9 @@ def _draw_transformer_chip(
     radius: int,
     *,
     accent: tuple[int, int, int, int],
+    collector_emoji: str = "",
 ) -> None:
+    """Draw the Collector Core chip with the live collector emoji in its center."""
     draw = ImageDraw.Draw(image)
     cx, cy = center
     outer = [
@@ -660,16 +662,31 @@ def _draw_transformer_chip(
     ]
     _angular_panel(draw, outer, fill=(9, 17, 30, 255), outline=accent, width=4)
     _angular_panel(draw, inner, fill=(21, 31, 48, 255), outline=(188, 210, 232, 150), width=2)
-    draw.line(
-        [(cx - inner_r // 2, cy), (cx + inner_r // 2, cy)],
-        fill=accent,
-        width=max(2, radius // 8),
-    )
-    draw.line(
-        [(cx, cy - inner_r // 2), (cx, cy + inner_r // 2)],
-        fill=accent,
-        width=max(2, radius // 8),
-    )
+
+    # The old center "+" was only a placeholder. Replace that exact visual
+    # slot with the rank-specific collector emoji passed by profile.py.
+    emoji = normalize_name_for_render(collector_emoji)
+    emoji_img = _render_emoji_cluster(emoji, max(24, int(radius * 0.76))) if emoji else None
+    if emoji_img is not None:
+        image.paste(
+            emoji_img,
+            (
+                cx - emoji_img.width // 2,
+                cy - emoji_img.height // 2,
+            ),
+            emoji_img,
+        )
+    else:
+        # Never bring the old "+" back if emoji assets are unavailable.
+        draw.ellipse(
+            (
+                cx - max(4, radius // 10),
+                cy - max(4, radius // 10),
+                cx + max(4, radius // 10),
+                cy + max(4, radius // 10),
+            ),
+            fill=accent,
+        )
 
 
 def render_profile_card(
@@ -850,7 +867,7 @@ def render_profile_card(
     core_box = [(1295, 220), (1322, 193), (1658, 193), (1685, 220),
                 (1685, 488), (1658, 515), (1322, 515), (1295, 488)]
     _angular_panel(draw, core_box, fill=(8, 20, 35, 250), outline=(86, 94, 151, 220), width=2)
-    _draw_transformer_chip(img, (1490, 300), 58, accent=(0, 232, 255, 245))
+    _draw_transformer_chip(\n        img,\n        (1490, 300),\n        58,\n        accent=(0, 232, 255, 245),\n        collector_emoji=collector_emoji,\n    )
     draw.text((1490, 370), "COLLECTOR CORE", font=_font(19, bold=True, text="COLLECTOR CORE"), fill=(100, 143, 170), anchor="ma")
     core_rank = _truncate_mixed_text(draw, collector_rank, 310, 31, bold=True)
     core_w = _text_width(draw, core_rank, 31, True)
