@@ -60,64 +60,6 @@ def normalize_name_for_render(text: str) -> str:
     return normalized or "Unknown"
 
 
-def _font_candidates(bold: bool = False) -> list[str]:
-    if bold:
-        return [
-            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSansMyanmar-Bold.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSansBamum-Bold.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSansCoptic-Regular.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSansSymbols-Bold.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSansMath-Regular.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSansThai-Bold.ttf",
-            "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf",
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
-        ]
-
-    return [
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansMyanmar-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansBamum-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansCoptic-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansMath-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-    ]
-
-
-@lru_cache(maxsize=512)
-def _font_support_score(font_path: str, text: str) -> tuple[int, int]:
-    if not font_path or not os.path.exists(font_path):
-        return (0, len(text))
-
-    chars = [ch for ch in text if not ch.isspace()]
-    if not chars:
-        return (1, 1)
-
-    if TTFont is None:
-        return (0, len(chars))
-
-    try:
-        font = TTFont(font_path, lazy=True)
-        cmap = {}
-        for table in font["cmap"].tables:
-            cmap.update(table.cmap)
-        supported = sum(1 for ch in chars if ord(ch) in cmap)
-        return (supported, len(chars))
-    except Exception:
-        return (0, len(chars))
-
-
 def _font_paths(bold: bool = False) -> list[str]:
     """Return installed font candidates, ordered from broad to script-specific."""
     if bold:
