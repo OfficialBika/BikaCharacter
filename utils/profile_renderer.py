@@ -65,6 +65,12 @@ def _font_candidates(bold: bool = False) -> list[str]:
         return [
             "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
             "/usr/share/fonts/truetype/noto/NotoSansMyanmar-Bold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansBamum-Bold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansCoptic-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansSymbols-Bold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansMath-Regular.ttf",
             "/usr/share/fonts/truetype/noto/NotoSansThai-Bold.ttf",
             "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf",
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
@@ -76,6 +82,11 @@ def _font_candidates(bold: bool = False) -> list[str]:
     return [
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoSansMyanmar-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansBamum-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansCoptic-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansMath-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -107,37 +118,157 @@ def _font_support_score(font_path: str, text: str) -> tuple[int, int]:
         return (0, len(chars))
 
 
-def _pick_font_path(text: str, bold: bool = False) -> str | None:
-    text = normalize_name_for_render(text)
-    existing = [
-        path
-        for path in _font_candidates(bold=bold)
-        if os.path.exists(path)
-    ]
+def _font_paths(bold: bool = False) -> list[str]:
+    """Return installed font candidates, ordered from broad to script-specific."""
+    if bold:
+        names = (
+            "NotoSans-Bold.ttf",
+            "NotoSansMyanmar-Bold.ttf",
+            "NotoSansBamum-Bold.ttf",
+            "NotoSansCoptic-Regular.ttf",
+            "NotoSansSymbols-Bold.ttf",
+            "NotoSansSymbols-Regular.ttf",
+            "NotoSansSymbols2-Regular.ttf",
+            "NotoSansMath-Regular.ttf",
+            "NotoSansThai-Bold.ttf",
+            "NotoNaskhArabic-Bold.ttf",
+            "NotoSansCJK-Bold.ttc",
+            "NotoSansCJK-Regular.ttc",
+            "DejaVuSans-Bold.ttf",
+            "LiberationSans-Bold.ttf",
+        )
+    else:
+        names = (
+            "NotoSans-Regular.ttf",
+            "NotoSansMyanmar-Regular.ttf",
+            "NotoSansBamum-Regular.ttf",
+            "NotoSansCoptic-Regular.ttf",
+            "NotoSansSymbols-Regular.ttf",
+            "NotoSansSymbols2-Regular.ttf",
+            "NotoSansMath-Regular.ttf",
+            "NotoSansThai-Regular.ttf",
+            "NotoNaskhArabic-Regular.ttf",
+            "NotoSansCJK-Regular.ttc",
+            "DejaVuSans.ttf",
+            "LiberationSans-Regular.ttf",
+        )
 
-    if not existing:
+    roots = (
+        "/usr/share/fonts/truetype/noto",
+        "/usr/share/fonts/opentype/noto",
+        "/usr/share/fonts/truetype/dejavu",
+        "/usr/share/fonts/truetype/liberation2",
+    )
+    found: list[str] = []
+    for root in roots:
+        for name in names:
+            path = os.path.join(root, name)
+            if os.path.exists(path) and path not in found:
+                found.append(path)
+    return found
+
+
+def _font_candidates(bold: bool = False) -> list[str]:
+    return _font_paths(bold=bold)
+
+
+@lru_cache(maxsize=4096)
+def _font_support_score(font_path: str, text: str) -> tuple[int, int]:
+    if not font_path or not os.path.exists(font_path):
+        return (0, len(text))
+
+    chars = [ch for ch in text if not ch.isspace()]
+    if not chars:
+        return (1, 1)
+
+    if TTFont is None:
+        return (0, len(chars))
+
+    try:
+        font = TTFont(font_path, lazy=True)
+        cmap: dict[int, str] = {}
+        for table in font["cmap"].tables:
+            cmap.update(table.cmap)
+        supported = sum(1 for ch in chars if ord(ch) in cmap)
+        return (supported, len(chars))
+    except Exception:
+        return (0, len(chars))
+
+
+@lru_cache(maxsize=4096)
+def _font_path_for_cluster(cluster: str, bold: bool = False) -> str | None:
+    """Choose a font that covers every codepoint in one grapheme cluster."""
+    value = str(cluster or "")
+    if not value:
         return None
 
-    best = existing[0]
-    best_score = (-1, 1)
+    candidates = _font_candidates(bold=bold)
+    if not candidates:
+        return None
 
-    for path in existing:
-        score = _font_support_score(path, text)
-        if score[0] > best_score[0]:
+    best: str | None = None
+    best_score = (-1, -1)
+    for path in candidates:
+        supported, total = _font_support_score(path, value)
+        if supported > best_score[0]:
             best = path
-            best_score = score
-
-        if score[0] >= score[1]:
-            break
-
+            best_score = (supported, total)
+        if supported == total and total > 0:
+            return path
     return best
 
+
+@lru_cache(maxsize=1024)
+def _font_runs(text: str, bold: bool = False) -> tuple[tuple[str | None, str], ...]:
+    """Group graphemes by a font that can actually render each cluster."""
+    runs: list[tuple[str | None, str]] = []
+    for cluster in _graphemes(text):
+        path = _font_path_for_cluster(cluster, bold=bold)
+        if runs and runs[-1][0] == path:
+            runs[-1] = (path, runs[-1][1] + cluster)
+        else:
+            runs.append((path, cluster))
+    return tuple(runs)
+
+
+def _pick_font_path(text: str, bold: bool = False) -> str | None:
+    """Backward-compatible whole-text picker for non-mixed labels."""
+    value = normalize_name_for_render(text)
+    runs = _font_runs(value, bold=bold)
+    if not runs:
+        return None
+    for path, run in runs:
+        if path and run == value:
+            return path
+    return _font_path_for_cluster(value, bold=bold)
 
 def _layout_engine():
     try:
         return ImageFont.Layout.RAQM
     except Exception:
         return ImageFont.Layout.BASIC
+
+
+def _font_from_path(
+    path: str | None,
+    size: int,
+    *,
+    bold: bool = False,
+    text: str = "",
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    if path:
+        try:
+            return ImageFont.truetype(
+                path,
+                size=int(size),
+                layout_engine=_layout_engine(),
+            )
+        except Exception:
+            try:
+                return ImageFont.truetype(path, size=int(size))
+            except Exception:
+                pass
+    return _font(size, bold=bold, text=text)
 
 
 def _font(
@@ -344,12 +475,12 @@ def _text_width(
                 )
                 width += max(1, int(size * 0.08))
         else:
-            font = _font(size, bold=bold, text=run)
-            bbox = draw.textbbox((0, 0), run, font=font)
-            width += max(0, bbox[2] - bbox[0])
+            for path, text_run in _font_runs(run, bold=bold):
+                font = _font_from_path(path, size, bold=bold, text=text_run)
+                bbox = draw.textbbox((0, 0), text_run, font=font)
+                width += max(0, bbox[2] - bbox[0])
 
     return width
-
 
 def _fit_mixed_text_size(
     draw: ImageDraw.ImageDraw,
@@ -409,52 +540,30 @@ def _draw_mixed_text(
                     cluster,
                     max(12, int(size * 1.08)),
                 )
-
                 if emoji_img is not None:
                     emoji_y = y + max(
                         0,
                         int((size * 1.1 - emoji_img.height) / 2),
                     )
-                    image.paste(
-                        emoji_img,
-                        (cursor_x, emoji_y),
-                        emoji_img,
-                    )
+                    image.paste(emoji_img, (cursor_x, emoji_y), emoji_img)
                     cursor_x += emoji_img.width
                 else:
-                    fallback_font = _font(
-                        size,
-                        bold=bold,
-                        text=cluster,
-                    )
-                    draw.text(
-                        (cursor_x, y),
-                        cluster,
-                        font=fallback_font,
-                        fill=fill,
-                    )
-                    bbox = draw.textbbox(
-                        (0, 0),
-                        cluster,
-                        font=fallback_font,
-                    )
+                    fallback_font = _font(size, bold=bold, text=cluster)
+                    draw.text((cursor_x, y), cluster, font=fallback_font, fill=fill)
+                    bbox = draw.textbbox((0, 0), cluster, font=fallback_font)
                     cursor_x += max(0, bbox[2] - bbox[0])
-
                 cursor_x += max(1, int(size * 0.08))
-
         else:
-            font = _font(size, bold=bold, text=run)
-            draw.text(
-                (cursor_x, y),
-                run,
-                font=font,
-                fill=fill,
-            )
-            bbox = draw.textbbox((0, 0), run, font=font)
-            cursor_x += max(0, bbox[2] - bbox[0])
+            # Critical mixed-Unicode path: each grapheme is assigned to a
+            # font that actually contains its glyphs, while adjacent graphemes
+            # using the same font stay grouped for normal Latin shaping.
+            for path, text_run in _font_runs(run, bold=bold):
+                font = _font_from_path(path, size, bold=bold, text=text_run)
+                draw.text((cursor_x, y), text_run, font=font, fill=fill)
+                bbox = draw.textbbox((0, 0), text_run, font=font)
+                cursor_x += max(0, bbox[2] - bbox[0])
 
     return cursor_x
-
 
 def _rounded_gradient(
     size: tuple[int, int],
@@ -486,19 +595,12 @@ def _fit_text(
     bold: bool = False,
 ):
     text = normalize_name_for_render(text)
-    size = start_size
-
-    while size > min_size:
-        font = _font(size, bold=bold, text=text)
-        box = draw.textbbox((0, 0), text, font=font)
-
-        if box[2] - box[0] <= max_width:
-            return font
-
+    size = int(start_size)
+    while size > int(min_size):
+        if _text_width(draw, text, size, bold) <= int(max_width):
+            return _font(size, bold=bold, text=text)
         size -= 2
-
-    return _font(min_size, bold=bold, text=text)
-
+    return _font(int(min_size), bold=bold, text=text)
 
 def _draw_stat_card(
     draw: ImageDraw.ImageDraw,
