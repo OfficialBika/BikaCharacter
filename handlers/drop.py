@@ -31,7 +31,12 @@ from config import (
 from database.mongodb import get_db
 from utils.cooldown import is_bot_muted, record_message_and_maybe_mute
 from utils.db_helpers import ensure_group, ensure_user, get_drop_photo_for_rarity, get_photo_by_card_id
-from utils.rarity import get_rarity_emoji, get_scheduled_drop_rarity
+from utils.rarity import (
+    get_rarity_custom_emoji_id,
+    get_rarity_emoji,
+    get_rarity_fallback_emoji,
+    get_scheduled_drop_rarity,
+)
 from utils.permissions import is_owner
 from utils.text import escape_html, safe_chat_title, utcnow
 from utils.i18n import t
@@ -1255,17 +1260,33 @@ def _actual_media_type_from_error(exc: Exception) -> str | None:
     return None
 
 
-async def _send_media_as(context: ContextTypes.DEFAULT_TYPE, chat_id: int, method: str, file_id: str, caption: str):
+async def _send_media_as(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    method: str,
+    file_id: str,
+    caption: str,
+    caption_entities=None,
+):
+    kwargs = {"caption": caption}
+    if caption_entities:
+        kwargs["caption_entities"] = caption_entities
     if method == "video":
-        return await context.bot.send_video(chat_id=chat_id, video=file_id, caption=caption)
+        return await context.bot.send_video(chat_id=chat_id, video=file_id, **kwargs)
     if method == "animation":
-        return await context.bot.send_animation(chat_id=chat_id, animation=file_id, caption=caption)
+        return await context.bot.send_animation(chat_id=chat_id, animation=file_id, **kwargs)
     if method == "document":
-        return await context.bot.send_document(chat_id=chat_id, document=file_id, caption=caption)
-    return await context.bot.send_photo(chat_id=chat_id, photo=file_id, caption=caption)
+        return await context.bot.send_document(chat_id=chat_id, document=file_id, **kwargs)
+    return await context.bot.send_photo(chat_id=chat_id, photo=file_id, **kwargs)
 
 
-async def send_card_media(context: ContextTypes.DEFAULT_TYPE, chat_id: int, card: dict, caption: str):
+async def send_card_media(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    card: dict,
+    caption: str,
+    caption_entities=None,
+):
     """Send card media without fallback spam.
 
     The old version tried photo/video/animation/document one after another.
@@ -1280,13 +1301,17 @@ async def send_card_media(context: ContextTypes.DEFAULT_TYPE, chat_id: int, card
         raise RuntimeError("Missing card fileId")
 
     try:
-        sent = await _send_media_as(context, chat_id, media_type, file_id, caption)
+        sent = await _send_media_as(
+            context, chat_id, media_type, file_id, caption, caption_entities
+        )
         card["_sentMediaType"] = media_type
         return sent
     except Exception as exc:
         actual_type = _actual_media_type_from_error(exc)
         if actual_type and actual_type != media_type:
-            sent = await _send_media_as(context, chat_id, actual_type, file_id, caption)
+            sent = await _send_media_as(
+                context, chat_id, actual_type, file_id, caption, caption_entities
+            )
             card["_sentMediaType"] = actual_type
             return sent
         raise
@@ -1317,11 +1342,33 @@ async def send_spawn_card(
             pass
         return False
 
-    emoji = get_rarity_emoji(photo.get("rarity"))
+    rarity = photo.get("rarity")
     group_name = safe_chat_title(chat) if chat else str(chat_id)
-    caption = t("spawn_caption", emoji=emoji, group_name=group_name)
+    fallback_emoji = get_rarity_fallback_emoji(rarity)
+    caption = t("spawn_caption", emoji=fallback_emoji, group_name=group_name)
+
+    caption_entities = None
+    custom_emoji_id = get_rarity_custom_emoji_id(rarity)
+    if custom_emoji_id:
+        from telegram import MessageEntity
+
+        caption_entities = [
+            MessageEntity(
+                type=MessageEntity.CUSTOM_EMOJI,
+                offset=0,
+                length=len(fallback_emoji.encode("utf-16-le")) // 2,
+                custom_emoji_id=str(custom_emoji_id),
+            )
+        ]
+
     try:
-        sent = await send_card_media(context, chat_id, photo, caption)
+        sent = await send_card_media(
+            context,
+            chat_id,
+            photo,
+            caption,
+            caption_entities=caption_entities,
+        )
     except Exception as exc:
         reason = drop_send_error_reason(exc)
         print("DROP SEND ERROR:", repr(exc))
