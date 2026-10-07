@@ -123,6 +123,7 @@ async def add_anime_to_catalog(anime: str, user_id: int = 0) -> str:
             {"_id": existing["_id"]},
             {"$set": {"updatedAt": now, "updatedBy": int(user_id or 0)}},
         )
+        _ANIME_LIST_CACHE = None
         return canonical
 
     try:
@@ -146,6 +147,7 @@ async def add_anime_to_catalog(anime: str, user_id: int = 0) -> str:
         {"normalizedName": normalized},
         {"name": 1},
     )
+    _ANIME_LIST_CACHE = None
     return str((doc or {}).get("name") or value).strip()
 
 async def anime_catalog_exists(anime: str) -> bool:
