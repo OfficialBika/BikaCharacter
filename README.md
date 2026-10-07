@@ -22,7 +22,7 @@ A production-ready Telegram character catcher bot built with `python-telegram-bo
 - `/fav <id>` and `.fav <id>` favourite card support
 - `/profile`, `/check <id>`
 - `.gift <id> [qty]` or `/gift <id> [qty]` with confirm/cancel buttons
-- Owner/adders `/add` media support in Bot DM or configured adding groups with Bika Database private channel archive
+- Owner/adders `/add` media support in configured adding groups with Bika Database private channel archive
 - No approve system: bot works immediately after being added to a group
 - Sends a log to `GROUP_LOG_CHANNEL_ID` when bot is added to a new group
 - Anti-spam: if one user sends 6 messages in a row, bot ignores that user for 10 minutes in that group

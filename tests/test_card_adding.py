@@ -51,9 +51,20 @@ class CardAddingParserTest(unittest.TestCase):
         self.assertTrue(parsed["_cardIdProvided"])
         self.assertEqual(parsed["name"], "Yelan")
 
-    def test_private_chat_is_valid_add_source(self):
+    def test_private_chat_is_not_valid_add_source(self):
         update = SimpleNamespace(effective_chat=SimpleNamespace(type="private", id=1))
-        self.assertTrue(is_allowed_add_chat(update))
+        self.assertFalse(is_allowed_add_chat(update))
+
+    def test_configured_group_is_valid_add_source(self):
+        import handlers.photo_add as photo_add_module
+
+        original = list(photo_add_module.ADDER_GROUP_IDS)
+        try:
+            photo_add_module.ADDER_GROUP_IDS = [-123456789]
+            update = SimpleNamespace(effective_chat=SimpleNamespace(type="supergroup", id=-123456789))
+            self.assertTrue(is_allowed_add_chat(update))
+        finally:
+            photo_add_module.ADDER_GROUP_IDS = original
 
     def test_unconfigured_group_is_not_valid_add_source(self):
         update = SimpleNamespace(effective_chat=SimpleNamespace(type="supergroup", id=-999999999))

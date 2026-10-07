@@ -225,13 +225,8 @@ def is_limited_card(parsed: dict, card_id_provided: bool) -> bool:
 
 def is_allowed_add_chat(update: Update) -> bool:
     chat = update.effective_chat
-    if not chat:
+    if not chat or chat.type == "private":
         return False
-    # Card media can be added either from an authorized private DM or from
-    # one of the configured adding groups. User-level authorization is checked
-    # separately by is_allowed_adder(), so private DM access is not public.
-    if chat.type == "private":
-        return True
     return int(chat.id) in {int(x) for x in ADDER_GROUP_IDS}
 
 
@@ -300,6 +295,71 @@ async def _post_to_card_database_channel(context, file_id: str, caption: str, me
         "fileUniqueId": media.file_unique_id if media else "",
         "mediaType": media_type,
     }
+
+
+async def _delete_card_database_message(context, storage: dict) -> bool:
+    chat_id = storage.get("storageChatId")
+    message_id = storage.get("storageMessageId")
+    if not chat_id or not message_id:
+        return True
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=int(message_id))
+        return True
+    except TelegramError as exc:
+        print(f"CARD ADD ARCHIVE CLEANUP WARNING: {exc!r}", flush=True)
+        return False
+    except Exception as exc:
+        print(f"CARD ADD ARCHIVE CLEANUP WARNING: {exc!r}", flush=True)
+        return False
+
+
+def _database_caption_from_doc(action: str, doc: dict) -> str:
+    added_by = int(doc.get("addedBy", 0) or 0)
+    adder_name = f"User {added_by}" if added_by else "Unknown"
+    return (
+        f"{'✅' if action == 'Saved' else '♻️'} <b>{escape_html(action)}</b>\n\n"
+        f"👤 <b>Name:</b> {escape_html(doc.get('name', ''))}\n"
+        f"🆔 <b>ID:</b> {escape_html(doc.get('cardId', ''))}\n"
+        f"🏷 <b>Rarity:</b> {escape_html(doc.get('rarity', ''))}\n"
+        f"🌴 <b>Anime:</b> {escape_html(doc.get('anime', ''))}\n\n"
+        f"➕ <b>Added By:</b> <a href=\"tg://user?id={added_by}\">{escape_html(adder_name)}</a>\n"
+        f"🆔 <b>Adder ID:</b> {added_by}"
+    )
+
+
+async def _restore_card_database_message(context, old: dict) -> bool:
+    chat_id = old.get("storageChatId")
+    message_id = old.get("storageMessageId")
+    file_id = str(old.get("fileId") or "")
+    if not chat_id or not message_id or not file_id:
+        return False
+
+    old_caption = str(old.get("storageCaption") or "").strip()
+    if not old_caption:
+        old_caption = _database_caption_from_doc("Saved", old)
+
+    media_type = str(old.get("mediaType") or "photo").strip().lower()
+    try:
+        if media_type == "video":
+            media = InputMediaVideo(media=file_id, caption=old_caption, parse_mode="HTML")
+        elif media_type == "animation":
+            media = InputMediaAnimation(media=file_id, caption=old_caption, parse_mode="HTML")
+        elif media_type == "document":
+            media = InputMediaDocument(media=file_id, caption=old_caption, parse_mode="HTML")
+        else:
+            media = InputMediaPhoto(media=file_id, caption=old_caption, parse_mode="HTML")
+        await context.bot.edit_message_media(
+            chat_id=int(chat_id),
+            message_id=int(message_id),
+            media=media,
+        )
+        return True
+    except TelegramError as exc:
+        print(f"CARD ADD ARCHIVE ROLLBACK WARNING: {exc!r}", flush=True)
+        return False
+    except Exception as exc:
+        print(f"CARD ADD ARCHIVE ROLLBACK WARNING: {exc!r}", flush=True)
+        return False
 
 
 async def _edit_card_database_message(context, old: dict, new: dict, caption: str) -> dict | None:
@@ -505,15 +565,30 @@ async def _save_card(context, user, parsed: dict, media_info: dict, force_new: b
     caption = _database_caption(action, parsed, user)
 
     storage = None
+    archive_edited_existing = False
     if existing:
         new_media = {**media_info}
+        if not existing.get("storageChatId") or not existing.get("storageMessageId"):
+            raise RuntimeError(
+                "Existing card has no valid archive message. MongoDB was not changed; "
+                "please repair the archive record before updating this card."
+            )
         edited = await _edit_card_database_message(context, existing, new_media, caption)
-        if edited:
-            storage = edited
-        else:
-            storage = await _post_to_card_database_channel(context, media_info["fileId"], caption, media_info["mediaType"])
+        if not edited:
+            raise RuntimeError(
+                "Existing card archive could not be updated. MongoDB was not changed."
+            )
+        storage = edited
+        archive_edited_existing = True
     else:
-        storage = await _post_to_card_database_channel(context, media_info["fileId"], caption, media_info["mediaType"])
+        storage = await _post_to_card_database_channel(
+            context,
+            media_info["fileId"],
+            caption,
+            media_info["mediaType"],
+        )
+
+    storage["storageCaption"] = caption
 
     now = utcnow()
     doc = {
@@ -525,15 +600,36 @@ async def _save_card(context, user, parsed: dict, media_info: dict, force_new: b
         "fileName": media_info.get("fileName", ""),
         "storageChatId": storage["storageChatId"],
         "storageMessageId": storage["storageMessageId"],
+        "storageCaption": storage["storageCaption"],
         "addedBy": user.id,
         "updatedAt": now,
     }
 
-    await db[collection_name].update_one(
-        {"cardId": parsed["cardId"]},
-        {"$set": doc, "$setOnInsert": {"createdAt": now}},
-        upsert=True,
-    )
+    try:
+        await db[collection_name].update_one(
+            {"cardId": parsed["cardId"]},
+            {"$set": doc, "$setOnInsert": {"createdAt": now}},
+            upsert=True,
+        )
+    except Exception:
+        # Archive and MongoDB are not a single ACID transaction. Compensate the
+        # Telegram archive mutation so a failed MongoDB write does not leave a
+        # new orphan archive or a stale archive for an unchanged card.
+        if existing and archive_edited_existing:
+            restored = await _restore_card_database_message(context, existing)
+            if not restored:
+                print(
+                    f"CARD ADD ARCHIVE ROLLBACK FAILED: card_id={parsed.get('cardId')}",
+                    flush=True,
+                )
+        elif not existing and storage:
+            cleaned = await _delete_card_database_message(context, storage)
+            if not cleaned:
+                print(
+                    f"CARD ADD ARCHIVE CLEANUP FAILED: card_id={parsed.get('cardId')}",
+                    flush=True,
+                )
+        raise
     try:
         await upsert_card(doc, collection_name)
     except Exception as exc:
