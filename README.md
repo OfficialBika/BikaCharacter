@@ -29,7 +29,7 @@ A production-ready Telegram character catcher bot built with `python-telegram-bo
 
 - Owner `/clmute` to clear bot-internal mutes
 - Owner `/transfer oldid newid` or `/transfer oldid` + reply user to move a full harem
-- Owner `/addadder` and `/rmadder` to allow/remove non-owner card adders
+- Owner `/addadder` and `/rmadder` to allow/remove non-owner card adders in the configured Adding Group
 - Owner `/give cardid` + reply user to add one card directly
 - `/topgroup` top 10 groups by `/bika` catch count
 - `/gtop` global top 10 users by total harem character count
@@ -177,7 +177,7 @@ Transfer a whole harem from one user ID to another:
 /transfer old_user_id + reply target user
 ```
 
-Allow or remove extra users who can add cards by DM photo captions:
+Allow or remove extra users who can add cards in the configured Adding Group:
 
 ```text
 /addadder <user_id>
@@ -342,3 +342,29 @@ RUN_MODE=polling
 ```
 
 UptimeRobot can ping `/` every 5 minutes. The health routes are `/` and `/health`.
+
+## New Card Adding Controls
+
+The configured Adding Group is the only place where `/add` media can be added. DM / Private Chat adding is disabled.
+
+### `/addmode`
+
+`/addmode` opens a compact control with three buttons:
+
+- `Rarity` — primary
+- `Anime Search` — success, Telegram inline Anime search
+- `Close` — danger
+
+Anime Search uses the database Anime catalog. For example, type `G` to show Anime names starting with G, then select `Genshin Impact [🎮]`; the inline selection message is removed and the original `/addmode` panel is updated.
+
+The shortcut remains supported:
+
+`/addmode Genshin Impact | Lg`
+
+When an Anime default exists but Rarity is not set, `/add Name` pauses with a Rarity prompt. The adder can choose a button or send `Un`, `Co`, `Ra`, `Lg`, `My`, `Dv`, `Cv`, `Ca`, or `Su`; the prompt/input is removed and the Card is saved.
+
+### `/addanime`
+
+`/addanime` shows Anime entries known by the database, with pagination and `Back`, `Next`, `Add New`, and `Close` controls.
+
+`Add New` opens the same style of Telegram inline Anime search. Selecting an existing Anime changes the current add-mode default; choosing the add-new result writes the Anime to the MongoDB `animes` catalog and sets it as the default.
