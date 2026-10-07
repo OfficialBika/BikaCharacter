@@ -26,6 +26,8 @@ _COUNTER_READY = False
 _ANIME_CACHE: dict[str, tuple[float, str]] = {}
 _ANIME_CACHE_TTL = 600
 _ANIME_CACHE_MAX = 5000
+_ANIME_LIST_CACHE: tuple[float, list[str]] | None = None
+_ANIME_LIST_CACHE_TTL = 30
 
 
 def rarity_aliases() -> dict[str, str]:
