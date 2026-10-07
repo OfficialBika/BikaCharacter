@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from hashlib import md5
 import secrets
 import time
 
@@ -21,6 +22,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    InlineQueryHandler,
     MessageHandler,
     filters,
 )
@@ -39,6 +41,7 @@ from utils.card_adding import (
     sync_counter_at_least,
 )
 from utils.hot_lookup import upsert_card
+from utils.buttons import action_button, rarity_button
 from utils.parser import parse_add_caption
 from utils.permissions import is_owner
 from utils.text import escape_html, mention_user, utcnow
