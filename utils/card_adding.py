@@ -108,6 +108,7 @@ async def add_anime_to_catalog(anime: str, user_id: int = 0) -> str:
     normalized name as their MongoDB _id, making concurrent creation atomic
     without requiring a destructive migration or a unique secondary index.
     """
+    global _ANIME_LIST_CACHE
     value = " ".join(str(anime or "").strip().split())
     normalized = normalized_search_name(value)
     if not normalized:
