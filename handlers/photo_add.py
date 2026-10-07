@@ -741,6 +741,12 @@ async def _save_card(context, user, parsed: dict, media_info: dict, force_new: b
     parsed.pop("_rarityProvided", None)
     parsed["cardId"] = str(parsed.get("cardId", "")).strip()
 
+    # Anime is stored/displayed with the requested 🎮 marker. Keep this
+    # normalization at the save boundary so the rest of the add flow is unchanged.
+    anime = str(parsed.get("anime", "") or "").strip()
+    if anime and not anime.endswith("[🎮]"):
+        parsed["anime"] = f"{anime} [🎮]"
+
     limited_card = is_limited_card(parsed, card_id_provided)
     if limited_card and not is_owner(user):
         return False, "❌ Limited cards can only be added/updated by the owner."
