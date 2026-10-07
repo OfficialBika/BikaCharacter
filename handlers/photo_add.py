@@ -1067,7 +1067,7 @@ async def addmode_anime_inline_query(update: Update, context: ContextTypes.DEFAU
         return
 
     match = re.fullmatch(
-        r"animepick:([a-f0-9]{8})(?:s+(.*))?",
+        r"animepick:([a-f0-9]{8})(?:\s+(.*))?",
         (query.query or "").strip(),
         re.I,
     )
@@ -1112,7 +1112,7 @@ async def addanime_inline_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     match = re.fullmatch(
-        r"addanime:([a-f0-9]{8})(?:s+(.*))?",
+        r"addanime:([a-f0-9]{8})(?:\s+(.*))?",
         (query.query or "").strip(),
         re.I,
     )
