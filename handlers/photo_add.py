@@ -560,6 +560,15 @@ async def _handle_media_add(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     user = update.effective_user
     anime_mode, rarity_mode = await get_add_mode(user.id)
 
+    # An explicitly supplied rarity that failed parsing is an invalid value,
+    # not a missing field. Reject it before /addmode can fill a default.
+    if parsed.get("_rarityProvided") and not parsed.get("rarity"):
+        await update.effective_message.reply_text(
+            "❌ Invalid rarity. Please use one of the supported rarity names or short codes.",
+            parse_mode="HTML",
+        )
+        return
+
     if not parsed.get("rarity"):
         if rarity_mode:
             parsed["rarity"] = rarity_mode
@@ -578,15 +587,6 @@ async def _handle_media_add(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 parse_mode="HTML",
             )
             return
-
-    # A rarity explicitly supplied by the adder must be valid. Do not
-    # silently replace a typo/unknown rarity with the current /addmode default.
-    if parsed.get("_rarityProvided") and not parsed.get("rarity"):
-        await update.effective_message.reply_text(
-            "❌ Invalid rarity. Please use one of the supported rarity names or short codes.",
-            parse_mode="HTML",
-        )
-        return
 
     parsed["rarity"] = normalize_add_rarity(parsed["rarity"]) if parsed.get("rarity") else parsed["rarity"]
     if not parsed.get("rarity"):
