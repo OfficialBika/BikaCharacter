@@ -986,6 +986,29 @@ async def add_rarity_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await _process_pending_rarity(context, token, rarity, query.from_user)
 
 
+class _PendingRarityTextFilter(filters.MessageFilter):
+    def filter(self, message) -> bool:
+        text = str(getattr(message, "text", "") or "").strip()
+        if not text or not normalize_add_rarity(text):
+            return False
+
+        user = getattr(message, "from_user", None)
+        chat = getattr(message, "chat", None)
+        if not user or not chat:
+            return False
+
+        now = time.time()
+        return any(
+            int(item.get("user_id", 0)) == int(user.id)
+            and int(item.get("chat_id", 0)) == int(chat.id)
+            and now - float(item.get("created", 0)) <= _PENDING_TTL
+            for item in _PENDING_RARITY.values()
+        )
+
+
+_PENDING_RARITY_TEXT_FILTER = _PendingRarityTextFilter()
+
+
 async def add_rarity_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_allowed_add_chat(update):
         return
@@ -1446,8 +1469,7 @@ def register_photo_add_handlers(app: Application) -> None:
     )
     app.add_handler(
         MessageHandler(
-            filters.TEXT
-            & filters.Regex(r"(?i)^\s*(?:Un|Co|Ra|Lg|My|Dv|Cv|Ca|Su)\s*$"),
+            _PENDING_RARITY_TEXT_FILTER,
             add_rarity_text_handler,
         )
     )
