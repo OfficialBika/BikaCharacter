@@ -10,7 +10,7 @@ ADD_HELP_TEXT = """<b>🎴 BIKA CARD ADDING GUIDE</b>
 
 <b>1️⃣ Card ထည့်ရန် အခြေခံပုံစံ</b>
 
-Media (Photo / Video / GIF / Image-Video Document) ကို တိုက်ရိုက် upload လုပ်ပြီး caption မှာ <code>/add</code> ထည့်ပါ။
+Media (Photo / Video / GIF / Image-Video Document) ကို တိုက်ရိုက် upload လုပ်ပြီး Adding Group သို့မဟုတ် Bot DM ထဲမှာ caption <code>/add</code> နဲ့ ထည့်နိုင်ပါတယ်။
 
 <b>အမြန်ဆုံး</b>
 <code>/add Yelan</code>
@@ -93,7 +93,7 @@ Card ကို အရင် Bika Database archive channel ထဲသိမ်း�
 <b>9️⃣ Add လုပ်ရာမှာ မဖြစ်မနေသတိထားရန်</b>
 
 • /add သုံးသူက Owner သို့မဟုတ် ခွင့်ပြုထားတဲ့ Adder ဖြစ်ရမယ်။
-• Media ကို သတ်မှတ်ထားတဲ့ Adding Group ထဲကနေ တိုက်ရိုက် upload လုပ်ရမယ်။
+• Media ကို Adding Group ထဲကနေ တိုက်ရိုက် upload လုပ်နိုင်သလို Bot DM ကနေပါ တိုက်ရိုက် upload လုပ်နိုင်ပါတယ်။
 • Rarity + Anime မပြည့်စုံရင် /addmode သတ်မှတ်ပါ သို့မဟုတ် /add မှာ တိုက်ရိုက်ထည့်ပါ။
 • Duplicate တွေ့ရင် Button ကို သေချာရွေးပါ။
 • Limited Card က Owner-only ဖြစ်ပြီး Custom ID လိုပါတယ်။

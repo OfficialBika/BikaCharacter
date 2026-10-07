@@ -225,8 +225,13 @@ def is_limited_card(parsed: dict, card_id_provided: bool) -> bool:
 
 def is_allowed_add_chat(update: Update) -> bool:
     chat = update.effective_chat
-    if not chat or chat.type == "private":
+    if not chat:
         return False
+    # Card media can be added either from an authorized private DM or from
+    # one of the configured adding groups. User-level authorization is checked
+    # separately by is_allowed_adder(), so private DM access is not public.
+    if chat.type == "private":
+        return True
     return int(chat.id) in {int(x) for x in ADDER_GROUP_IDS}
 
 
@@ -555,6 +560,15 @@ async def _handle_media_add(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     user = update.effective_user
     anime_mode, rarity_mode = await get_add_mode(user.id)
 
+    # An explicitly supplied rarity that failed parsing is an invalid value,
+    # not a missing field. Reject it before /addmode can fill a default.
+    if parsed.get("_rarityProvided") and not parsed.get("rarity"):
+        await update.effective_message.reply_text(
+            "❌ Invalid rarity. Please use one of the supported rarity names or short codes.",
+            parse_mode="HTML",
+        )
+        return
+
     if not parsed.get("rarity"):
         if rarity_mode:
             parsed["rarity"] = rarity_mode
@@ -574,7 +588,14 @@ async def _handle_media_add(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             )
             return
 
-    parsed["rarity"] = normalize_add_rarity(parsed["rarity"]) or parsed["rarity"]
+    parsed["rarity"] = normalize_add_rarity(parsed["rarity"]) if parsed.get("rarity") else parsed["rarity"]
+    if not parsed.get("rarity"):
+        await update.effective_message.reply_text(
+            "❌ Rarity is missing. Use a short code such as <code>Lg</code>, or set /addmode.",
+            parse_mode="HTML",
+        )
+        return
+
     parsed["anime"] = await canonical_anime(parsed["anime"])
 
     try:
@@ -626,6 +647,7 @@ async def add_duplicate_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     parsed = dict(item["parsed"])
     media_info = dict(item["media_info"])
+
     if action == "update":
         db = get_db()
         duplicate = await find_duplicate_media(media_info.get("fileUniqueId", ""))
@@ -636,6 +658,31 @@ async def add_duplicate_callback(update: Update, context: ContextTypes.DEFAULT_T
         if target_id:
             parsed["cardId"] = target_id
             parsed["_cardIdProvided"] = True
+
+    elif action == "new":
+        # "Create New" must never overwrite an existing card ID. When the
+        # original /add explicitly supplied an ID that is already occupied,
+        # normal cards receive a fresh auto-generated numeric ID. Limited
+        # cards cannot safely auto-generate a replacement custom ID, so ask
+        # the owner to submit a different custom ID instead of updating.
+        db = get_db()
+        supplied_id = str(parsed.get("cardId", "")).strip()
+        supplied_id_provided = bool(parsed.get("_cardIdProvided", False))
+
+        if supplied_id_provided and supplied_id:
+            normal_exists = await db.photos.find_one({"cardId": supplied_id}, {"_id": 1})
+            limited_exists = await db[LIMITED_CARDS_COLLECTION].find_one({"cardId": supplied_id}, {"_id": 1})
+
+            if normal_exists or limited_exists:
+                if is_limited_card(parsed, True):
+                    _PENDING.pop(token, None)
+                    await q.edit_message_text(
+                        "❌ Limited card ID already exists. Create New needs a different custom Limited ID.",
+                    )
+                    return
+
+                parsed["cardId"] = ""
+                parsed["_cardIdProvided"] = False
 
     _PENDING.pop(token, None)
     try:

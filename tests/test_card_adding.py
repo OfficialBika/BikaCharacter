@@ -1,8 +1,10 @@
 import unittest
+from types import SimpleNamespace
 
 from utils.card_adding import rarity_aliases, normalize_add_rarity, add_anime_to_catalog
 from utils.parser import parse_add_caption
 from handlers.add_help import ADD_HELP_TEXT
+from handlers.photo_add import is_allowed_add_chat
 
 
 class CardAddingParserTest(unittest.TestCase):
@@ -27,6 +29,12 @@ class CardAddingParserTest(unittest.TestCase):
         self.assertFalse(parsed["_animeProvided"])
         self.assertFalse(parsed["_rarityProvided"])
 
+    def test_invalid_rarity_is_not_treated_as_missing_field(self):
+        parsed = parse_add_caption("/add Yelan | NotARarity | Genshin Impact")
+        self.assertIsNotNone(parsed)
+        self.assertIsNone(parsed["rarity"])
+        self.assertTrue(parsed["_rarityProvided"])
+
     def test_add_help_covers_core_commands(self):
         self.assertIn("/addmode", ADD_HELP_TEXT)
         self.assertIn("/addanime", ADD_HELP_TEXT)
@@ -42,6 +50,14 @@ class CardAddingParserTest(unittest.TestCase):
         self.assertEqual(parsed["cardId"], "123")
         self.assertTrue(parsed["_cardIdProvided"])
         self.assertEqual(parsed["name"], "Yelan")
+
+    def test_private_chat_is_valid_add_source(self):
+        update = SimpleNamespace(effective_chat=SimpleNamespace(type="private", id=1))
+        self.assertTrue(is_allowed_add_chat(update))
+
+    def test_unconfigured_group_is_not_valid_add_source(self):
+        update = SimpleNamespace(effective_chat=SimpleNamespace(type="supergroup", id=-999999999))
+        self.assertFalse(is_allowed_add_chat(update))
 
 
 if __name__ == "__main__":
