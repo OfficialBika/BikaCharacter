@@ -10,10 +10,12 @@ from pymongo.errors import DuplicateKeyError
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InlineQueryResultArticle,
     InputMediaAnimation,
     InputMediaDocument,
     InputMediaPhoto,
     InputMediaVideo,
+    InputTextMessageContent,
     Update,
 )
 from telegram.error import TelegramError
@@ -30,13 +32,16 @@ from telegram.ext import (
 from database.mongodb import get_db
 from utils.card_adding import (
     add_anime_to_catalog,
+    anime_catalog_exists,
     canonical_anime,
     find_duplicate_media,
     find_possible_duplicate,
     get_add_mode,
-    list_common_anime,
+    list_anime_catalog_page,
     next_card_id,
     normalize_add_rarity,
+    rarity_aliases,
+    search_anime_catalog,
     set_add_mode,
     sync_counter_at_least,
 )
@@ -55,6 +60,7 @@ SETTINGS_ID = "config"
 SUPPORTED_DOCUMENT_MIME_PREFIXES = ("image/", "video/")
 
 _PENDING: dict[str, dict] = {}
+_PENDING_RARITY: dict[str, dict] = {}
 _PENDING_TTL = 600
 _PENDING_MAX = 2000
 
@@ -62,52 +68,118 @@ _ANIME_PICKERS: dict[str, dict] = {}
 _ANIME_PICKER_TTL = 600
 _ANIME_PICKER_MAX = 2000
 
+_ADDMODE_PANELS: dict[str, dict] = {}
+
 
 def _prune_pending() -> None:
     now = time.time()
-    stale = [k for k, v in _PENDING.items() if now - float(v.get("created", 0)) > _PENDING_TTL]
-    for key in stale:
-        _PENDING.pop(key, None)
-    if len(_PENDING) > _PENDING_MAX:
-        oldest = sorted(_PENDING.items(), key=lambda x: x[1].get("created", 0))
-        for key, _ in oldest[: len(_PENDING) - _PENDING_MAX]:
-            _PENDING.pop(key, None)
+    for mapping, ttl in (
+        (_PENDING, _PENDING_TTL),
+        (_PENDING_RARITY, _PENDING_TTL),
+        (_ADDMODE_PANELS, _ANIME_PICKER_TTL),
+        (_ANIME_PICKERS, _ANIME_PICKER_TTL),
+    ):
+        for key, value in list(mapping.items()):
+            if now - float(value.get("created", 0)) > ttl:
+                mapping.pop(key, None)
+
+    for mapping, maximum in (
+        (_PENDING, _PENDING_MAX),
+        (_PENDING_RARITY, _PENDING_MAX),
+        (_ADDMODE_PANELS, _ANIME_PICKER_MAX),
+        (_ANIME_PICKERS, _ANIME_PICKER_MAX),
+    ):
+        if len(mapping) > maximum:
+            oldest = sorted(mapping.items(), key=lambda x: x[1].get("created", 0))
+            for key, _ in oldest[: len(mapping) - maximum]:
+                mapping.pop(key, None)
 
 
-def _prune_anime_pickers() -> None:
-    now = time.time()
-    stale = [
-        key for key, value in _ANIME_PICKERS.items()
-        if now - float(value.get("created", 0)) > _ANIME_PICKER_TTL
-    ]
-    for key in stale:
-        _ANIME_PICKERS.pop(key, None)
-    if len(_ANIME_PICKERS) > _ANIME_PICKER_MAX:
-        oldest = sorted(_ANIME_PICKERS.items(), key=lambda item: item[1].get("created", 0))
-        for key, _ in oldest[: len(_ANIME_PICKERS) - _ANIME_PICKER_MAX]:
-            _ANIME_PICKERS.pop(key, None)
-
-
-def _anime_picker_token() -> str:
-    _prune_anime_pickers()
+def _picker_token(store: dict) -> str:
+    _prune_pending()
     token = secrets.token_hex(4)
-    while token in _ANIME_PICKERS:
+    while token in store:
         token = secrets.token_hex(4)
     return token
 
 
-def _addanime_keyboard(user_id: int, token: str, anime_list: list[str], current_anime: str) -> InlineKeyboardMarkup:
-    rows = []
+def _store_addmode_panel(token: str, user_id: int, chat_id: int, message_id: int) -> None:
+    _ADDMODE_PANELS[token] = {
+        "created": time.time(),
+        "user_id": int(user_id),
+        "chat_id": int(chat_id),
+        "message_id": int(message_id),
+    }
+
+
+def _addmode_text(anime: str, rarity: str) -> str:
+    return (
+        "⚙️ <b>CARD ADD MODE</b>\n\n"
+        "သင်ထည့်သွင်းလိုသော Anime ကိုရွေးပါ။\n\n"
+        f"Anime: <b>{escape_html(anime or 'Not set')}</b>\n"
+        f"Rarity: <b>{escape_html(rarity or 'Not set')}</b>\n\n"
+        "Set a default Anime + Rarity, then add many cards quickly.\n"
+        "You can also use: <code>/addmode Anime | Lg</code>"
+    )
+
+
+def _addanime_panel_text(anime: str, rarity: str, page: int, total: int, page_size: int) -> str:
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    return (
+        "🌴 <b>ADD ANIME</b>\n\n"
+        f"Current Anime: <b>{escape_html(anime or 'Not set')}</b>\n"
+        f"Rarity: <b>{escape_html(rarity or 'Not set')}</b>\n\n"
+        "Database Anime List\n"
+        f"Page <b>{page + 1}</b> / <b>{total_pages}</b>"
+    )
+
+
+def _addanime_keyboard(
+    user_id: int,
+    token: str,
+    anime_list: list[str],
+    current_anime: str,
+    page: int,
+    total: int,
+    page_size: int,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+
     for index, anime in enumerate(anime_list):
-        label = ("✅ " if anime.lower() == current_anime.lower() else "") + anime
+        selected = str(anime).lower() == str(current_anime or "").lower()
         rows.append([
-            InlineKeyboardButton(
-                label[:60],
-                callback_data=f"addanime:{user_id}:{token}:{index}",
+            action_button(
+                ("✅ " if selected else "") + str(anime),
+                "primary",
+                callback_data=f"addanime:{user_id}:{token}:pick:{index}",
             )
         ])
-    rows.append([InlineKeyboardButton("✕ Close", callback_data=f"addanime:{user_id}:{token}:close")])
+
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(action_button("Back", "primary", callback_data=f"addanime:{user_id}:{token}:back"))
+    if page + 1 < total_pages:
+        nav.append(action_button("Next", "primary", callback_data=f"addanime:{user_id}:{token}:next"))
+    if nav:
+        rows.append(nav)
+
+    rows.append([
+        action_button("Add New", "success", switch_inline_query_current_chat=f"addanime:{token} "),
+        action_button("Close", "danger", callback_data=f"addanime:{user_id}:{token}:close"),
+    ])
     return InlineKeyboardMarkup(rows)
+
+
+async def _send_addmode_panel(message, user_id: int) -> None:
+    anime, rarity = await get_add_mode(user_id)
+    token = _picker_token(_ADDMODE_PANELS)
+    sent = await message.reply_text(
+        _addmode_text(anime, rarity),
+        parse_mode="HTML",
+        reply_markup=_addmode_keyboard(user_id, token),
+    )
+    _store_addmode_panel(token, user_id, int(sent.chat_id), int(sent.message_id))
 
 
 async def addanime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -120,81 +192,136 @@ async def addanime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if args:
         raw_anime = " ".join(args).strip()
         if len(raw_anime) > 120:
-            await message.reply_text("❌ Anime name is too long. Please keep it within 120 characters.")
+            await message.reply_text(
+                "❌ Anime name is too long. Please keep it within 120 characters."
+            )
             return
+
         _, rarity = await get_add_mode(user.id)
         anime = await add_anime_to_catalog(raw_anime, user.id)
-        anime = await canonical_anime(anime)
         await set_add_mode(user.id, anime, rarity)
-        await message.reply_text(
-            "✅ <b>Anime added / selected</b>\n\n"
-            f"🌴 Anime: <b>{escape_html(anime)}</b>\n"
-            f"🏷 Rarity: <b>{escape_html(rarity or 'Not set')}</b>\n\n"
-            "ဒီ Anime ကို MongoDB Anime catalog ထဲမှာ သိမ်းထားပြီးသားဖြစ်ပါတယ်။\n"
-            "ယခု <code>/add Name</code> သုံးလျှင် ဒီ Anime ကို default အဖြစ် အသုံးပြုပါမယ်။",
-            parse_mode="HTML",
-        )
+        await _send_addmode_panel(message, user.id)
         return
 
     anime, rarity = await get_add_mode(user.id)
-    anime_list = await list_common_anime(12)
-    token = _anime_picker_token()
+    anime_list, total = await list_anime_catalog_page(0, 8)
+    token = _picker_token(_ANIME_PICKERS)
+    sent = await message.reply_text(
+        _addanime_panel_text(anime, rarity, 0, total, 8),
+        parse_mode="HTML",
+        reply_markup=_addanime_keyboard(user.id, token, anime_list, anime, 0, total, 8),
+    )
     _ANIME_PICKERS[token] = {
         "created": time.time(),
-        "user_id": user.id,
-        "anime": anime,
-        "anime_list": list(anime_list),
+        "user_id": int(user.id),
+        "chat_id": int(sent.chat_id),
+        "message_id": int(sent.message_id),
+        "page": 0,
     }
-    await message.reply_text(
-        "🌴 <b>ADD ANIME</b>\n\n"
-        f"လက်ရှိ Anime: <b>{escape_html(anime or 'Not set')}</b>\n"
-        f"လက်ရှိ Rarity: <b>{escape_html(rarity or 'Not set')}</b>\n\n"
-        "အောက်ကစာရင်းထဲက Anime ကိုရွေးပါ။\n"
-        "အသစ်တစ်ခုသတ်မှတ်ချင်ရင် <code>/addanime Anime Name</code> ကိုသုံးနိုင်ပါတယ်။",
-        parse_mode="HTML",
-        reply_markup=_addanime_keyboard(user.id, token, anime_list, anime),
-    )
+
 
 async def addanime_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    if not query or not query.data or not query.from_user:
+    if not query or not query.data or not query.from_user or not query.message:
         return
-    match = re.match(r"^addanime:(\d+):([a-f0-9]{8}):(close|\d+)$", query.data)
+
+    match = re.match(
+        r"^addanime:(\d+):([a-f0-9]{8}):(back|next|addnew|close|pick:\d+)$",
+        query.data,
+    )
     if not match or int(match.group(1)) != int(query.from_user.id):
         await query.answer("Not your anime selector.", show_alert=True)
         return
 
     token = match.group(2)
     item = _ANIME_PICKERS.get(token)
-    if not item or item.get("user_id") != query.from_user.id or time.time() - item.get("created", 0) > _ANIME_PICKER_TTL:
+    if not item or int(item.get("user_id", 0)) != int(query.from_user.id):
+        _ANIME_PICKERS.pop(token, None)
+        await query.answer("Anime selector expired. Use /addanime again.", show_alert=True)
+        return
+    if int(item.get("chat_id", 0)) != int(query.message.chat_id):
+        await query.answer("Invalid anime selector.", show_alert=True)
+        return
+    if time.time() - float(item.get("created", 0)) > _ANIME_PICKER_TTL:
         _ANIME_PICKERS.pop(token, None)
         await query.answer("Anime selector expired. Use /addanime again.", show_alert=True)
         return
 
-    if match.group(3) == "close":
+    action = match.group(3)
+
+    if action == "close":
         _ANIME_PICKERS.pop(token, None)
         await query.answer()
         await query.edit_message_reply_markup(reply_markup=None)
         return
 
-    index = int(match.group(3))
-    anime_list = item.get("anime_list") or []
-    if index < 0 or index >= len(anime_list):
-        await query.answer("Anime selector data changed. Use /addanime again.", show_alert=True)
+    if action == "addnew":
+        await query.answer()
+        await query.edit_message_text(
+            "➕ <b>ADD NEW ANIME</b>\n\n"
+            "Press <b>Add New</b>, type the Anime name, then choose\n"
+            "<b>➕ Add</b> from the inline results.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[
+                action_button(
+                    "Add New",
+                    "success",
+                    switch_inline_query_current_chat=f"addanime:{token} ",
+                ),
+                action_button(
+                    "Close",
+                    "danger",
+                    callback_data=f"addanime:{query.from_user.id}:{token}:close",
+                ),
+            ]]),
+        )
         return
 
-    anime = await canonical_anime(str(anime_list[index]))
-    _, rarity = await get_add_mode(query.from_user.id)
-    await set_add_mode(query.from_user.id, anime, rarity)
-    _ANIME_PICKERS.pop(token, None)
-    await query.answer("Anime selected.")
+    page = int(item.get("page", 0))
+    if action == "back":
+        page -= 1
+    elif action == "next":
+        page += 1
+    else:
+        index = int(action.split(":", 1)[1])
+        anime_list, _ = await list_anime_catalog_page(page, 8)
+        if index < 0 or index >= len(anime_list):
+            await query.answer("Anime list changed. Open /addanime again.", show_alert=True)
+            return
+
+        anime = await canonical_anime(anime_list[index])
+        _, rarity = await get_add_mode(query.from_user.id)
+        await set_add_mode(query.from_user.id, anime, rarity)
+
+        _ANIME_PICKERS.pop(token, None)
+        mode_token = _picker_token(_ADDMODE_PANELS)
+        await query.answer("Anime selected.")
+        await query.edit_message_text(
+            _addmode_text(anime, rarity),
+            parse_mode="HTML",
+            reply_markup=_addmode_keyboard(query.from_user.id, mode_token),
+        )
+        _store_addmode_panel(
+            mode_token,
+            query.from_user.id,
+            int(query.message.chat_id),
+            int(query.message.message_id),
+        )
+        return
+
+    anime, rarity = await get_add_mode(query.from_user.id)
+    anime_list, total = await list_anime_catalog_page(page, 8)
+    max_page = max(0, (total - 1) // 8)
+    page = max(0, min(page, max_page))
+    item["page"] = page
+    item["created"] = time.time()
+    await query.answer()
     await query.edit_message_text(
-        "✅ <b>Anime default updated</b>\n\n"
-        f"🌴 Anime: <b>{escape_html(anime)}</b>\n"
-        f"🏷 Rarity: <b>{escape_html(rarity or 'Not set')}</b>\n\n"
-        "ယခု <code>/add Name</code> နဲ့ မြန်မြန် Card ထည့်နိုင်ပါပြီ။",
+        _addanime_panel_text(anime, rarity, page, total, 8),
         parse_mode="HTML",
+        reply_markup=_addanime_keyboard(query.from_user.id, token, anime_list, anime, page, total, 8),
     )
+
 
 
 def _token() -> str:
@@ -393,129 +520,184 @@ async def _edit_card_database_message(context, old: dict, new: dict, caption: st
         return None
 
 
-def _addmode_keyboard(user_id: int, anime_list: list[str], current_anime: str, current_rarity: str) -> InlineKeyboardMarkup:
-    rows = []
-    rows.append([
-        InlineKeyboardButton(f"🎴 {current_rarity or 'Rarity'}", callback_data=f"addmode:{user_id}:rmenu"),
-        InlineKeyboardButton("❌ Clear", callback_data=f"addmode:{user_id}:clear"),
-    ])
-    for anime in anime_list:
-        label = ("✅ " if anime.lower() == current_anime.lower() else "") + anime
-        rows.append([InlineKeyboardButton(label[:60], callback_data=f"addmode:{user_id}:anime:{anime_list.index(anime)}")])
-    rows.append([InlineKeyboardButton("✕ Close", callback_data=f"addmode:{user_id}:close")])
-    return InlineKeyboardMarkup(rows)
+def _addmode_keyboard(user_id: int, token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        action_button(
+            "Rarity",
+            "primary",
+            callback_data=f"addmode:{user_id}:rarity",
+        ),
+        action_button(
+            "Anime Search",
+            "success",
+            switch_inline_query_current_chat=f"animepick:{token} ",
+        ),
+        action_button(
+            "Close",
+            "danger",
+            callback_data=f"addmode:{user_id}:close",
+        ),
+    ]])
 
 
 def _rarity_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    rows = []
-    current = RARITY_ORDER
-    for i in range(0, len(current), 2):
-        row = []
-        for rarity in current[i:i + 2]:
-            row.append(InlineKeyboardButton(rarity[:30], callback_data=f"addmode:{user_id}:rarity:{i + len(row)}"))
+    rows: list[list[InlineKeyboardButton]] = []
+    rarities = [
+        rarity
+        for rarity in RARITY_ORDER
+        if str(rarity).lower() != str(LIMITED_RARITY_NAME).lower()
+    ]
+    for i in range(0, len(rarities), 2):
+        row: list[InlineKeyboardButton] = []
+        for rarity in rarities[i:i + 2]:
+            row.append(
+                rarity_button(
+                    str(rarity),
+                    str(rarity),
+                    "primary",
+                    callback_data=f"addmode:{user_id}:rarity_select:{RARITY_ORDER.index(rarity)}",
+                )
+            )
         rows.append(row)
-    rows.append([InlineKeyboardButton("« Back", callback_data=f"addmode:{user_id}:main")])
+    rows.append([
+        action_button("Back", "primary", callback_data=f"addmode:{user_id}:main")
+    ])
     return InlineKeyboardMarkup(rows)
 
 
 async def addmode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.effective_user or not await is_allowed_adder(update.effective_user):
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message or not await is_allowed_adder(user):
         return
+
     args = list(context.args or [])
     if args and args[0].lower() in {"off", "clear", "reset"}:
         from utils.card_adding import clear_add_mode
-        await clear_add_mode(update.effective_user.id)
-        await update.effective_message.reply_text("✅ Add mode cleared. /add now needs its normal rarity + anime fields.")
-        return
-    if args:
-        raw = " ".join(args)
-        parts = [x.strip() for x in raw.split("|") if x.strip()]
-        anime = parts[0] if parts else ""
-        rarity = normalize_add_rarity(parts[1]) if len(parts) > 1 else ""
-        if not rarity:
-            _, old_rarity = await get_add_mode(update.effective_user.id)
-            rarity = old_rarity
-        if not anime:
-            old_anime, _ = await get_add_mode(update.effective_user.id)
-            anime = old_anime
-        if not anime or not rarity:
-            await update.effective_message.reply_text("Usage: /addmode <Anime> | <Rarity>\nExample: /addmode Genshin Impact | Lg")
-            return
-        await set_add_mode(update.effective_user.id, anime, rarity)
-        await update.effective_message.reply_text(
-            f"⚙️ ADD MODE ACTIVE\n\nAnime: {anime}\nRarity: {rarity}\n\n"
-            "Now send media with /add Name, /add Name | Rarity, or /add Name | Rarity | Anime."
-        )
+        await clear_add_mode(user.id)
+        await _send_addmode_panel(message, user.id)
         return
 
-    anime, rarity = await get_add_mode(update.effective_user.id)
-    anime_list = await list_common_anime(12)
-    await update.effective_message.reply_text(
-        "⚙️ <b>CARD ADD MODE</b>\n\n"
-        f"Anime: <b>{escape_html(anime or 'Not set')}</b>\n"
-        f"Rarity: <b>{escape_html(rarity or 'Not set')}</b>\n\n"
-        "Set a default Anime + Rarity, then add many cards quickly.\n"
-        "You can also use: <code>/addmode Anime | Lg</code>",
-        parse_mode="HTML",
-        reply_markup=_addmode_keyboard(update.effective_user.id, anime_list, anime, rarity),
-    )
+    if args:
+        parts = [part.strip() for part in " ".join(args).split("|")]
+        old_anime, old_rarity = await get_add_mode(user.id)
+        selected_anime = parts[0] if parts and parts[0] else old_anime
+        supplied_rarity = parts[1] if len(parts) > 1 else ""
+
+        if len(parts) > 2 and any(parts[2:]):
+            await message.reply_text(
+                "❌ Invalid /addmode format. Use: <code>/addmode Anime | Lg</code>",
+                parse_mode="HTML",
+            )
+            return
+
+        if supplied_rarity:
+            selected_rarity = normalize_add_rarity(supplied_rarity)
+            if not selected_rarity:
+                await message.reply_text(
+                    "❌ Invalid rarity. Use one of the supported rarity names or short codes.",
+                    parse_mode="HTML",
+                )
+                return
+        else:
+            selected_rarity = old_rarity
+
+        if not selected_anime:
+            await message.reply_text(
+                "❌ Anime is missing. Use <code>/addmode Anime | Lg</code>.",
+                parse_mode="HTML",
+            )
+            return
+        if not selected_rarity:
+            await message.reply_text(
+                "❌ Rarity is missing. Use <code>/addmode Anime | Lg</code> or choose Rarity below.",
+                parse_mode="HTML",
+            )
+            return
+
+        selected_anime = await add_anime_to_catalog(selected_anime, user.id)
+        await set_add_mode(user.id, selected_anime, selected_rarity)
+        await _send_addmode_panel(message, user.id)
+        return
+
+    await _send_addmode_panel(message, user.id)
 
 
 async def addmode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    q = update.callback_query
-    if not q or not q.data or not q.from_user:
+    query = update.callback_query
+    if not query or not query.data or not query.from_user or not query.message:
         return
-    m = re.match(r"^addmode:(\d+):(.+)$", q.data)
-    if not m or int(m.group(1)) != int(q.from_user.id):
-        await q.answer("Not your add mode.", show_alert=True)
+
+    match = re.match(
+        r"^addmode:(\d+):(rarity|close|main|rarity_select:\d+)$",
+        query.data,
+    )
+    if not match or int(match.group(1)) != int(query.from_user.id):
+        await query.answer("Not your add mode.", show_alert=True)
         return
-    await q.answer()
-    action = m.group(2)
-    anime, rarity = await get_add_mode(q.from_user.id)
-    if action == "clear":
-        from utils.card_adding import clear_add_mode
-        await clear_add_mode(q.from_user.id)
-        await q.edit_message_text("✅ Add mode cleared.")
-        return
+
+    user_id = int(query.from_user.id)
+    action = match.group(2)
+    anime, rarity = await get_add_mode(user_id)
+
     if action == "close":
-        await q.edit_message_reply_markup(reply_markup=None)
+        await query.answer()
+        await query.edit_message_reply_markup(reply_markup=None)
         return
-    if action == "main":
-        anime_list = await list_common_anime(12)
-        await q.edit_message_text(
-            "⚙️ <b>CARD ADD MODE</b>\n\n"
-            f"Anime: <b>{escape_html(anime or 'Not set')}</b>\nRarity: <b>{escape_html(rarity or 'Not set')}</b>",
-            parse_mode="HTML",
-            reply_markup=_addmode_keyboard(q.from_user.id, anime_list, anime, rarity),
+
+    if action == "rarity":
+        await query.answer()
+        await query.edit_message_reply_markup(
+            reply_markup=_rarity_keyboard(user_id)
         )
         return
-    if action == "rmenu":
-        await q.edit_message_reply_markup(reply_markup=_rarity_keyboard(q.from_user.id))
+
+    if action == "main":
+        token = _picker_token(_ADDMODE_PANELS)
+        await query.answer()
+        await query.edit_message_text(
+            _addmode_text(anime, rarity),
+            parse_mode="HTML",
+            reply_markup=_addmode_keyboard(user_id, token),
+        )
+        _store_addmode_panel(
+            token,
+            user_id,
+            int(query.message.chat_id),
+            int(query.message.message_id),
+        )
         return
-    if action.startswith("rarity:"):
-        idx = int(action.split(":", 1)[1])
-        if idx < 0 or idx >= len(RARITY_ORDER):
-            return
-        await set_add_mode(q.from_user.id, anime, RARITY_ORDER[idx])
-    elif action.startswith("anime:"):
-        idx = int(action.split(":", 1)[1])
-        anime_list = await list_common_anime(12)
-        if idx < 0 or idx >= len(anime_list):
-            await q.answer("Anime list changed. Open /addmode again.", show_alert=True)
-            return
-        await set_add_mode(q.from_user.id, anime_list[idx], rarity)
-    else:
+
+    idx = int(action.split(":", 1)[1])
+    if idx < 0 or idx >= len(RARITY_ORDER):
+        await query.answer("Invalid rarity.", show_alert=True)
         return
-    anime, rarity = await get_add_mode(q.from_user.id)
-    anime_list = await list_common_anime(12)
-    await q.edit_message_text(
-        "⚙️ <b>CARD ADD MODE</b>\n\n"
-        f"Anime: <b>{escape_html(anime or 'Not set')}</b>\n"
-        f"Rarity: <b>{escape_html(rarity or 'Not set')}</b>\n\n"
-        "Send media with /add Name for fast adding.",
+
+    selected = RARITY_ORDER[idx]
+    if str(selected).lower() == str(LIMITED_RARITY_NAME).lower():
+        await query.answer(
+            "Limited requires a custom ID and is not available as a default rarity.",
+            show_alert=True,
+        )
+        return
+
+    await set_add_mode(user_id, anime, selected)
+    anime, rarity = await get_add_mode(user_id)
+    token = _picker_token(_ADDMODE_PANELS)
+
+    await query.answer(f"{rarity} selected.")
+    await query.edit_message_text(
+        _addmode_text(anime, rarity),
         parse_mode="HTML",
-        reply_markup=_addmode_keyboard(q.from_user.id, anime_list, anime, rarity),
+        reply_markup=_addmode_keyboard(user_id, token),
     )
+    _store_addmode_panel(
+        token,
+        user_id,
+        int(query.message.chat_id),
+        int(query.message.message_id),
+    )
+
 
 
 def _pending_keyboard(user_id: int, token: str) -> InlineKeyboardMarkup:
@@ -655,12 +837,400 @@ async def _save_card(context, user, parsed: dict, media_info: dict, force_new: b
     )
 
 
+def _rarity_prompt_keyboard(user_id: int, token: str) -> InlineKeyboardMarkup:
+    aliases = rarity_aliases()
+    buttons: list[InlineKeyboardButton] = []
+
+    for code in ("Un", "Co", "Ra", "Lg", "My", "Dv", "Cv", "Ca", "Su"):
+        rarity = aliases.get(code.lower())
+        if not rarity or str(rarity).lower() == str(LIMITED_RARITY_NAME).lower():
+            continue
+        buttons.append(
+            action_button(
+                code,
+                "primary",
+                callback_data=f"addrarity:{user_id}:{token}:{rarity}",
+            )
+        )
+
+    return InlineKeyboardMarkup([
+        buttons[i:i + 2] for i in range(0, len(buttons), 2)
+    ])
+
+
+async def _prompt_for_rarity(update: Update, parsed: dict, media_info: dict) -> None:
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
+    token = _picker_token(_PENDING_RARITY)
+    sent = await message.reply_text(
+        "🎴 <b>RARITY REQUIRED</b>\n\n"
+        f"Name: <b>{escape_html(parsed.get('name', ''))}</b>\n"
+        f"Anime: <b>{escape_html(parsed.get('anime', ''))}</b>\n\n"
+        "ဒီ Media အတွက် Rarity သတ်မှတ်ပေးပါ။\n"
+        "Code ကို တိုက်ရိုက်ပို့နိုင်ပါတယ် — <code>Un Co Ra Lg My Dv Cv Ca Su</code>",
+        parse_mode="HTML",
+        reply_markup=_rarity_prompt_keyboard(user.id, token),
+    )
+    _PENDING_RARITY[token] = {
+        "created": time.time(),
+        "user_id": int(user.id),
+        "chat_id": int(message.chat_id),
+        "prompt_message_id": int(sent.message_id),
+        "parsed": dict(parsed),
+        "media_info": dict(media_info),
+    }
+
+
+async def _delete_message_safely(message) -> bool:
+    try:
+        await message.delete()
+        return True
+    except Exception:
+        return False
+
+
+async def _delete_rarity_prompt(context: ContextTypes.DEFAULT_TYPE, item: dict) -> None:
+    prompt_message_id = int(item.get("prompt_message_id", 0) or 0)
+    if not prompt_message_id:
+        return
+    try:
+        await context.bot.delete_message(
+            chat_id=int(item["chat_id"]),
+            message_id=prompt_message_id,
+        )
+    except Exception:
+        pass
+
+
+async def _process_pending_rarity(context: ContextTypes.DEFAULT_TYPE, token: str, rarity: str, user) -> None:
+    item = _PENDING_RARITY.get(token)
+    if not item or int(item.get("user_id", 0)) != int(user.id):
+        return
+    if time.time() - float(item.get("created", 0)) > _PENDING_TTL:
+        _PENDING_RARITY.pop(token, None)
+        return
+
+    parsed = dict(item.get("parsed") or {})
+    parsed["rarity"] = rarity
+    parsed["_rarityProvided"] = True
+    media_info = dict(item.get("media_info") or {})
+
+    try:
+        ok, result = await _save_card(context, user, parsed, media_info)
+    except TelegramError as exc:
+        await context.bot.send_message(
+            chat_id=int(item["chat_id"]),
+            text=f"❌ Telegram/archive error: {escape_html(str(exc))}",
+            parse_mode="HTML",
+        )
+        return
+    except Exception as exc:
+        await context.bot.send_message(
+            chat_id=int(item["chat_id"]),
+            text=f"❌ Card add failed: {escape_html(str(exc))}",
+            parse_mode="HTML",
+        )
+        return
+
+    _PENDING_RARITY.pop(token, None)
+    await _delete_rarity_prompt(context, item)
+
+    if ok:
+        await context.bot.send_message(
+            chat_id=int(item["chat_id"]),
+            text=result,
+            parse_mode="HTML",
+        )
+        return
+
+    duplicate_token = _token()
+    _PENDING[duplicate_token] = {
+        "created": time.time(),
+        "user_id": int(user.id),
+        "parsed": dict(parsed),
+        "media_info": dict(media_info),
+    }
+    await context.bot.send_message(
+        chat_id=int(item["chat_id"]),
+        text=result + "\n\nChoose how to continue:",
+        parse_mode="HTML",
+        reply_markup=_pending_keyboard(user.id, duplicate_token),
+    )
+
+
+async def add_rarity_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not query.data or not query.from_user or not query.message:
+        return
+
+    match = re.match(r"^addrarity:(\d+):([a-f0-9]{8}):(.+)$", query.data)
+    if not match or int(match.group(1)) != int(query.from_user.id):
+        await query.answer("Not your rarity selection.", show_alert=True)
+        return
+
+    rarity = normalize_add_rarity(match.group(3))
+    if not rarity or str(rarity).lower() == str(LIMITED_RARITY_NAME).lower():
+        await query.answer("Invalid rarity.", show_alert=True)
+        return
+
+    token = match.group(2)
+    item = _PENDING_RARITY.get(token)
+    if not item or int(item.get("chat_id", 0)) != int(query.message.chat_id):
+        await query.answer("This rarity request expired.", show_alert=True)
+        return
+
+    await query.answer(f"{rarity} selected.")
+    await _process_pending_rarity(context, token, rarity, query.from_user)
+
+
+async def add_rarity_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_allowed_add_chat(update):
+        return
+
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message or not message.text:
+        return
+
+    rarity = normalize_add_rarity(message.text.strip())
+    if not rarity or str(rarity).lower() == str(LIMITED_RARITY_NAME).lower():
+        return
+
+    _prune_pending()
+    matching = [
+        (token, item)
+        for token, item in _PENDING_RARITY.items()
+        if int(item.get("user_id", 0)) == int(user.id)
+        and int(item.get("chat_id", 0)) == int(message.chat_id)
+    ]
+    if not matching:
+        return
+
+    token, _ = max(matching, key=lambda pair: float(pair[1].get("created", 0)))
+    await _delete_message_safely(message)
+    await _process_pending_rarity(context, token, rarity, user)
+
+
+def _anime_article_result(token: str, anime: str, purpose: str, apply_command: str) -> InlineQueryResultArticle:
+    safe_name = " ".join(str(anime or "").strip().split())
+    return InlineQueryResultArticle(
+        id=f"{purpose}:{md5(safe_name.encode('utf-8')).hexdigest()[:24]}",
+        title=f"{safe_name} [🎮]",
+        description="Select this Anime.",
+        input_message_content=InputTextMessageContent(
+            f"/{apply_command} {token} {safe_name}"
+        ),
+    )
+
+
+async def _answer_anime_inline(query, results: list, next_offset: str = "") -> None:
+    try:
+        await query.answer(
+            results,
+            cache_time=0,
+            is_personal=True,
+            next_offset=next_offset,
+        )
+    except Exception as exc:
+        print("ADD ANIME INLINE ANSWER ERROR:", repr(exc), flush=True)
+
+
+async def addmode_anime_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.inline_query
+    if not query or not query.from_user:
+        return
+
+    match = re.fullmatch(
+        r"animepick:([a-f0-9]{8})(?:s+(.*))?",
+        (query.query or "").strip(),
+        re.I,
+    )
+    if not match:
+        return
+
+    token = match.group(1)
+    item = _ADDMODE_PANELS.get(token)
+    if not item or int(item.get("user_id", 0)) != int(query.from_user.id):
+        await _answer_anime_inline(query, [])
+        return
+    if not await is_allowed_adder(query.from_user):
+        await _answer_anime_inline(query, [])
+        return
+
+    search = (match.group(2) or "").strip()
+    try:
+        offset = max(0, int(query.offset or "0"))
+    except ValueError:
+        offset = 0
+
+    try:
+        names, has_more = await search_anime_catalog(search, offset, 50)
+    except Exception as exc:
+        print("ADD MODE ANIME SEARCH ERROR:", repr(exc), flush=True)
+        names, has_more = [], False
+
+    results = [
+        _anime_article_result(token, name, "addmodeanime", "addmodeanimeapply")
+        for name in names
+    ]
+    await _answer_anime_inline(
+        query,
+        results,
+        str(offset + 50) if has_more else "",
+    )
+
+
+async def addanime_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.inline_query
+    if not query or not query.from_user:
+        return
+
+    match = re.fullmatch(
+        r"addanime:([a-f0-9]{8})(?:s+(.*))?",
+        (query.query or "").strip(),
+        re.I,
+    )
+    if not match:
+        return
+
+    token = match.group(1)
+    item = _ANIME_PICKERS.get(token)
+    if not item or int(item.get("user_id", 0)) != int(query.from_user.id):
+        await _answer_anime_inline(query, [])
+        return
+    if not await is_allowed_adder(query.from_user):
+        await _answer_anime_inline(query, [])
+        return
+
+    search = (match.group(2) or "").strip()
+    try:
+        offset = max(0, int(query.offset or "0"))
+    except ValueError:
+        offset = 0
+
+    names, has_more = await search_anime_catalog(search, offset, 49)
+    results = [
+        _anime_article_result(token, name, "addanimeexisting", "addanimeapply")
+        for name in names
+    ]
+
+    if search and offset == 0 and not await anime_catalog_exists(search):
+        results.append(
+            InlineQueryResultArticle(
+                id=f"addnew:{md5(search.encode('utf-8')).hexdigest()[:24]}",
+                title=f'➕ Add "{search}"',
+                description="Create this Anime and set it as the default.",
+                input_message_content=InputTextMessageContent(
+                    f"/addanimeapply {token} {search}"
+                ),
+            )
+        )
+
+    await _answer_anime_inline(
+        query,
+        results[:50],
+        str(offset + 49) if has_more else "",
+    )
+
+
+async def _edit_saved_addmode_panel(
+    context: ContextTypes.DEFAULT_TYPE,
+    token: str,
+    user_id: int,
+) -> None:
+    item = _ADDMODE_PANELS.get(token)
+    if not item:
+        return
+
+    anime, rarity = await get_add_mode(user_id)
+    try:
+        await context.bot.edit_message_text(
+            chat_id=int(item["chat_id"]),
+            message_id=int(item["message_id"]),
+            text=_addmode_text(anime, rarity),
+            parse_mode="HTML",
+            reply_markup=_addmode_keyboard(user_id, token),
+        )
+        item["created"] = time.time()
+    except Exception as exc:
+        print("ADD MODE PANEL UPDATE ERROR:", repr(exc), flush=True)
+
+
+async def addmode_anime_apply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    message = update.effective_message
+    args = list(context.args or [])
+    if not user or not message or len(args) < 2 or not await is_allowed_adder(user):
+        return
+
+    token = args[0]
+    anime = " ".join(args[1:]).strip()
+    item = _ADDMODE_PANELS.get(token)
+    if not item or int(item.get("user_id", 0)) != int(user.id):
+        return
+    if len(anime) > 120:
+        await _delete_message_safely(message)
+        return
+
+    _, rarity = await get_add_mode(user.id)
+    anime = await add_anime_to_catalog(anime, user.id)
+    await set_add_mode(user.id, anime, rarity)
+    await _delete_message_safely(message)
+    await _edit_saved_addmode_panel(context, token, user.id)
+
+
+async def addanime_apply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    message = update.effective_message
+    args = list(context.args or [])
+    if not user or not message or len(args) < 2 or not await is_allowed_adder(user):
+        return
+
+    token = args[0]
+    anime = " ".join(args[1:]).strip()
+    item = _ANIME_PICKERS.get(token)
+    if not item or int(item.get("user_id", 0)) != int(user.id):
+        return
+    if len(anime) > 120:
+        await _delete_message_safely(message)
+        return
+
+    _, rarity = await get_add_mode(user.id)
+    anime = await add_anime_to_catalog(anime, user.id)
+    await set_add_mode(user.id, anime, rarity)
+
+    _ANIME_PICKERS.pop(token, None)
+    await _delete_message_safely(message)
+
+    panel_token = _picker_token(_ADDMODE_PANELS)
+    try:
+        await context.bot.edit_message_text(
+            chat_id=int(item["chat_id"]),
+            message_id=int(item["message_id"]),
+            text=_addmode_text(anime, rarity),
+            parse_mode="HTML",
+            reply_markup=_addmode_keyboard(user.id, panel_token),
+        )
+        _store_addmode_panel(
+            panel_token,
+            user.id,
+            int(item["chat_id"]),
+            int(item["message_id"]),
+        )
+    except Exception as exc:
+        print("ADD ANIME INLINE APPLY ERROR:", repr(exc), flush=True)
+
+
 async def _handle_media_add(update: Update, context: ContextTypes.DEFAULT_TYPE, parsed: dict, media_info: dict) -> None:
     user = update.effective_user
+    if not user:
+        return
+
     anime_mode, rarity_mode = await get_add_mode(user.id)
 
-    # An explicitly supplied rarity that failed parsing is an invalid value,
-    # not a missing field. Reject it before /addmode can fill a default.
     if parsed.get("_rarityProvided") and not parsed.get("rarity"):
         await update.effective_message.reply_text(
             "❌ Invalid rarity. Please use one of the supported rarity names or short codes.",
@@ -668,42 +1238,45 @@ async def _handle_media_add(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         )
         return
 
-    if not parsed.get("rarity"):
-        if rarity_mode:
-            parsed["rarity"] = rarity_mode
-        else:
-            await update.effective_message.reply_text(
-                "❌ Rarity is missing. Use a short code such as <code>Lg</code>, or set /addmode.",
-                parse_mode="HTML",
-            )
-            return
-    if not parsed.get("anime"):
-        if anime_mode:
-            parsed["anime"] = anime_mode
-        else:
-            await update.effective_message.reply_text(
-                "❌ Anime is missing. Use <code>/add Name | Rarity | Anime</code> or set <code>/addmode Anime | Rarity</code>.",
-                parse_mode="HTML",
-            )
-            return
+    if not parsed.get("rarity") and rarity_mode:
+        parsed["rarity"] = rarity_mode
+    if not parsed.get("anime") and anime_mode:
+        parsed["anime"] = anime_mode
 
-    parsed["rarity"] = normalize_add_rarity(parsed["rarity"]) if parsed.get("rarity") else parsed["rarity"]
-    if not parsed.get("rarity"):
+    if not parsed.get("anime"):
         await update.effective_message.reply_text(
-            "❌ Rarity is missing. Use a short code such as <code>Lg</code>, or set /addmode.",
+            "❌ Anime is missing. Use <code>/add Name | Rarity | Anime</code> or set <code>/addmode Anime | Rarity</code>.",
             parse_mode="HTML",
         )
         return
 
     parsed["anime"] = await canonical_anime(parsed["anime"])
 
+    if not parsed.get("rarity"):
+        await _prompt_for_rarity(update, parsed, media_info)
+        return
+
+    parsed["rarity"] = normalize_add_rarity(parsed["rarity"])
+    if not parsed.get("rarity"):
+        await update.effective_message.reply_text(
+            "❌ Invalid rarity. Please use one of the supported rarity names or short codes.",
+            parse_mode="HTML",
+        )
+        return
+
     try:
         ok, result = await _save_card(context, user, parsed, media_info)
     except TelegramError as exc:
-        await update.effective_message.reply_text(f"❌ Telegram/archive error: {escape_html(str(exc))}", parse_mode="HTML")
+        await update.effective_message.reply_text(
+            f"❌ Telegram/archive error: {escape_html(str(exc))}",
+            parse_mode="HTML",
+        )
         return
     except Exception as exc:
-        await update.effective_message.reply_text(f"❌ Card add failed: {escape_html(str(exc))}", parse_mode="HTML")
+        await update.effective_message.reply_text(
+            f"❌ Card add failed: {escape_html(str(exc))}",
+            parse_mode="HTML",
+        )
         return
 
     if ok:
@@ -722,6 +1295,8 @@ async def _handle_media_add(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         parse_mode="HTML",
         reply_markup=_pending_keyboard(user.id, token),
     )
+
+
 
 
 async def add_duplicate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -830,7 +1405,50 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 def register_photo_add_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("addmode", addmode_cmd))
     app.add_handler(CommandHandler("addanime", addanime_cmd))
-    app.add_handler(CallbackQueryHandler(addmode_callback, pattern=r"^addmode:\d+:.+$"))
-    app.add_handler(CallbackQueryHandler(addanime_callback, pattern=r"^addanime:\d+:[a-f0-9]{8}:(?:close|\d+)$"))
-    app.add_handler(CallbackQueryHandler(add_duplicate_callback, pattern=r"^adddup:\d+:[a-f0-9]+:(?:update|new|cancel)$"))
+    app.add_handler(CommandHandler("addmodeanimeapply", addmode_anime_apply_handler))
+    app.add_handler(CommandHandler("addanimeapply", addanime_apply_handler))
+
+    app.add_handler(
+        CallbackQueryHandler(
+            addmode_callback,
+            pattern=r"^addmode:\d+:(?:rarity|close|main|rarity_select:\d+)$",
+        )
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            addanime_callback,
+            pattern=r"^addanime:\d+:[a-f0-9]{8}:(?:back|next|addnew|close|pick:\d+)$",
+        )
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            add_rarity_callback,
+            pattern=r"^addrarity:\d+:[a-f0-9]{8}:.+$",
+        )
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            add_duplicate_callback,
+            pattern=r"^adddup:\d+:[a-f0-9]+:(?:update|new|cancel)$",
+        )
+    )
+    app.add_handler(
+        InlineQueryHandler(
+            addmode_anime_inline_query,
+            pattern=r"^animepick:[a-f0-9]{8}(?:\s.*)?$",
+        )
+    )
+    app.add_handler(
+        InlineQueryHandler(
+            addanime_inline_query,
+            pattern=r"^addanime:[a-f0-9]{8}(?:\s.*)?$",
+        )
+    )
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT
+            & filters.Regex(r"(?i)^\s*(?:Un|Co|Ra|Lg|My|Dv|Cv|Ca|Su)\s*$"),
+            add_rarity_text_handler,
+        )
+    )
     app.add_handler(MessageHandler(filters.ATTACHMENT, photo_add_handler))
