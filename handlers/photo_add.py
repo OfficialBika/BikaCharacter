@@ -274,18 +274,27 @@ async def addanime_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             "Press <b>Add New</b>, type the Anime name, then choose\n"
             "<b>➕ Add</b> from the inline results.",
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[
-                action_button(
-                    "Add New",
-                    "success",
-                    switch_inline_query_current_chat=f"addanime:{token} ",
-                ),
-                action_button(
-                    "Close",
-                    "danger",
-                    callback_data=f"addanime:{query.from_user.id}:{token}:close",
-                ),
-            ]]),
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    action_button(
+                        "Add New",
+                        "success",
+                        switch_inline_query_current_chat=f"addanime:{token} ",
+                    ),
+                    action_button(
+                        "Back",
+                        "primary",
+                        callback_data=f"addanime:{query.from_user.id}:{token}:back",
+                    ),
+                ],
+                [
+                    action_button(
+                        "Close",
+                        "danger",
+                        callback_data=f"addanime:{query.from_user.id}:{token}:close",
+                    ),
+                ],
+            ]),
         )
         return
 
