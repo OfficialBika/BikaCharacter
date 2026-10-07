@@ -112,11 +112,18 @@ def _store_addmode_panel(token: str, user_id: int, chat_id: int, message_id: int
     }
 
 
+def _anime_display(anime: str) -> str:
+    value = str(anime or "").strip()
+    if not value:
+        return "Not set"
+    return value if value.endswith("[🎮]") else f"{value} [🎮]"
+
+
 def _addmode_text(anime: str, rarity: str) -> str:
     return (
         "⚙️ <b>CARD ADD MODE</b>\n\n"
         "သင်ထည့်သွင်းလိုသော Anime ကိုရွေးပါ။\n\n"
-        f"Anime: <b>{escape_html(anime or 'Not set')}</b>\n"
+        f"Anime: <b>{escape_html(_anime_display(anime))}</b>\n"
         f"Rarity: <b>{escape_html(rarity or 'Not set')}</b>\n\n"
         "Set a default Anime + Rarity, then add many cards quickly.\n"
         "You can also use: <code>/addmode Anime | Lg</code>"
@@ -185,7 +192,12 @@ async def _send_addmode_panel(message, user_id: int) -> None:
 async def addanime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     message = update.effective_message
-    if not user or not message or not await is_allowed_adder(user):
+    if (
+        not user
+        or not message
+        or not is_allowed_add_chat(update)
+        or not await is_allowed_adder(user)
+    ):
         return
 
     args = list(context.args or [])
@@ -568,7 +580,12 @@ def _rarity_keyboard(user_id: int) -> InlineKeyboardMarkup:
 async def addmode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     message = update.effective_message
-    if not user or not message or not await is_allowed_adder(user):
+    if (
+        not user
+        or not message
+        or not is_allowed_add_chat(update)
+        or not await is_allowed_adder(user)
+    ):
         return
 
     args = list(context.args or [])
@@ -1186,7 +1203,13 @@ async def addmode_anime_apply_handler(update: Update, context: ContextTypes.DEFA
     user = update.effective_user
     message = update.effective_message
     args = list(context.args or [])
-    if not user or not message or len(args) < 2 or not await is_allowed_adder(user):
+    if (
+        not user
+        or not message
+        or len(args) < 2
+        or not is_allowed_add_chat(update)
+        or not await is_allowed_adder(user)
+    ):
         return
 
     token = args[0]
@@ -1209,7 +1232,13 @@ async def addanime_apply_handler(update: Update, context: ContextTypes.DEFAULT_T
     user = update.effective_user
     message = update.effective_message
     args = list(context.args or [])
-    if not user or not message or len(args) < 2 or not await is_allowed_adder(user):
+    if (
+        not user
+        or not message
+        or len(args) < 2
+        or not is_allowed_add_chat(update)
+        or not await is_allowed_adder(user)
+    ):
         return
 
     token = args[0]
