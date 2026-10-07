@@ -264,6 +264,76 @@ async def clear_add_mode(user_id: int) -> None:
     await get_db().bot_settings.delete_one({"_id": f"{ADD_MODE_PREFIX}{int(user_id)}"})
 
 
+async def _all_anime_names() -> list[str]:
+    global _ANIME_LIST_CACHE
+
+    now = time.monotonic()
+    if _ANIME_LIST_CACHE and now - _ANIME_LIST_CACHE[0] < _ANIME_LIST_CACHE_TTL:
+        return list(_ANIME_LIST_CACHE[1])
+
+    db = get_db()
+    names_by_key: dict[str, str] = {}
+
+    catalog_docs = await db[ANIMES_COLLECTION].find(
+        {"name": {"$type": "string", "$ne": ""}},
+        {"name": 1},
+    ).sort("name", 1).to_list(None)
+    for doc in catalog_docs:
+        name = " ".join(str(doc.get("name") or "").strip().split())
+        key = normalized_search_name(name)
+        if key and key not in names_by_key:
+            names_by_key[key] = name
+
+    for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
+        values = await db[collection_name].distinct(
+            "anime",
+            {"anime": {"$type": "string", "$ne": ""}},
+        )
+        for value in values:
+            name = " ".join(str(value or "").strip().split())
+            key = normalized_search_name(name)
+            if key and key not in names_by_key:
+                names_by_key[key] = name
+
+    names = sorted(names_by_key.values(), key=lambda value: (value.lower(), value))
+    _ANIME_LIST_CACHE = (now, names)
+    return list(names)
+
+
+async def list_anime_catalog_page(
+    page: int = 0,
+    page_size: int = 8,
+) -> tuple[list[str], int]:
+    """Return a deterministic page from the database Anime catalog."""
+    page_size = max(1, min(int(page_size), 50))
+    safe_page = max(0, int(page))
+    names = await _all_anime_names()
+    total = len(names)
+    start = safe_page * page_size
+    return names[start:start + page_size], total
+
+
+async def search_anime_catalog(
+    query: str = "",
+    offset: int = 0,
+    limit: int = 50,
+) -> tuple[list[str], bool]:
+    """Prefix-search known Anime for Telegram inline search."""
+    limit = max(1, min(int(limit), 50))
+    safe_offset = max(0, int(offset))
+    normalized_query = normalized_search_name(query)
+    names = await _all_anime_names()
+
+    if normalized_query:
+        names = [
+            name for name in names
+            if normalized_search_name(name).startswith(normalized_query)
+        ]
+
+    chunk = names[safe_offset:safe_offset + limit + 1]
+    return chunk[:limit], len(chunk) > limit
+
+
 async def list_common_anime(limit: int = 12) -> list[str]:
     db = get_db()
     rows: dict[str, int] = {}
