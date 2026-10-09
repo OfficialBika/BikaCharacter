@@ -147,7 +147,7 @@ class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
             "collection_name": "photos",
         }
         db = _FakeAnimeDB({
-            "photos": _FakeAnimeCollection([{"cardId": "25", "name": "Old Name"}]),
+            "photos": _FakeAnimeCollection([{"cardId": "25", "name": "Old Name", "anime": "Old Anime"}]),
             "limited_cards": _FakeAnimeCollection(),
         })
         user = SimpleNamespace(id=500)
