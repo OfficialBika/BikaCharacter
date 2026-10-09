@@ -1,4 +1,5 @@
 import re
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -129,7 +130,7 @@ class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
         photo_add_module._PENDING_UPDATES.clear()
         key = (500, -100123)
         photo_add_module._PENDING_UPDATES[key] = {
-            "created": __import__("time").time(),
+            "created": time.time(),
             "user_id": 500,
             "chat_id": -100123,
             "card_id": "25",
