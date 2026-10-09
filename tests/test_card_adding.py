@@ -104,6 +104,22 @@ class DuplicateLookupTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(duplicate)
         self.assertEqual(duplicate["cardId"], "26")
 
+    async def test_no_duplicate_when_only_target_matches(self):
+        db = _FakeAnimeDB({
+            "photos": _FakeAnimeCollection([
+                {"cardId": "25", "fileUniqueId": "same-file", "name": "Target",
+                 "normalizedName": "acheron", "anime": "Honkai Star Rail [🎮]"},
+            ]),
+            "limited_cards": _FakeAnimeCollection(),
+        })
+        with patch("utils.card_adding.get_db", return_value=db):
+            media = await card_adding.find_duplicate_media("same-file", "25")
+            name = await card_adding.find_possible_duplicate(
+                "Acheron", "Honkai Star Rail [🎮]", "25"
+            )
+        self.assertIsNone(media)
+        self.assertIsNone(name)
+
 class UpdateTargetBindingTest(unittest.TestCase):
     def test_update_only_write_filter_binds_document_id(self):
         import inspect
