@@ -31,7 +31,12 @@ class _FakeAnimeCollection:
         def matches(doc):
             for key, value in query.items():
                 if key == "normalizedName":
-                    if doc.get(key) != value:
+                    actual = str(doc.get(key, "")).lower()
+                    if isinstance(value, str):
+                        expected = value.lower()
+                        if actual != expected:
+                            return False
+                    else:
                         return False
                 elif key == "fileUniqueId":
                     if doc.get(key) != value:
