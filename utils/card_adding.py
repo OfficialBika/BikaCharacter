@@ -244,12 +244,18 @@ async def find_duplicate_media(file_unique_id: str, exclude_card_id: str = "") -
     uid = str(file_unique_id or "").strip()
     if not uid:
         return None
+    exclude_id = str(exclude_card_id or "").strip()
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
+        query = {"fileUniqueId": uid}
+        # Exclude the selected card in MongoDB itself. Fetching one arbitrary
+        # match and excluding it afterwards can hide a second duplicate.
+        if exclude_id:
+            query["cardId"] = {"$ne": exclude_id}
         doc = await get_db()[collection_name].find_one(
-            {"fileUniqueId": uid},
+            query,
             {"cardId": 1, "name": 1, "anime": 1, "rarity": 1},
         )
-        if doc and str(doc.get("cardId", "")) != str(exclude_card_id):
+        if doc:
             return {**doc, "collection": collection_name}
     return None
 
