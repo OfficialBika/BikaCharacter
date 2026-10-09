@@ -840,39 +840,50 @@ async def _confirm_delete_card(context: ContextTypes.DEFAULT_TYPE, item: dict) -
     if await db[other_name].find_one({"cardId": card_id}, {"_id": 1}):
         return "⚠️ This Card ID now exists in both collections. Nothing was deleted; resolve the duplicate ID first."
 
-    archive_status = await _delete_archive_message(context, current)
+    # Delete only the exact snapshot that was previewed. If the document has
+    # changed after the freshness check, MongoDB will refuse this deletion.
     delete_query = {"cardId": card_id}
     if item.get("document_id") is not None:
         delete_query["_id"] = item["document_id"]
+    delete_query.update(item.get("snapshot", {}))
     result = await db[collection_name].delete_one(delete_query)
     if int(getattr(result, "deleted_count", 0) or 0) != 1:
-        return "⚠️ Card could not be deleted because it changed during confirmation. Please check the archive message."
+        return "⚠️ Card changed during confirmation. Nothing was deleted; please run /delete ID again."
 
+    archive_status = await _delete_archive_message(context, current)
+    refs_failed = False
+    try:
+        refs = await _cleanup_deleted_card_references(db, [card_id])
+    except Exception as exc:
+        refs = {"users": 0, "favorites": 0, "drops": 0}
+        refs_failed = True
+        print(f"CARD DELETE REFERENCE CLEANUP FAILED: card_id={card_id} error={exc!r}", flush=True)
     removed = dict(current)
     removed["_deleteCollection"] = collection_name
-    refs = await _cleanup_deleted_card_references(db, [card_id])
     await _refresh_hot_lookup_after_deletion(db, [removed])
-    try:
-        await send_card_action_log(
-            context.bot,
-            "Card Deleted",
-            int(item["actor_id"]),
-            {
-                "Card ID": card_id,
-                "Name": current.get("name", ""),
-                "Rarity": current.get("rarity", ""),
-                "Anime": current.get("anime", ""),
-                "Archive media": archive_status,
-                "Harem users modified": refs["users"],
-                "Favorites cleared": refs["favorites"],
-                "Active drops cleared": refs["drops"],
-            },
-        )
-    except Exception:
-        pass
+
+    partial = archive_status == "failed" or refs_failed
+    await send_card_action_log(
+        context.bot,
+        "Card Delete Partial" if partial else "Card Deleted",
+        int(item["actor_id"]),
+        {
+            "Card ID": card_id,
+            "Name": current.get("name", ""),
+            "Rarity": current.get("rarity", ""),
+            "Anime": current.get("anime", ""),
+            "Archive media": archive_status,
+            "Reference cleanup failed": refs_failed,
+            "Harem users modified": refs["users"],
+            "Favorites cleared": refs["favorites"],
+            "Active drops cleared": refs["drops"],
+        },
+    )
     status = "Archive media deleted." if archive_status == "deleted" else f"Archive media: {archive_status}."
+    if refs_failed:
+        status += " Harem/reference cleanup needs review."
     return (
-        "✅ <b>Card Deleted</b>\n\n"
+        f"{'⚠️' if partial else '✅'} <b>{'Card Deleted with Warnings' if partial else 'Card Deleted'}</b>\n\n"
         f"🆔 ID: <code>{escape_html(card_id)}</code>\n"
         f"🎴 Name: {escape_html(current.get('name', ''))}\n"
         f"🌴 Anime: {escape_html(current.get('anime', ''))}\n"
