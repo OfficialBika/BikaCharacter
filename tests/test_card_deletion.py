@@ -262,7 +262,7 @@ class ConfirmedCardDeletionTests(unittest.IsolatedAsyncioTestCase):
         ):
             await admin.delete_confirmation_callback(
                 SimpleNamespace(callback_query=query),
-                SimpleNamespace(),
+                SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock())),
             )
 
         self.assertEqual(len(photos.documents), 0)
@@ -272,6 +272,10 @@ class ConfirmedCardDeletionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _buttons(markup):
+        return [button for row in markup.inline_keyboard for button in row]
+
     def setUp(self):
         self.original_pending = dict(admin._PENDING_CARD_DELETIONS)
         admin._PENDING_CARD_DELETIONS.clear()
@@ -373,7 +377,7 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
         ):
             await admin.delete_confirmation_callback(
                 SimpleNamespace(callback_query=query),
-                SimpleNamespace(),
+                SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock())),
             )
 
         self.assertEqual(len(photos.documents), 0)
