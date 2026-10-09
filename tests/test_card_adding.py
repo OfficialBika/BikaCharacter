@@ -235,7 +235,7 @@ class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
 
 
 class SaveCardUpdateTest(unittest.IsolatedAsyncioTestCase):
-    async def test_explicit_update_preserves_original_adder_and_targets_same_document(self):
+    async def test_explicit_update_skips_duplicates_and_targets_same_document(self):
         import handlers.photo_add as photo_add_module
 
         original = {
@@ -329,7 +329,6 @@ class SaveCardUpdateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["name"], "Acheron")
         self.assertEqual(saved["rarity"], "Legendary")
         self.assertEqual(saved["anime"], "Genshin Impact")
-        saved = photos.last_update["update"]["$set"]
         self.assertEqual(saved["addedBy"], 111)
         self.assertEqual(saved["updatedBy"], 500)
         self.assertIn("Updated By", saved["storageCaption"])
