@@ -122,6 +122,8 @@ Limited Card က <b>Owner-only</b> ဖြစ်ပြီး Custom ID လို�
 
 <b>7️⃣ /update — Update လုပ်မယ့် ID ကို အတိအကျရွေးရန်</b>
 
+အသုံးပြုပုံ — <code>/update ID</code>
+
 အရင်ဆုံး Adding Group ထဲမှာ Card ID ကိုပို့ပါ —
 
 <code>/update 25</code>
