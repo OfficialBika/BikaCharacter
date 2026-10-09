@@ -237,7 +237,7 @@ async def canonical_anime(raw: str) -> str:
         oldest = sorted(_ANIME_CACHE.items(), key=lambda x: x[1][0])[: max(1, len(_ANIME_CACHE) - _ANIME_CACHE_MAX)]
         for old_key, _ in oldest:
             _ANIME_CACHE.pop(old_key, None)
-    return value
+    return fallback
 
 
 async def find_duplicate_media(file_unique_id: str, exclude_card_id: str = "") -> dict | None:
