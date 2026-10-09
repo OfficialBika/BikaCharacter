@@ -63,6 +63,9 @@ class _FakeAnimeCollection:
                     if isinstance(value, dict) and "$ne" in value:
                         if doc.get(key) == value["$ne"]:
                             return False
+                    elif isinstance(value, dict) and "$nin" in value:
+                        if doc.get(key) in value["$nin"]:
+                            return False
                     elif doc.get(key) != value:
                         return False
                 elif key == "anime":
@@ -122,10 +125,11 @@ class DuplicateLookupTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(duplicate)
         self.assertEqual(duplicate["cardId"], "26")
 
-    async def test_media_duplicate_excludes_target_by_document_id_with_numeric_card_id(self):
+    async def test_media_duplicate_ignores_legacy_numeric_alias_of_target_id(self):
         db = _FakeAnimeDB({
             "photos": _FakeAnimeCollection([
-                {"_id": "target-doc", "cardId": 1, "fileUniqueId": "same-file", "name": "Yelan"},
+                {"_id": "target-doc", "cardId": "1", "fileUniqueId": "same-file", "name": "Yelan"},
+                {"_id": "legacy-alias", "cardId": 1, "fileUniqueId": "same-file", "name": "Yelan"},
             ]),
             "limited_cards": _FakeAnimeCollection(),
         })
@@ -135,11 +139,15 @@ class DuplicateLookupTest(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIsNone(duplicate)
 
-    async def test_name_duplicate_excludes_target_by_document_id_with_numeric_card_id(self):
+    async def test_name_duplicate_ignores_legacy_numeric_alias_of_target_id(self):
         db = _FakeAnimeDB({
             "photos": _FakeAnimeCollection([
                 {
-                    "_id": "target-doc", "cardId": 1, "normalizedName": "yelan",
+                    "_id": "target-doc", "cardId": "1", "normalizedName": "yelan",
+                    "anime": "Genshin Impact", "name": "Yelan",
+                },
+                {
+                    "_id": "legacy-alias", "cardId": 1, "normalizedName": "yelan",
                     "anime": "Genshin Impact", "name": "Yelan",
                 },
             ]),
