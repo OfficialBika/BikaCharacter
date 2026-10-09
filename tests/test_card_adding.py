@@ -28,24 +28,31 @@ class _FakeAnimeCollection:
         self.documents = list(documents or [])
 
     async def find_one(self, query, projection=None):
-        if "normalizedName" in query:
-            target = query["normalizedName"]
-            return next(
-                (doc for doc in self.documents if doc.get("normalizedName") == target),
-                None,
-            )
-        if "anime" in query:
-            spec = query["anime"]
-            pattern = spec.get("$regex", "")
-            flags = re.I if spec.get("$options") == "i" else 0
-            return next(
-                (
-                    doc for doc in self.documents
-                    if re.search(pattern, str(doc.get("anime", "")), flags=flags)
-                ),
-                None,
-            )
-        return None
+        def matches(doc):
+            for key, value in query.items():
+                if key == "normalizedName":
+                    if doc.get(key) != value:
+                        return False
+                elif key == "fileUniqueId":
+                    if doc.get(key) != value:
+                        return False
+                elif key == "cardId":
+                    if isinstance(value, dict) and "$ne" in value:
+                        if str(doc.get(key, "")) == str(value["$ne"]):
+                            return False
+                    elif doc.get(key) != value:
+                        return False
+                elif key == "anime":
+                    spec = value
+                    pattern = spec.get("$regex", "")
+                    flags = re.I if spec.get("$options") == "i" else 0
+                    if not re.search(pattern, str(doc.get("anime", "")), flags=flags):
+                        return False
+                else:
+                    return False
+            return True
+
+        return next((doc for doc in self.documents if matches(doc)), None)
 
 
 class _FakeAnimeDB:
@@ -55,6 +62,42 @@ class _FakeAnimeDB:
     def __getitem__(self, name):
         return self.collections.setdefault(name, _FakeAnimeCollection())
 
+
+class DuplicateLookupTest(unittest.IsolatedAsyncioTestCase):
+    async def test_media_duplicate_skips_target_but_finds_another_card(self):
+        db = _FakeAnimeDB({
+            "photos": _FakeAnimeCollection([
+                {"cardId": "25", "fileUniqueId": "same-file", "name": "Target"},
+                {"cardId": "26", "fileUniqueId": "same-file", "name": "Other"},
+            ]),
+            "limited_cards": _FakeAnimeCollection(),
+        })
+        with patch("utils.card_adding.get_db", return_value=db):
+            duplicate = await card_adding.find_duplicate_media("same-file", "25")
+        self.assertIsNotNone(duplicate)
+        self.assertEqual(duplicate["cardId"], "26")
+        self.assertEqual(duplicate["collection"], "photos")
+
+    async def test_name_duplicate_skips_target_but_finds_another_card(self):
+        db = _FakeAnimeDB({
+            "photos": _FakeAnimeCollection([
+                {
+                    "cardId": "25", "normalizedName": "acheron",
+                    "anime": "Honkai Star Rail [🎮]", "name": "Acheron",
+                },
+                {
+                    "cardId": "26", "normalizedName": "acheron",
+                    "anime": "Honkai Star Rail", "name": "Acheron",
+                },
+            ]),
+            "limited_cards": _FakeAnimeCollection(),
+        })
+        with patch("utils.card_adding.get_db", return_value=db):
+            duplicate = await card_adding.find_possible_duplicate(
+                "Acheron", "Honkai Star Rail [🎮]", "25"
+            )
+        self.assertIsNotNone(duplicate)
+        self.assertEqual(duplicate["cardId"], "26")
 
 class CanonicalAnimeTest(unittest.IsolatedAsyncioTestCase):
     async def test_canonical_anime_preserves_only_stored_game_marker(self):
