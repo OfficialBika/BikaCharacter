@@ -880,8 +880,18 @@ async def _save_card(
     if duplicate_other and not existing:
         return False, f"❌ Card ID {parsed['cardId']} already exists in {other_collection_name}."
 
-    media_dup = None if force_new else await find_duplicate_media(media_info.get("fileUniqueId", ""), parsed["cardId"])
-    name_dup = None if force_new else await find_possible_duplicate(parsed["name"], parsed["anime"], parsed["cardId"])
+    exclude_document_id = existing.get("_id") if update_only and existing else None
+    media_dup = None if force_new else await find_duplicate_media(
+        media_info.get("fileUniqueId", ""),
+        parsed["cardId"],
+        exclude_document_id=exclude_document_id,
+    )
+    name_dup = None if force_new else await find_possible_duplicate(
+        parsed["name"],
+        parsed["anime"],
+        parsed["cardId"],
+        exclude_document_id=exclude_document_id,
+    )
     if media_dup or name_dup:
         target = media_dup or name_dup
         duplicate_message = (
