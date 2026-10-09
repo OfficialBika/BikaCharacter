@@ -254,7 +254,11 @@ async def canonical_anime(raw: str) -> str:
     return fallback
 
 
-async def find_duplicate_media(file_unique_id: str, exclude_card_id: str = "") -> dict | None:
+async def find_duplicate_media(
+    file_unique_id: str,
+    exclude_card_id: str = "",
+    exclude_document_id: object | None = None,
+) -> dict | None:
     uid = str(file_unique_id or "").strip()
     if not uid:
         return None
@@ -265,6 +269,8 @@ async def find_duplicate_media(file_unique_id: str, exclude_card_id: str = "") -
         # match and excluding it afterwards can hide a second duplicate.
         if exclude_id:
             query["cardId"] = {"$ne": exclude_id}
+        if exclude_document_id is not None:
+            query["_id"] = {"$ne": exclude_document_id}
         doc = await get_db()[collection_name].find_one(
             query,
             {"cardId": 1, "name": 1, "anime": 1, "rarity": 1},
@@ -274,7 +280,12 @@ async def find_duplicate_media(file_unique_id: str, exclude_card_id: str = "") -
     return None
 
 
-async def find_possible_duplicate(name: str, anime: str, exclude_card_id: str = "") -> dict | None:
+async def find_possible_duplicate(
+    name: str,
+    anime: str,
+    exclude_card_id: str = "",
+    exclude_document_id: object | None = None,
+) -> dict | None:
     anime_base = _strip_game_marker(anime)
     anime_pattern = rf"^{re.escape(anime_base)}(?:\s*\[🎮\])?$"
     query = {
@@ -286,6 +297,8 @@ async def find_possible_duplicate(name: str, anime: str, exclude_card_id: str = 
     # another matching card cannot be missed when the target is also a match.
     if exclude_id:
         query["cardId"] = {"$ne": exclude_id}
+    if exclude_document_id is not None:
+        query["_id"] = {"$ne": exclude_document_id}
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
         doc = await get_db()[collection_name].find_one(
             query,
