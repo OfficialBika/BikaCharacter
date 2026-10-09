@@ -30,6 +30,38 @@ _ANIME_LIST_CACHE: tuple[float, list[str]] | None = None
 _ANIME_LIST_CACHE_TTL = 30
 
 
+def _strip_game_marker(anime: str) -> str:
+    return re.sub(r"\\s*\\[🎮\\]\\s*$", "", str(anime or "").strip(), flags=re.I).strip()
+
+
+async def _find_existing_card_anime(anime: str) -> str:
+    """Return an existing card Anime value, preserving its stored marker."""
+    value = " ".join(str(anime or "").strip().split())
+    if not value:
+        return ""
+
+    exact = re.escape(value)
+    for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
+        doc = await get_db()[collection_name].find_one(
+            {"anime": {"$regex": f"^{exact}$", "$options": "i"}},
+            {"anime": 1},
+        )
+        if doc and doc.get("anime"):
+            return str(doc["anime"]).strip()
+
+    base = _strip_game_marker(value)
+    if base:
+        pattern = rf"^{re.escape(base)}(?:\\s*\\[🎮\\])?$"
+        for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
+            doc = await get_db()[collection_name].find_one(
+                {"anime": {"$regex": pattern, "$options": "i"}},
+                {"anime": 1},
+            )
+            if doc and doc.get("anime"):
+                return str(doc["anime"]).strip()
+    return ""
+
+
 def rarity_aliases() -> dict[str, str]:
     non_limited = [r for r in RARITY_ORDER if str(r).lower() != "limited"]
     aliases: dict[str, str] = {}
@@ -127,7 +159,15 @@ async def add_anime_to_catalog(anime: str, user_id: int = 0) -> str:
             {"$set": {"updatedAt": now, "updatedBy": int(user_id or 0)}},
         )
         _ANIME_LIST_CACHE = None
+        _ANIME_CACHE.pop(normalized, None)
         return canonical
+
+    # If Anime is already present on a card but not in the catalog, reuse its
+    # exact stored value instead of inventing/removing the [🎮] marker.
+    existing_card_anime = await _find_existing_card_anime(value)
+    if existing_card_anime:
+        value = existing_card_anime
+        normalized = normalized_search_name(value)
 
     try:
         await db[ANIMES_COLLECTION].update_one(
@@ -151,6 +191,7 @@ async def add_anime_to_catalog(anime: str, user_id: int = 0) -> str:
         {"name": 1},
     )
     _ANIME_LIST_CACHE = None
+    _ANIME_CACHE.pop(normalized, None)
     return str((doc or {}).get("name") or value).strip()
 
 async def anime_catalog_exists(anime: str) -> bool:
@@ -183,18 +224,15 @@ async def canonical_anime(raw: str) -> str:
         _ANIME_CACHE[key] = (now, result)
         return result
 
-    escaped = re.escape(value)
-    for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
-        doc = await db[collection_name].find_one(
-            {"anime": {"$regex": f"^{escaped}$", "$options": "i"}},
-            {"anime": 1},
-        )
-        if doc and doc.get("anime"):
-            result = str(doc["anime"]).strip()
-            _ANIME_CACHE[key] = (now, result)
-            return result
+    existing_card_anime = await _find_existing_card_anime(value)
+    if existing_card_anime:
+        _ANIME_CACHE[key] = (now, existing_card_anime)
+        return existing_card_anime
 
-    _ANIME_CACHE[key] = (now, value)
+    # An unknown name must not gain a marker merely because it was typed with
+    # one; only a catalog/card record can establish the canonical stored form.
+    fallback = _strip_game_marker(value)
+    _ANIME_CACHE[key] = (now, fallback)
     if len(_ANIME_CACHE) > _ANIME_CACHE_MAX:
         oldest = sorted(_ANIME_CACHE.items(), key=lambda x: x[1][0])[: max(1, len(_ANIME_CACHE) - _ANIME_CACHE_MAX)]
         for old_key, _ in oldest:
@@ -217,7 +255,12 @@ async def find_duplicate_media(file_unique_id: str, exclude_card_id: str = "") -
 
 
 async def find_possible_duplicate(name: str, anime: str, exclude_card_id: str = "") -> dict | None:
-    query = {"normalizedName": normalized_search_name(name), "anime": anime}
+    anime_base = _strip_game_marker(anime)
+    anime_pattern = rf"^{re.escape(anime_base)}(?:\\s*\\[🎮\\])?$"
+    query = {
+        "normalizedName": normalized_search_name(name),
+        "anime": {"$regex": anime_pattern, "$options": "i"},
+    }
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
         doc = await get_db()[collection_name].find_one(
             query,
