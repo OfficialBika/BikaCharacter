@@ -1,8 +1,12 @@
+import re
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
+import utils.card_adding as card_adding
 from utils.card_adding import (
     add_anime_to_catalog,
+    canonical_anime,
     list_anime_catalog_page,
     normalize_add_rarity,
     rarity_aliases,
@@ -17,6 +21,75 @@ from handlers.photo_add import (
     _anime_display,
     is_allowed_add_chat,
 )
+
+
+class _FakeAnimeCollection:
+    def __init__(self, documents=None):
+        self.documents = list(documents or [])
+
+    async def find_one(self, query, projection=None):
+        if "normalizedName" in query:
+            target = query["normalizedName"]
+            return next(
+                (doc for doc in self.documents if doc.get("normalizedName") == target),
+                None,
+            )
+        if "anime" in query:
+            spec = query["anime"]
+            pattern = spec.get("$regex", "")
+            flags = re.I if spec.get("$options") == "i" else 0
+            return next(
+                (
+                    doc for doc in self.documents
+                    if re.search(pattern, str(doc.get("anime", "")), flags=flags)
+                ),
+                None,
+            )
+        return None
+
+
+class _FakeAnimeDB:
+    def __init__(self, collections=None):
+        self.collections = dict(collections or {})
+
+    def __getitem__(self, name):
+        return self.collections.setdefault(name, _FakeAnimeCollection())
+
+
+class CanonicalAnimeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_canonical_anime_preserves_only_stored_game_marker(self):
+        original_cache = dict(card_adding._ANIME_CACHE)
+        try:
+            card_adding._ANIME_CACHE.clear()
+            marked_db = _FakeAnimeDB({
+                "photos": _FakeAnimeCollection([{"anime": "Genshin Impact [🎮]"}])
+            })
+            with patch("utils.card_adding.get_db", return_value=marked_db):
+                self.assertEqual(
+                    await canonical_anime("Genshin Impact"),
+                    "Genshin Impact [🎮]",
+                )
+
+            card_adding._ANIME_CACHE.clear()
+            plain_db = _FakeAnimeDB({
+                "photos": _FakeAnimeCollection([{"anime": "Honkai Star Rail"}])
+            })
+            with patch("utils.card_adding.get_db", return_value=plain_db):
+                self.assertEqual(
+                    await canonical_anime("Honkai Star Rail [🎮]"),
+                    "Honkai Star Rail",
+                )
+
+            card_adding._ANIME_CACHE.clear()
+            empty_db = _FakeAnimeDB()
+            with patch("utils.card_adding.get_db", return_value=empty_db):
+                self.assertEqual(
+                    await canonical_anime("Unknown Anime [🎮]"),
+                    "Unknown Anime",
+                )
+        finally:
+            card_adding._ANIME_CACHE.clear()
+            card_adding._ANIME_CACHE.update(original_cache)
 
 
 class CardAddingParserTest(unittest.TestCase):
