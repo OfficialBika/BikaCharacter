@@ -887,14 +887,12 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
         return "❌ Invalid Anime deletion session. Nothing was deleted."
 
     catalog_id = item.get("catalog_document_id")
+    catalog_snapshot = item.get("catalog_snapshot") or {}
     if catalog_id is not None:
         current_catalog = await db[ANIMES_COLLECTION].find_one({"_id": catalog_id})
-        if not current_catalog:
-            return "⚠️ Anime catalog changed since preview. Nothing was deleted; run /deleteanime again."
-        snapshot = item.get("catalog_snapshot") or {}
-        if (
-            current_catalog.get("name") != snapshot.get("name")
-            or current_catalog.get("normalizedName") != snapshot.get("normalizedName")
+        if not current_catalog or (
+            current_catalog.get("name") != catalog_snapshot.get("name")
+            or current_catalog.get("normalizedName") != catalog_snapshot.get("normalizedName")
         ):
             return "⚠️ Anime catalog changed since preview. Nothing was deleted; run /deleteanime again."
     else:
@@ -910,6 +908,7 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
             {"anime": {"$regex": anime_pattern, "$options": "i"}}
         ).to_list(None)
         current_items.extend((collection_name, card) for card in docs)
+
     expected = {
         (entry["collection_name"], str(entry.get("document_id"))): entry["snapshot"]
         for entry in item.get("cards", [])
@@ -929,28 +928,40 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
     archive_failed = 0
     failed_ids = []
     for collection_name, card in current_items:
+        # Include the preview snapshot in the delete filter so a concurrent
+        # edit cannot be deleted after we have inspected the old values.
+        delete_query = {"_id": card.get("_id"), "cardId": str(card.get("cardId", ""))}
+        delete_query.update(_delete_snapshot(card))
+        try:
+            result = await db[collection_name].delete_one(delete_query)
+        except Exception as exc:
+            print(f"ANIME CARD DELETE FAILED: card_id={card.get('cardId')} error={exc!r}", flush=True)
+            failed_ids.append(str(card.get("cardId", "")))
+            continue
+        if int(getattr(result, "deleted_count", 0) or 0) != 1:
+            failed_ids.append(str(card.get("cardId", "")))
+            continue
+
+        removed = dict(card)
+        removed["_deleteCollection"] = collection_name
+        deleted_cards.append(removed)
         archive_status = await _delete_archive_message(context, card)
         if archive_status == "deleted":
             archive_deleted += 1
         elif archive_status == "failed":
             archive_failed += 1
-
-        query = {"cardId": str(card.get("cardId", ""))}
-        if card.get("_id") is not None:
-            query["_id"] = card["_id"]
-        result = await db[collection_name].delete_one(query)
-        if int(getattr(result, "deleted_count", 0) or 0) == 1:
-            removed = dict(card)
-            removed["_deleteCollection"] = collection_name
-            deleted_cards.append(removed)
-        else:
-            failed_ids.append(str(card.get("cardId", "")))
         if card.get("storageChatId") and card.get("storageMessageId"):
             await asyncio.sleep(0.05)
 
-    refs = await _cleanup_deleted_card_references(
-        db, [str(card.get("cardId", "")) for card in deleted_cards]
-    )
+    cleanup_failed = False
+    try:
+        refs = await _cleanup_deleted_card_references(
+            db, [str(card.get("cardId", "")) for card in deleted_cards]
+        )
+    except Exception as exc:
+        refs = {"users": 0, "favorites": 0, "drops": 0}
+        cleanup_failed = True
+        print(f"ANIME DELETE REFERENCE CLEANUP FAILED: {exc!r}", flush=True)
     await _refresh_hot_lookup_after_deletion(db, deleted_cards)
 
     remaining_cards = []
@@ -959,13 +970,35 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
             {"anime": {"$regex": anime_pattern, "$options": "i"}}
         ).to_list(None)
         remaining_cards.extend(docs)
-    catalog_deleted = 0
-    if not remaining_cards and catalog_id is not None:
-        catalog_result = await db[ANIMES_COLLECTION].delete_one({"_id": catalog_id})
-        catalog_deleted = int(getattr(catalog_result, "deleted_count", 0) or 0)
-        invalidate_anime_cache(str(item.get("anime_name", "")))
 
-    action = "Anime Deleted" if not failed_ids and not remaining_cards else "Anime Delete Partial"
+    catalog_deleted = 0
+    catalog_delete_failed = False
+    if not remaining_cards and catalog_id is not None:
+        catalog_query = {
+            "_id": catalog_id,
+            "name": catalog_snapshot.get("name"),
+            "normalizedName": catalog_snapshot.get("normalizedName"),
+        }
+        try:
+            catalog_result = await db[ANIMES_COLLECTION].delete_one(catalog_query)
+            catalog_deleted = int(getattr(catalog_result, "deleted_count", 0) or 0)
+            catalog_delete_failed = catalog_deleted != 1
+        except Exception as exc:
+            catalog_delete_failed = True
+            print(f"ANIME CATALOG DELETE FAILED: {exc!r}", flush=True)
+        invalidate_anime_cache(str(item.get("anime_name", "")))
+    elif not remaining_cards and catalog_id is None:
+        # A catalog row may have appeared after the preview. Do not silently
+        # remove a row that was not part of the confirmation snapshot.
+        catalog_after = await db[ANIMES_COLLECTION].find_one(
+            {"normalizedName": item.get("anime_normalized")}
+        )
+        catalog_delete_failed = bool(catalog_after)
+
+    partial = bool(
+        failed_ids or remaining_cards or archive_failed or cleanup_failed or catalog_delete_failed
+    )
+    action = "Anime Delete Partial" if partial else "Anime Deleted"
     ids_preview = ", ".join(str(card.get("cardId", "")) for card in deleted_cards[:25]) or "-"
     await send_card_action_log(
         context.bot,
@@ -979,23 +1012,34 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
             "Remaining cards": len(remaining_cards),
             "Failed card IDs": ", ".join(failed_ids[:25]) or "-",
             "Anime catalog deleted": catalog_deleted,
+            "Catalog delete failed": catalog_delete_failed,
             "Archive messages deleted": archive_deleted,
             "Archive deletes failed": archive_failed,
+            "Reference cleanup failed": cleanup_failed,
             "Harem users modified": refs["users"],
             "Favorites cleared": refs["favorites"],
             "Active drops cleared": refs["drops"],
         },
     )
+
+    if remaining_cards:
+        final_note = "Some cards remain. Anime catalog entry was kept so those cards remain searchable."
+    elif partial:
+        final_note = "Some cleanup steps failed. Check the card action log before retrying the command."
+    else:
+        final_note = "The requested Anime and all matching cards have been removed."
+
     return (
-        f"{'✅' if not failed_ids and not remaining_cards else '⚠️'} <b>{'Anime Deleted' if not failed_ids and not remaining_cards else 'Anime Delete Partially Completed'}</b>\n\n"
+        f"{'⚠️' if partial else '✅'} <b>{'Anime Delete Partially Completed' if partial else 'Anime Deleted'}</b>\n\n"
         f"🌴 Anime: {escape_html(item.get('anime_name', ''))}\n"
         f"🎴 Cards deleted: <code>{len(deleted_cards)}/{len(item.get('cards', []))}</code>\n"
         f"📚 Remaining related cards: <code>{len(remaining_cards)}</code>\n"
         f"🗂 Anime catalog entry deleted: <code>{'Yes' if catalog_deleted else 'No'}</code>\n"
         f"🗄 Archive messages deleted: <code>{archive_deleted}</code>\n"
         f"⚠️ Archive delete failures: <code>{archive_failed}</code>\n"
-        f"⚠️ Card delete failures: <code>{len(failed_ids)}</code>\n\n"
-        + ("Some cards remain. Anime catalog entry was kept so remaining cards stay searchable." if remaining_cards else "The requested Anime and all matching cards have been removed.")
+        f"⚠️ Card delete failures: <code>{len(failed_ids)}</code>\n"
+        f"⚠️ Reference cleanup failed: <code>{'Yes' if cleanup_failed else 'No'}</code>\n\n"
+        f"{escape_html(final_note)}"
     )
 
 
@@ -1052,11 +1096,19 @@ async def delete_confirmation_callback(update: Update, context: ContextTypes.DEF
 
     await query.answer("Processing deletion…")
     item["created"] = time.time()
-    if expected_action == "card":
-        result = await _confirm_delete_card(context, item)
-    else:
-        result = await _confirm_delete_anime(context, item)
-    _PENDING_CARD_DELETIONS.pop(token, None)
+    try:
+        if expected_action == "card":
+            result = await _confirm_delete_card(context, item)
+        else:
+            result = await _confirm_delete_anime(context, item)
+    except Exception as exc:
+        print(f"CONFIRMED DELETION FAILED: action={expected_action} token={token} error={exc!r}", flush=True)
+        result = (
+            "⚠️ <b>Deletion stopped with an error.</b>\n\n"
+            "Some steps may already have completed. Check the card action log and current data before trying again."
+        )
+    finally:
+        _PENDING_CARD_DELETIONS.pop(token, None)
     await _edit_delete_prompt(query, result, None)
 
 
