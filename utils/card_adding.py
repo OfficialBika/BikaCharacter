@@ -31,7 +31,7 @@ _ANIME_LIST_CACHE_TTL = 30
 
 
 def _strip_game_marker(anime: str) -> str:
-    return re.sub(r"\\s*\\[🎮\\]\\s*$", "", str(anime or "").strip(), flags=re.I).strip()
+    return re.sub(r"\s*\[🎮\]\s*$", "", str(anime or "").strip(), flags=re.I).strip()
 
 
 async def _find_existing_card_anime(anime: str) -> str:
@@ -51,7 +51,7 @@ async def _find_existing_card_anime(anime: str) -> str:
 
     base = _strip_game_marker(value)
     if base:
-        pattern = rf"^{re.escape(base)}(?:\\s*\\[🎮\\])?$"
+        pattern = rf"^{re.escape(base)}(?:\s*\[🎮\])?$"
         for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
             doc = await get_db()[collection_name].find_one(
                 {"anime": {"$regex": pattern, "$options": "i"}},
@@ -256,7 +256,7 @@ async def find_duplicate_media(file_unique_id: str, exclude_card_id: str = "") -
 
 async def find_possible_duplicate(name: str, anime: str, exclude_card_id: str = "") -> dict | None:
     anime_base = _strip_game_marker(anime)
-    anime_pattern = rf"^{re.escape(anime_base)}(?:\\s*\\[🎮\\])?$"
+    anime_pattern = rf"^{re.escape(anime_base)}(?:\s*\[🎮\])?$"
     query = {
         "normalizedName": normalized_search_name(name),
         "anime": {"$regex": anime_pattern, "$options": "i"},
