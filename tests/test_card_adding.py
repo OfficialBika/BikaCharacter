@@ -8,11 +8,13 @@ from utils.card_adding import (
     rarity_aliases,
     search_anime_catalog,
 )
-from utils.parser import parse_add_caption
+from utils.parser import parse_add_caption, parse_update_caption
 from handlers.add_help import ADD_HELP_TEXT
 from handlers.photo_add import (
     _addmode_keyboard,
     _addmode_text,
+    _anime_article_result,
+    _anime_display,
     is_allowed_add_chat,
 )
 
@@ -39,6 +41,33 @@ class CardAddingParserTest(unittest.TestCase):
         self.assertFalse(parsed["_animeProvided"])
         self.assertFalse(parsed["_rarityProvided"])
 
+    def test_update_caption_requires_explicit_name_rarity_and_anime(self):
+        parsed = parse_update_caption("/update Acheron | Lg | Honkai Star Rail")
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["name"], "Acheron")
+        self.assertEqual(parsed["rarity"], normalize_add_rarity("Lg"))
+        self.assertEqual(parsed["anime"], "Honkai Star Rail")
+        self.assertFalse(parsed["_cardIdProvided"])
+        self.assertIsNone(parse_update_caption("/update 25"))
+        self.assertIsNone(parse_update_caption("/update Acheron | Lg"))
+        self.assertIsNone(parse_update_caption("/add Acheron | Lg | Honkai Star Rail"))
+
+    def test_update_caption_rejects_unknown_rarity_for_handler_validation(self):
+        parsed = parse_update_caption("/update Acheron | NotARarity | Honkai Star Rail")
+        self.assertIsNotNone(parsed)
+        self.assertTrue(parsed["_rarityProvided"])
+        self.assertIsNone(parsed["rarity"])
+
+    def test_anime_display_preserves_the_database_marker_exactly(self):
+        self.assertEqual(_anime_display("Honkai Star Rail"), "Honkai Star Rail")
+        self.assertEqual(_anime_display("Genshin Impact [🎮]"), "Genshin Impact [🎮]")
+
+    def test_anime_inline_result_does_not_invent_game_marker(self):
+        result = _anime_article_result("token", "Honkai Star Rail", "test", "noop")
+        self.assertEqual(result.title, "Honkai Star Rail")
+        marked = _anime_article_result("token", "Genshin Impact [🎮]", "test", "noop")
+        self.assertEqual(marked.title, "Genshin Impact [🎮]")
+
     def test_invalid_rarity_is_not_treated_as_missing_field(self):
         parsed = parse_add_caption("/add Yelan | NotARarity | Genshin Impact")
         self.assertIsNotNone(parsed)
@@ -49,6 +78,7 @@ class CardAddingParserTest(unittest.TestCase):
         self.assertIn("/addmode", ADD_HELP_TEXT)
         self.assertIn("/addanime", ADD_HELP_TEXT)
         self.assertIn("/addhelp", ADD_HELP_TEXT)
+        self.assertIn("/update ID", ADD_HELP_TEXT)
         self.assertIn("Update Existing", ADD_HELP_TEXT)
         self.assertIn("Create New", ADD_HELP_TEXT)
         self.assertIn("Anime Search", ADD_HELP_TEXT)
