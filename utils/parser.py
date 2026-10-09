@@ -118,10 +118,10 @@ def parse_update_caption(caption: str = "") -> Optional[dict]:
     only from the user's active /update ID session.
     """
     first_line = str(caption or "").split("\n")[0].strip()
-    if not re.match(r"^/update(?:@[^\\s]+)?(?:\\s|$)", first_line, flags=re.I):
+    if not re.match(r"^/update(?:@[^\s]+)?(?:\s|$)", first_line, flags=re.I):
         return None
 
-    body = re.sub(r"^/update(?:@[^\\s]+)?", "", first_line, flags=re.I).strip()
+    body = re.sub(r"^/update(?:@[^\s]+)?", "", first_line, flags=re.I).strip()
     parts = [part.strip() for part in body.split("|")]
     if len(parts) != 3 or not all(parts):
         return None
