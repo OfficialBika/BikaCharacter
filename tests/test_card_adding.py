@@ -1,7 +1,7 @@
 import re
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import utils.card_adding as card_adding
 from utils.card_adding import (
@@ -19,6 +19,7 @@ from handlers.photo_add import (
     _addmode_text,
     _anime_article_result,
     _anime_display,
+    _handle_media_update,
     is_allowed_add_chat,
 )
 
@@ -119,6 +120,56 @@ class DuplicateLookupTest(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIsNone(media)
         self.assertIsNone(name)
+
+class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_update_target_comes_from_session_and_is_not_allocated(self):
+        import handlers.photo_add as photo_add_module
+
+        original_pending = dict(photo_add_module._PENDING_UPDATES)
+        photo_add_module._PENDING_UPDATES.clear()
+        key = (500, -100123)
+        photo_add_module._PENDING_UPDATES[key] = {
+            "created": __import__("time").time(),
+            "user_id": 500,
+            "chat_id": -100123,
+            "card_id": "25",
+            "collection_name": "photos",
+        }
+        db = _FakeAnimeDB({
+            "photos": _FakeAnimeCollection([{"cardId": "25", "name": "Old Name"}]),
+            "limited_cards": _FakeAnimeCollection(),
+        })
+        user = SimpleNamespace(id=500)
+        message = SimpleNamespace(chat_id=-100123, reply_text=AsyncMock())
+        update = SimpleNamespace(effective_user=user, effective_message=message)
+        save = AsyncMock(return_value=(True, "Updated"))
+
+        try:
+            with (
+                patch("handlers.photo_add.get_db", return_value=db),
+                patch("handlers.photo_add.canonical_anime", new=AsyncMock(return_value="Genshin Impact")),
+                patch("handlers.photo_add._save_card", new=save),
+            ):
+                await _handle_media_update(
+                    update,
+                    SimpleNamespace(),
+                    "/update Acheron | Lg | Genshin Impact",
+                    {"mediaType": "photo", "fileId": "new-file", "fileUniqueId": "new-unique"},
+                )
+
+            self.assertEqual(save.await_count, 1)
+            args, kwargs = save.await_args
+            parsed = args[2]
+            self.assertEqual(parsed["cardId"], "25")
+            self.assertTrue(parsed["_cardIdProvided"])
+            self.assertTrue(kwargs["update_only"])
+            self.assertEqual(kwargs["expected_collection"], "photos")
+            self.assertNotIn(key, photo_add_module._PENDING_UPDATES)
+            message.reply_text.assert_awaited_once()
+        finally:
+            photo_add_module._PENDING_UPDATES.clear()
+            photo_add_module._PENDING_UPDATES.update(original_pending)
+
 
 class UpdateTargetBindingTest(unittest.TestCase):
     def test_update_only_write_filter_binds_document_id(self):
