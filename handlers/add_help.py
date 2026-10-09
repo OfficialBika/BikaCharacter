@@ -38,7 +38,7 @@ Rarity ကိုနှိပ်ပြီး Un / Co / Ra / Lg / My / Dv / Cv / C
 <b>Anime ရွေးရန်</b>
 <b>Anime Search</b> ကိုနှိပ်ပြီး Inline Search ကိုဖွင့်ပါ။
 ဥပမာ <code>G</code> လို့ရိုက်ရင် G နဲ့စတဲ့ Anime တွေကို ပြပါမယ်။
-ဥပမာ <code>Genshin Impact [🎮]</code> ကိုရွေးလိုက်ရင် Inline result message ကိုဖျက်ပြီး /addmode panel ထဲမှာ Anime ကို သတ်မှတ်ပေးပါမယ်။
+ရွေးလိုက်တဲ့အခါ DB ထဲမှာ သိမ်းထားတဲ့ Anime အမည်ကို marker ပါ/မပါ မပြောင်းဘဲ /addmode panel ထဲမှာ သတ်မှတ်ပေးပါမယ်။
 
 Shortcut အနေနဲ့ —
 <code>/addmode Genshin Impact | Lg</code>
@@ -120,7 +120,21 @@ Limited Card —
 
 Limited Card က <b>Owner-only</b> ဖြစ်ပြီး Custom ID လိုပါတယ်။
 
-<b>7️⃣ Duplicate ကာကွယ်မှု</b>
+<b>7️⃣ /update — Update လုပ်မယ့် ID ကို အတိအကျရွေးရန်</b>
+
+အရင်ဆုံး Adding Group ထဲမှာ Card ID ကိုပို့ပါ —
+
+<code>/update 25</code>
+
+Bot က ID 25 ရဲ့ လက်ရှိ Name, Rarity, Anime နဲ့ Media type ကို ပြပါမယ်။ အဲဒီ ID ကို Update လုပ်ရန် Media အသစ်ကို Caption နဲ့အတူ အောက်ပါပုံစံနဲ့ ပို့ပါ —
+
+<code>/update Acheron | Lg | Honkai Star Rail</code>
+
+Name, Rarity နဲ့ Anime သုံးခုလုံးကို တိတိကျကျပေးရပါမယ်။ Update က ရွေးထားတဲ့ ID ကိုသာ အစားထိုးပြီး ID အသစ်မထုတ်ပါ။ Target ID မရှိတော့တာ၊ Media/Name + Anime duplicate တွေ့တာ သို့မဟုတ် Archive update မအောင်မြင်တာမျိုးမှာ Update ကို ရပ်ပြီး ရှင်းလင်းတဲ့ error ပြပါမယ်။ Session က 10 မိနစ်အတွင်းသာ အကျုံးဝင်ပါတယ်။
+
+<code>/add</code> ရဲ့ ပုံမှန် Add flow က အရင်အတိုင်းပဲ ဆက်အလုပ်လုပ်ပါမယ်။
+
+<b>8️⃣ Duplicate ကာကွယ်မှု</b>
 
 တူညီတဲ့ media သို့မဟုတ် Name + Anime duplicate ဖြစ်နိုင်ရင် Bot က ချက်ချင်း overwrite မလုပ်ပါ။
 
@@ -129,24 +143,24 @@ Button ၃ ခုနဲ့ ရွေးနိုင်ပါတယ် —
 <b>➕ Create New</b>
 <b>✕ Cancel</b>
 
-<b>8️⃣ Media rules</b>
+<b>9️⃣ Media rules</b>
 
 Photo, Video, Animation/GIF နဲ့ Image/Video Document ကို Add လုပ်နိုင်ပါတယ်။
 Forwarded media + <code>/add</code> ကို လက်မခံပါ။
 Media ကို Adding Group ထဲမှာ တိုက်ရိုက် upload လုပ်ရပါမယ်။
 
-<b>9️⃣ Data safety</b>
+<b>🔟 Data safety</b>
 
 Card media ကို Bika Database archive channel ထဲမှာ သိမ်းပြီး MongoDB ကို authoritative card record အဖြစ် Save လုပ်ပါတယ်။
 Archive edit / MongoDB save အတွင်း failure ဖြစ်ရင် orphan archive မကျန်အောင် cleanup / rollback ကို ကြိုးစားပေးထားပါတယ်။
 SQLite hot lookup က performance cache အဖြစ်သာ အသုံးပြုပါတယ်။
 
-<b>🔟 အမြန်အသုံးပြုနိုင်တဲ့ Flow</b>
+<b>1️⃣1️⃣ အမြန်အသုံးပြုနိုင်တဲ့ Flow</b>
 
 <code>/addmode</code>
 → Rarity ရွေး
 → Anime Search
-→ ဥပမာ Genshin Impact [🎮] ရွေး
+→ DB list မှာ ပြထားတဲ့ Anime အမည်ကို အတိအကျရွေး
 →
 
 <code>/add Yelan</code>
