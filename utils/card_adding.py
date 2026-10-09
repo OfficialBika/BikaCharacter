@@ -34,6 +34,15 @@ def _strip_game_marker(anime: str) -> str:
     return re.sub(r"\s*\[🎮\]\s*$", "", str(anime or "").strip(), flags=re.I).strip()
 
 
+def _card_id_variants(card_id: str) -> list[object]:
+    """Return string and legacy numeric forms of the same canonical numeric ID."""
+    value = str(card_id or "").strip()
+    variants: list[object] = [value]
+    if re.fullmatch(r"0|[1-9][0-9]*", value):
+        variants.append(int(value))
+    return variants
+
+
 async def _find_existing_card_anime(anime: str) -> str:
     """Return an existing card Anime value, preserving its stored marker."""
     value = " ".join(str(anime or "").strip().split())
@@ -268,7 +277,9 @@ async def find_duplicate_media(
         # Exclude the selected card in MongoDB itself. Fetching one arbitrary
         # match and excluding it afterwards can hide a second duplicate.
         if exclude_id:
-            query["cardId"] = {"$ne": exclude_id}
+            # Older imports may have stored numeric card IDs as BSON integers.
+            # Treat those as the same logical target as their string form.
+            query["cardId"] = {"$nin": _card_id_variants(exclude_id)}
         if exclude_document_id is not None:
             query["_id"] = {"$ne": exclude_document_id}
         doc = await get_db()[collection_name].find_one(
@@ -296,7 +307,8 @@ async def find_possible_duplicate(
     # As with media duplicates, filter the selected card before find_one so
     # another matching card cannot be missed when the target is also a match.
     if exclude_id:
-        query["cardId"] = {"$ne": exclude_id}
+        # Exclude legacy numeric BSON IDs as well as the usual string ID.
+        query["cardId"] = {"$nin": _card_id_variants(exclude_id)}
     if exclude_document_id is not None:
         query["_id"] = {"$ne": exclude_document_id}
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
