@@ -111,6 +111,34 @@ def parse_add_caption(caption: str = "") -> Optional[dict]:
     }
 
 
+def parse_update_caption(caption: str = "") -> Optional[dict]:
+    """Parse a strict explicit-update caption: /update Name | Rarity | Anime.
+
+    The target card ID is intentionally not parsed from the caption; it comes
+    only from the user's active /update ID session.
+    """
+    first_line = str(caption or "").split("\n")[0].strip()
+    if not re.match(r"^/update(?:@[^\\s]+)?(?:\\s|$)", first_line, flags=re.I):
+        return None
+
+    body = re.sub(r"^/update(?:@[^\\s]+)?", "", first_line, flags=re.I).strip()
+    parts = [part.strip() for part in body.split("|")]
+    if len(parts) != 3 or not all(parts):
+        return None
+
+    name, rarity_raw, anime = parts
+    return {
+        "cardId": "",
+        "name": name,
+        "normalizedName": normalized_search_name(name),
+        "rarity": normalize_add_rarity(rarity_raw),
+        "anime": anime,
+        "_cardIdProvided": False,
+        "_animeProvided": True,
+        "_rarityProvided": True,
+    }
+
+
 def parse_forward_character(raw_text: str = "") -> Optional[dict]:
     text = str(raw_text or "").replace("\r", "").replace("\u00a0", " ").strip()
     if not text:
