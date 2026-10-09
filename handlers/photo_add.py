@@ -943,8 +943,16 @@ async def _save_card(
     }
 
     try:
+        update_filter = {"cardId": parsed["cardId"]}
+        if update_only:
+            # Bind the write to the exact document inspected above. If someone
+            # deletes/recreates the same card ID during the Telegram archive
+            # edit, this update must not overwrite the replacement document.
+            document_id = existing.get("_id")
+            if document_id is not None:
+                update_filter["_id"] = document_id
         write_result = await db[collection_name].update_one(
-            {"cardId": parsed["cardId"]},
+            update_filter,
             {"$set": doc, "$setOnInsert": {"createdAt": now}},
             upsert=not update_only,
         )
