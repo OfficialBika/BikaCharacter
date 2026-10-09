@@ -53,6 +53,12 @@ class _FakeAnimeCollection:
                 elif key == "fileUniqueId":
                     if doc.get(key) != value:
                         return False
+                elif key == "_id":
+                    if isinstance(value, dict) and "$ne" in value:
+                        if doc.get(key) == value["$ne"]:
+                            return False
+                    elif doc.get(key) != value:
+                        return False
                 elif key == "cardId":
                     if isinstance(value, dict) and "$ne" in value:
                         if str(doc.get(key, "")) == str(value["$ne"]):
@@ -115,6 +121,35 @@ class DuplicateLookupTest(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIsNotNone(duplicate)
         self.assertEqual(duplicate["cardId"], "26")
+
+    async def test_media_duplicate_excludes_target_by_document_id_with_numeric_card_id(self):
+        db = _FakeAnimeDB({
+            "photos": _FakeAnimeCollection([
+                {"_id": "target-doc", "cardId": 1, "fileUniqueId": "same-file", "name": "Yelan"},
+            ]),
+            "limited_cards": _FakeAnimeCollection(),
+        })
+        with patch("utils.card_adding.get_db", return_value=db):
+            duplicate = await card_adding.find_duplicate_media(
+                "same-file", "1", exclude_document_id="target-doc"
+            )
+        self.assertIsNone(duplicate)
+
+    async def test_name_duplicate_excludes_target_by_document_id_with_numeric_card_id(self):
+        db = _FakeAnimeDB({
+            "photos": _FakeAnimeCollection([
+                {
+                    "_id": "target-doc", "cardId": 1, "normalizedName": "yelan",
+                    "anime": "Genshin Impact", "name": "Yelan",
+                },
+            ]),
+            "limited_cards": _FakeAnimeCollection(),
+        })
+        with patch("utils.card_adding.get_db", return_value=db):
+            duplicate = await card_adding.find_possible_duplicate(
+                "Yelan", "Genshin Impact", "1", exclude_document_id="target-doc"
+            )
+        self.assertIsNone(duplicate)
 
     async def test_no_duplicate_when_only_target_matches(self):
         db = _FakeAnimeDB({
@@ -243,8 +278,8 @@ class SaveCardUpdateTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("handlers.photo_add.get_db", return_value=db),
-            patch("handlers.photo_add.find_duplicate_media", new=AsyncMock(return_value=None)),
-            patch("handlers.photo_add.find_possible_duplicate", new=AsyncMock(return_value=None)),
+            patch("handlers.photo_add.find_duplicate_media", new=AsyncMock(return_value=None)) as media_duplicate,
+            patch("handlers.photo_add.find_possible_duplicate", new=AsyncMock(return_value=None)) as name_duplicate,
             patch("handlers.photo_add._edit_card_database_message", new=AsyncMock(return_value=storage)),
             patch("handlers.photo_add.upsert_card", new=AsyncMock()),
             patch("handlers.photo_add.sync_counter_at_least", new=AsyncMock()),
@@ -257,6 +292,8 @@ class SaveCardUpdateTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(ok, result)
         self.assertIn("Card Update", result)
+        self.assertEqual(media_duplicate.await_args.kwargs["exclude_document_id"], "mongo-target")
+        self.assertEqual(name_duplicate.await_args.kwargs["exclude_document_id"], "mongo-target")
         self.assertIsNotNone(photos.last_update)
         self.assertEqual(photos.last_update["query"]["cardId"], "25")
         self.assertEqual(photos.last_update["query"]["_id"], "mongo-target")
