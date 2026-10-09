@@ -204,6 +204,16 @@ async def anime_catalog_exists(anime: str) -> bool:
     ))
 
 
+def invalidate_anime_cache(anime: str) -> None:
+    """Invalidate in-process Anime resolution/list caches after catalog deletion."""
+    global _ANIME_LIST_CACHE
+    normalized = normalized_search_name(anime)
+    if normalized:
+        _ANIME_CACHE.pop(normalized, None)
+    _ANIME_LIST_CACHE = None
+
+
+
 async def canonical_anime(raw: str) -> str:
     value = " ".join(str(raw or "").strip().split())
     if not value:
