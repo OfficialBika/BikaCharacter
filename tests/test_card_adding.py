@@ -166,7 +166,7 @@ class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
             ):
                 await _handle_media_update(
                     update,
-                    SimpleNamespace(),
+                    SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock())),
                     "/update Acheron | Lg | New Anime",
                     {"mediaType": "photo", "fileId": "new-file", "fileUniqueId": "new-unique"},
                 )
