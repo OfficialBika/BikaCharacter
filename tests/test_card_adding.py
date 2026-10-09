@@ -120,6 +120,46 @@ class UpdateTargetBindingTest(unittest.TestCase):
 
 
 class CanonicalAnimeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_existing_card_marker_wins_over_normalized_catalog_alias(self):
+        original_cache = dict(card_adding._ANIME_CACHE)
+        try:
+            card_adding._ANIME_CACHE.clear()
+            db = _FakeAnimeDB({
+                "animes": _FakeAnimeCollection([
+                    {"normalizedName": "genshin impact", "name": "Genshin Impact"}
+                ]),
+                "photos": _FakeAnimeCollection([
+                    {"anime": "Genshin Impact [🎮]"}
+                ]),
+            })
+            with patch("utils.card_adding.get_db", return_value=db):
+                self.assertEqual(
+                    await canonical_anime("Genshin Impact"),
+                    "Genshin Impact [🎮]",
+                )
+        finally:
+            card_adding._ANIME_CACHE.clear()
+            card_adding._ANIME_CACHE.update(original_cache)
+
+    async def test_catalog_canonical_name_is_used_when_card_has_no_value(self):
+        original_cache = dict(card_adding._ANIME_CACHE)
+        try:
+            card_adding._ANIME_CACHE.clear()
+            db = _FakeAnimeDB({
+                "animes": _FakeAnimeCollection([
+                    {"normalizedName": "honkai star rail", "name": "Honkai Star Rail"}
+                ]),
+                "photos": _FakeAnimeCollection(),
+            })
+            with patch("utils.card_adding.get_db", return_value=db):
+                self.assertEqual(
+                    await canonical_anime("Honkai Star Rail"),
+                    "Honkai Star Rail",
+                )
+        finally:
+            card_adding._ANIME_CACHE.clear()
+            card_adding._ANIME_CACHE.update(original_cache)
+
     async def test_canonical_anime_preserves_only_stored_game_marker(self):
         original_cache = dict(card_adding._ANIME_CACHE)
         try:
