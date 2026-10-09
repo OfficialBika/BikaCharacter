@@ -141,7 +141,7 @@ class UpdateTargetBindingTest(unittest.TestCase):
 
 
 class CanonicalAnimeTest(unittest.IsolatedAsyncioTestCase):
-    async def test_existing_card_marker_wins_over_normalized_catalog_alias(self):
+    async def test_catalog_canonical_name_wins_over_card_variant(self):
         original_cache = dict(card_adding._ANIME_CACHE)
         try:
             card_adding._ANIME_CACHE.clear()
@@ -156,7 +156,7 @@ class CanonicalAnimeTest(unittest.IsolatedAsyncioTestCase):
             with patch("utils.card_adding.get_db", return_value=db):
                 self.assertEqual(
                     await canonical_anime("Genshin Impact"),
-                    "Genshin Impact [🎮]",
+                    "Genshin Impact",
                 )
         finally:
             card_adding._ANIME_CACHE.clear()
