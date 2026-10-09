@@ -55,6 +55,7 @@ async def register_commands(app: Application) -> None:
             BotCommand("hmode", "Change harem view"),
             BotCommand("addmode", "Set fast card adding defaults"),
             BotCommand("addanime", "Set default adding anime"),
+            BotCommand("update", "Update an existing card by ID"),
             BotCommand("addhelp", "Card adding help"),
             BotCommand("settings", "Open bot settings"),
             BotCommand("topgroup", "Top groups by catches"),
