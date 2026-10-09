@@ -1443,6 +1443,12 @@ async def _handle_media_add(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         return
 
     parsed["anime"] = await canonical_anime(parsed["anime"])
+    if not parsed["anime"]:
+        await update.effective_message.reply_text(
+            "❌ Anime အမည်ကို DB ထဲမှာ မတွေ့ပါ။ DB ထဲက Anime အမည်ကို အတိအကျ သုံးပါ။",
+            parse_mode="HTML",
+        )
+        return
 
     if not parsed.get("rarity"):
         await _prompt_for_rarity(update, parsed, media_info)
@@ -1637,6 +1643,12 @@ async def _handle_media_update(
     parsed["_animeProvided"] = True
     parsed["_rarityProvided"] = True
     parsed["anime"] = await canonical_anime(parsed["anime"])
+    if not parsed["anime"]:
+        await message.reply_text(
+            "❌ Anime အမည်ကို DB ထဲမှာ မတွေ့ပါ။ Target Card မပြောင်းထားပါ။",
+            parse_mode="HTML",
+        )
+        return
 
     try:
         ok, result = await _save_card(
