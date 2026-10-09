@@ -99,6 +99,26 @@ class DuplicateLookupTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(duplicate)
         self.assertEqual(duplicate["cardId"], "26")
 
+class UpdateTargetBindingTest(unittest.TestCase):
+    def test_update_only_write_filter_binds_document_id(self):
+        import inspect
+        import handlers.photo_add as photo_add_module
+
+        source = inspect.getsource(photo_add_module._save_card)
+        self.assertIn('if update_only:', source)
+        self.assertIn('document_id = existing.get("_id")', source)
+        self.assertIn('update_filter["_id"] = document_id', source)
+        self.assertIn('upsert=not update_only', source)
+
+    def test_telegram_command_menu_exposes_update(self):
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "bot.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('BotCommand("update", "Update an existing card by ID")', source)
+
+
 class CanonicalAnimeTest(unittest.IsolatedAsyncioTestCase):
     async def test_canonical_anime_preserves_only_stored_game_marker(self):
         original_cache = dict(card_adding._ANIME_CACHE)
