@@ -508,16 +508,18 @@ def _extract_message_media(msg) -> dict | None:
     return None
 
 
-def _database_caption(action: str, parsed: dict, adder) -> str:
+def _database_caption(action: str, parsed: dict, adder, updated_by: bool = False) -> str:
     icon = "✅" if action == "Saved" else "♻️"
+    person_label = "Updated By" if updated_by else "Added By"
+    person_id_label = "Updater ID" if updated_by else "Adder ID"
     return (
         f"{icon} <b>{escape_html(action)}</b>\n\n"
         f"👤 <b>Name:</b> {escape_html(parsed['name'])}\n"
         f"🆔 <b>ID:</b> {escape_html(parsed['cardId'])}\n"
         f"🏷 <b>Rarity:</b> {escape_html(parsed['rarity'])}\n"
         f"🌴 <b>Anime:</b> {escape_html(parsed['anime'])}\n\n"
-        f"➕ <b>Added By:</b> {mention_user(adder)}\n"
-        f"🆔 <b>Adder ID:</b> {adder.id}"
+        f"➕ <b>{person_label}:</b> {mention_user(adder)}\n"
+        f"🆔 <b>{person_id_label}:</b> {adder.id}"
     )
 
 
@@ -899,7 +901,7 @@ async def _save_card(
         )
 
     action = "Update" if existing else "Saved"
-    caption = _database_caption(action, parsed, user)
+    caption = _database_caption(action, parsed, user, updated_by=update_only)
 
     storage = None
     archive_edited_existing = False
@@ -941,6 +943,11 @@ async def _save_card(
         "addedBy": user.id,
         "updatedAt": now,
     }
+    if update_only:
+        # Explicit /update edits card fields/media, not the original adder
+        # attribution. Track the editor separately for auditability.
+        doc["addedBy"] = existing.get("addedBy", user.id)
+        doc["updatedBy"] = user.id
 
     try:
         update_filter = {"cardId": parsed["cardId"]}
