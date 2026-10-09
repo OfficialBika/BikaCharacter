@@ -1206,6 +1206,13 @@ def register_admin_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("rmadder", rmadder_cmd))
     app.add_handler(CommandHandler("raritylist", raritylist_cmd))
     app.add_handler(CommandHandler("delete", delete_card_cmd))
+    app.add_handler(CommandHandler("deleteanime", delete_anime_cmd))
+    app.add_handler(
+        CallbackQueryHandler(
+            delete_confirmation_callback,
+            pattern=r"^(?:carddel|animedel):",
+        )
+    )
     app.add_handler(CommandHandler("give", give_cmd))
     app.add_handler(CommandHandler("free", free_cmd))
     app.add_handler(CommandHandler("rmfree", rmfree_cmd))
