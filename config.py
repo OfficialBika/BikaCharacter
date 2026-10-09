@@ -82,6 +82,8 @@ UPDATE_CHANNEL_URL = os.getenv("UPDATE_CHANNEL_URL", "https://t.me/Official_Bika
 # Channel where bot-added-to-group logs will be posted.
 # Use @channelusername or numeric channel ID like -1001234567890.
 GROUP_LOG_CHANNEL_ID = os.getenv("GROUP_LOG_CHANNEL_ID", os.getenv("LOG_CHANNEL_ID", "")).strip()
+# Channel for card update/delete audit logs. Falls back to the legacy log channel.
+CARD_LOG_CHANNEL_ID = os.getenv("CARD_LOG_CHANNEL_ID", GROUP_LOG_CHANNEL_ID).strip()
 
 # If True, bot will try to create an invite link for private groups so the
 # group name in the log channel can be clickable. Bot must be admin in that group
