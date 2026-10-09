@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import re
+import secrets
 import time
 from typing import Optional
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import InlineKeyboardMarkup, Update
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from config import (
     ADMIN_CHANGETIME_MAX,
@@ -13,12 +15,17 @@ from config import (
     DEFAULT_CHANGETIME,
     OWNER_CHANGETIME_MAX,
     OWNER_CHANGETIME_MIN,
+    ANIMES_COLLECTION,
     LIMITED_CARDS_COLLECTION,
     RARITY_ORDER,
 )
 from database.mongodb import get_db
 from utils.db_helpers import add_card_to_user_id, ensure_group, ensure_user, ensure_user_by_id, get_photo_by_card_id
-from utils.hot_lookup import invalidate_user_rank
+from utils.hot_lookup import delete_card as delete_hot_lookup_card, invalidate_user_rank, upsert_card
+from utils.card_adding import invalidate_anime_cache
+from utils.card_logs import send_card_action_log
+from utils.buttons import action_button
+from utils.parser import normalized_search_name
 from utils.permissions import is_global_admin, is_group_admin_or_owner, is_owner
 from utils.rarity import get_rarity_emoji
 from utils.text import escape_html, mention_user, safe_chat_title, uptime_text, utcnow
