@@ -462,6 +462,17 @@ async def update_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         "collection_name": collection_name,
     }
 
+    # Best-effort preview of the exact card/archive message that will be replaced.
+    if target.get("storageChatId") and target.get("storageMessageId"):
+        try:
+            await context.bot.copy_message(
+                chat_id=int(message.chat_id),
+                from_chat_id=int(target["storageChatId"]),
+                message_id=int(target["storageMessageId"]),
+            )
+        except Exception as exc:
+            print(f"CARD UPDATE PREVIEW WARNING: {exc!r}", flush=True)
+
     media_type = str(target.get("mediaType") or "unknown").strip().title()
     await message.reply_text(
         "♻️ <b>CARD UPDATE</b>\n\n"
@@ -932,11 +943,16 @@ async def _save_card(
     }
 
     try:
-        await db[collection_name].update_one(
+        write_result = await db[collection_name].update_one(
             {"cardId": parsed["cardId"]},
             {"$set": doc, "$setOnInsert": {"createdAt": now}},
-            upsert=True,
+            upsert=not update_only,
         )
+        if update_only and int(getattr(write_result, "matched_count", 0) or 0) != 1:
+            raise RuntimeError(
+                f"Target Card ID {parsed['cardId']} disappeared during update; "
+                "the archive will be restored and no new card will be created."
+            )
     except Exception:
         # Archive and MongoDB are not a single ACID transaction. Compensate the
         # Telegram archive mutation so a failed MongoDB write does not leave a
