@@ -422,7 +422,7 @@ async def update_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     _prune_pending()
     args = list(context.args or [])
     if len(args) != 1:
-        await message.reply_text("Usage: <code>/update ID</code>\\nExample: <code>/update 25</code>", parse_mode="HTML")
+        await message.reply_text("Usage: <code>/update ID</code>\nExample: <code>/update 25</code>", parse_mode="HTML")
         return
 
     card_id = str(args[0] or "").strip()
@@ -464,15 +464,15 @@ async def update_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     media_type = str(target.get("mediaType") or "unknown").strip().title()
     await message.reply_text(
-        "♻️ <b>CARD UPDATE</b>\\n\\n"
-        f"🆔 <b>ID:</b> <code>{escape_html(card_id)}</code>\\n"
-        f"🎴 <b>Name:</b> {escape_html(target.get('name', ''))}\\n"
-        f"🏷 <b>Rarity:</b> {escape_html(target.get('rarity', ''))}\\n"
-        f"🌴 <b>Anime:</b> {escape_html(target.get('anime', ''))}\\n"
-        f"🎞 <b>Media:</b> {escape_html(media_type)}\\n\\n"
-        "ဒီ Card ကို update လုပ်ရန် Media အသစ်ကို Caption နဲ့အတူ ပို့ပါ —\\n"
-        "<code>/update New Name | Lg | Anime Name</code>\\n\\n"
-        "Name, Rarity နဲ့ Anime သုံးခုလုံးကို ပေးရပါမယ်။\\n"
+        "♻️ <b>CARD UPDATE</b>\n\n"
+        f"🆔 <b>ID:</b> <code>{escape_html(card_id)}</code>\n"
+        f"🎴 <b>Name:</b> {escape_html(target.get('name', ''))}\n"
+        f"🏷 <b>Rarity:</b> {escape_html(target.get('rarity', ''))}\n"
+        f"🌴 <b>Anime:</b> {escape_html(target.get('anime', ''))}\n"
+        f"🎞 <b>Media:</b> {escape_html(media_type)}\n\n"
+        "ဒီ Card ကို update လုပ်ရန် Media အသစ်ကို Caption နဲ့အတူ ပို့ပါ —\n"
+        "<code>/update New Name | Lg | Anime Name</code>\n\n"
+        "Name, Rarity နဲ့ Anime သုံးခုလုံးကို ပေးရပါမယ်။\n"
         "ဒီ session က 10 မိနစ်အတွင်းသာ အကျုံးဝင်ပြီး Target ID ကို မပြောင်းပါ။",
         parse_mode="HTML",
     )
@@ -1565,8 +1565,8 @@ async def _handle_media_update(
     parsed = parse_update_caption(caption)
     if not parsed:
         await message.reply_text(
-            "❌ Invalid update format. Media Caption ကို —\\n"
-            "<code>/update New Name | Lg | Anime Name</code>\\n"
+            "❌ Invalid update format. Media Caption ကို —\n"
+            "<code>/update New Name | Lg | Anime Name</code>\n"
             "ပုံစံအတိုင်း ပို့ပါ။",
             parse_mode="HTML",
         )
