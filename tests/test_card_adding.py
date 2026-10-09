@@ -20,6 +20,7 @@ from handlers.photo_add import (
     _addmode_text,
     _anime_article_result,
     _anime_display,
+    _database_caption,
     _handle_media_update,
     is_allowed_add_chat,
 )
@@ -173,6 +174,23 @@ class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
 
 
 class UpdateTargetBindingTest(unittest.TestCase):
+    def test_explicit_update_archive_caption_identifies_updater(self):
+        adder = SimpleNamespace(id=500)
+        parsed = {
+            "name": "Acheron",
+            "cardId": "25",
+            "rarity": "Legendary",
+            "anime": "Honkai Star Rail",
+        }
+        with patch("handlers.photo_add.mention_user", return_value="@adder"):
+            explicit_update = _database_caption("Update", parsed, adder, updated_by=True)
+            normal_add = _database_caption("Saved", parsed, adder)
+        self.assertIn("Updated By", explicit_update)
+        self.assertIn("Updater ID", explicit_update)
+        self.assertNotIn("Added By", explicit_update)
+        self.assertIn("Added By", normal_add)
+        self.assertIn("Adder ID", normal_add)
+
     def test_update_only_write_filter_binds_document_id(self):
         import inspect
         import handlers.photo_add as photo_add_module
