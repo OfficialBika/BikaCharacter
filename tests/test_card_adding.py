@@ -42,6 +42,9 @@ class _FakeAnimeCollection:
                             return False
                     elif doc.get(key) != value:
                         return False
+                elif key == "normalizedName":
+                    if doc.get(key) != value:
+                        return False
                 elif key == "anime":
                     spec = value
                     pattern = spec.get("$regex", "")
