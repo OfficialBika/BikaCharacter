@@ -184,7 +184,7 @@ class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
             action_log.assert_awaited_once()
             log_args, log_kwargs = action_log.await_args
             self.assertEqual(log_args[1], "Card Updated")
-            self.assertEqual(log_args[3]["Old Anime"], "")
+            self.assertEqual(log_args[3]["Old Anime"], "Old Anime")
             self.assertEqual(log_args[3]["New Anime"], "New Anime")
         finally:
             photo_add_module._PENDING_UPDATES.clear()
