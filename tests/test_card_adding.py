@@ -253,7 +253,20 @@ class SaveCardUpdateTest(unittest.IsolatedAsyncioTestCase):
             "storageCaption": "old archive caption",
             "addedBy": 111,
         }
-        photos = _FakeAnimeCollection([original])
+        photos = _FakeAnimeCollection([
+            original,
+            {
+                "_id": "mongo-other-card",
+                "cardId": "26",
+                "name": "Acheron",
+                "normalizedName": "acheron",
+                "rarity": "Legendary",
+                "anime": "Genshin Impact",
+                "fileId": "other-file",
+                "fileUniqueId": "new-unique",
+                "mediaType": "photo",
+            },
+        ])
         db = _FakeAnimeDB({
             "photos": photos,
             "limited_cards": _FakeAnimeCollection(),
@@ -286,8 +299,14 @@ class SaveCardUpdateTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("handlers.photo_add.get_db", return_value=db),
-            patch("handlers.photo_add.find_duplicate_media", new=AsyncMock(return_value=None)) as media_duplicate,
-            patch("handlers.photo_add.find_possible_duplicate", new=AsyncMock(return_value=None)) as name_duplicate,
+            patch(
+                "handlers.photo_add.find_duplicate_media",
+                new=AsyncMock(return_value={"cardId": "26", "name": "Acheron", "anime": "Genshin Impact", "rarity": "Legendary"}),
+            ) as media_duplicate,
+            patch(
+                "handlers.photo_add.find_possible_duplicate",
+                new=AsyncMock(return_value={"cardId": "26", "name": "Acheron", "anime": "Genshin Impact", "rarity": "Legendary"}),
+            ) as name_duplicate,
             patch("handlers.photo_add._edit_card_database_message", new=AsyncMock(return_value=storage)),
             patch("handlers.photo_add.upsert_card", new=AsyncMock()),
             patch("handlers.photo_add.sync_counter_at_least", new=AsyncMock()),
@@ -300,12 +319,16 @@ class SaveCardUpdateTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(ok, result)
         self.assertIn("Card Update", result)
-        self.assertEqual(media_duplicate.await_args.kwargs["exclude_document_id"], "mongo-target")
-        self.assertEqual(name_duplicate.await_args.kwargs["exclude_document_id"], "mongo-target")
+        media_duplicate.assert_not_awaited()
+        name_duplicate.assert_not_awaited()
         self.assertIsNotNone(photos.last_update)
         self.assertEqual(photos.last_update["query"]["cardId"], "25")
         self.assertEqual(photos.last_update["query"]["_id"], "mongo-target")
         self.assertFalse(photos.last_update["upsert"])
+        saved = photos.last_update["update"]["$set"]
+        self.assertEqual(saved["name"], "Acheron")
+        self.assertEqual(saved["rarity"], "Legendary")
+        self.assertEqual(saved["anime"], "Genshin Impact")
         saved = photos.last_update["update"]["$set"]
         self.assertEqual(saved["addedBy"], 111)
         self.assertEqual(saved["updatedBy"], 500)
