@@ -286,8 +286,20 @@ class SaveCardUpdateTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("handlers.photo_add.get_db", return_value=db),
-            patch("handlers.photo_add.find_duplicate_media", new=AsyncMock(return_value=None)) as media_duplicate,
-            patch("handlers.photo_add.find_possible_duplicate", new=AsyncMock(return_value=None)) as name_duplicate,
+            patch(
+                "handlers.photo_add.find_duplicate_media",
+                new=AsyncMock(return_value={
+                    "cardId": "99", "name": "Acheron", "anime": "Genshin Impact",
+                    "rarity": "Legendary",
+                }),
+            ) as media_duplicate,
+            patch(
+                "handlers.photo_add.find_possible_duplicate",
+                new=AsyncMock(return_value={
+                    "cardId": "99", "name": "Acheron", "anime": "Genshin Impact",
+                    "rarity": "Legendary",
+                }),
+            ) as name_duplicate,
             patch("handlers.photo_add._edit_card_database_message", new=AsyncMock(return_value=storage)),
             patch("handlers.photo_add.upsert_card", new=AsyncMock()),
             patch("handlers.photo_add.sync_counter_at_least", new=AsyncMock()),
@@ -300,8 +312,9 @@ class SaveCardUpdateTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(ok, result)
         self.assertIn("Card Update", result)
-        self.assertEqual(media_duplicate.await_args.kwargs["exclude_document_id"], "mongo-target")
-        self.assertEqual(name_duplicate.await_args.kwargs["exclude_document_id"], "mongo-target")
+        # Updates intentionally bypass both duplicate lookups altogether.
+        media_duplicate.assert_not_awaited()
+        name_duplicate.assert_not_awaited()
         self.assertIsNotNone(photos.last_update)
         self.assertEqual(photos.last_update["query"]["cardId"], "25")
         self.assertEqual(photos.last_update["query"]["_id"], "mongo-target")
