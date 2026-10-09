@@ -215,6 +215,15 @@ async def canonical_anime(raw: str) -> str:
         return cached[1]
 
     db = get_db()
+    # Exact user input can be a legacy alias containing or omitting [🎮].
+    # Prefer a matching stored card value before normalized catalog lookup so
+    # we retain its exact display spelling/marker even when catalog keys
+    # normalize both variants to the same name.
+    existing_card_anime = await _find_existing_card_anime(value)
+    if existing_card_anime:
+        _ANIME_CACHE[key] = (now, existing_card_anime)
+        return existing_card_anime
+
     catalog_doc = await db[ANIMES_COLLECTION].find_one(
         {"normalizedName": key},
         {"name": 1},
