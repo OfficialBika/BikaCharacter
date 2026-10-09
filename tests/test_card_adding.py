@@ -61,7 +61,7 @@ class _FakeAnimeCollection:
                         return False
                 elif key == "cardId":
                     if isinstance(value, dict) and "$ne" in value:
-                        if str(doc.get(key, "")) == str(value["$ne"]):
+                        if doc.get(key) == value["$ne"]:
                             return False
                     elif doc.get(key) != value:
                         return False
