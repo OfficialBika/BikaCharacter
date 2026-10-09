@@ -233,13 +233,8 @@ async def canonical_anime(raw: str) -> str:
         _ANIME_CACHE[key] = (now, result)
         return result
 
-    existing_card_anime = await _find_existing_card_anime(value)
-    if existing_card_anime:
-        _ANIME_CACHE[key] = (now, existing_card_anime)
-        return existing_card_anime
-
-    # An unknown name must not gain a marker merely because it was typed with
-    # one; only a catalog/card record can establish the canonical stored form.
+    # This is a new Anime with no stored card/catalog value: never create
+    # the game marker from user input alone.
     fallback = _strip_game_marker(value)
     _ANIME_CACHE[key] = (now, fallback)
     if len(_ANIME_CACHE) > _ANIME_CACHE_MAX:
