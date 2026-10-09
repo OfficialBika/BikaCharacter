@@ -861,6 +861,8 @@ async def _save_card(
     if update_only and not existing:
         return False, f"❌ Target Card ID {escape_html(parsed['cardId'])} no longer exists. Run /update {escape_html(parsed['cardId'])} again."
     duplicate_other = await db[other_collection_name].find_one({"cardId": parsed["cardId"]}, {"_id": 1})
+    if update_only and duplicate_other:
+        return False, f"❌ Card ID {escape_html(parsed['cardId'])} exists in both card collections. The target was not modified."
     if duplicate_other and not existing:
         return False, f"❌ Card ID {parsed['cardId']} already exists in {other_collection_name}."
 
