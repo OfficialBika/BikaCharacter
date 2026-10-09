@@ -880,18 +880,21 @@ async def _save_card(
     if duplicate_other and not existing:
         return False, f"❌ Card ID {parsed['cardId']} already exists in {other_collection_name}."
 
-    exclude_document_id = existing.get("_id") if update_only and existing else None
-    media_dup = None if force_new else await find_duplicate_media(
-        media_info.get("fileUniqueId", ""),
-        parsed["cardId"],
-        exclude_document_id=exclude_document_id,
-    )
-    name_dup = None if force_new else await find_possible_duplicate(
-        parsed["name"],
-        parsed["anime"],
-        parsed["cardId"],
-        exclude_document_id=exclude_document_id,
-    )
+    # Explicit /update is an edit of the already-selected target, not a new add.
+    # Never run duplicate checks here: name, rarity, Anime, and media must be
+    # replaceable on this exact ID even if another card has matching values.
+    media_dup = None
+    name_dup = None
+    if not update_only and not force_new:
+        media_dup = await find_duplicate_media(
+            media_info.get("fileUniqueId", ""),
+            parsed["cardId"],
+        )
+        name_dup = await find_possible_duplicate(
+            parsed["name"],
+            parsed["anime"],
+            parsed["cardId"],
+        )
     if media_dup or name_dup:
         target = media_dup or name_dup
         duplicate_message = (
@@ -900,12 +903,6 @@ async def _save_card(
             f"Anime: {escape_html(target.get('anime', ''))}\n"
             f"Rarity: {escape_html(target.get('rarity', ''))}"
         )
-        if update_only:
-            return False, (
-                "⚠️ <b>UPDATE NOT APPLIED — DUPLICATE DETECTED</b>\n\n"
-                f"{duplicate_message}\n\n"
-                "ဒီ Card ကို Update မလုပ်ထားပါ။ Target ID ကို အတိအကျ ထိန်းထားပါတယ်။"
-            )
         return False, (
             f"⚠️ POSSIBLE DUPLICATE\n\n"
             f"{duplicate_message}"
