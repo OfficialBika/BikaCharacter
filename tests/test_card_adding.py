@@ -29,6 +29,15 @@ from handlers.photo_add import (
 class _FakeAnimeCollection:
     def __init__(self, documents=None):
         self.documents = list(documents or [])
+        self.last_update = None
+
+    async def update_one(self, query, update, upsert=False):
+        self.last_update = {
+            "query": dict(query),
+            "update": update,
+            "upsert": upsert,
+        }
+        return SimpleNamespace(matched_count=1, modified_count=1)
 
     async def find_one(self, query, projection=None):
         def matches(doc):
@@ -171,6 +180,82 @@ class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
         finally:
             photo_add_module._PENDING_UPDATES.clear()
             photo_add_module._PENDING_UPDATES.update(original_pending)
+
+
+class SaveCardUpdateTest(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_update_preserves_original_adder_and_targets_same_document(self):
+        import handlers.photo_add as photo_add_module
+
+        original = {
+            "_id": "mongo-target",
+            "cardId": "25",
+            "name": "Old Name",
+            "normalizedName": "old name",
+            "rarity": "Legendary",
+            "anime": "Genshin Impact",
+            "fileId": "old-file",
+            "fileUniqueId": "old-unique",
+            "mediaType": "photo",
+            "storageChatId": -100555,
+            "storageMessageId": 77,
+            "storageCaption": "old archive caption",
+            "addedBy": 111,
+        }
+        photos = _FakeAnimeCollection([original])
+        db = _FakeAnimeDB({
+            "photos": photos,
+            "limited_cards": _FakeAnimeCollection(),
+        })
+        user = SimpleNamespace(id=500)
+        parsed = {
+            "cardId": "25",
+            "name": "Acheron",
+            "normalizedName": "acheron",
+            "rarity": "Legendary",
+            "anime": "Genshin Impact",
+            "_cardIdProvided": True,
+            "_animeProvided": True,
+            "_rarityProvided": True,
+        }
+        media = {
+            "mediaType": "photo",
+            "fileId": "new-file",
+            "fileUniqueId": "new-unique",
+            "mimeType": "",
+            "fileName": "",
+        }
+        storage = {
+            "storageChatId": -100555,
+            "storageMessageId": 77,
+            "fileId": "new-archive-file",
+            "fileUniqueId": "new-archive-unique",
+            "mediaType": "photo",
+        }
+
+        with (
+            patch("handlers.photo_add.get_db", return_value=db),
+            patch("handlers.photo_add.find_duplicate_media", new=AsyncMock(return_value=None)),
+            patch("handlers.photo_add.find_possible_duplicate", new=AsyncMock(return_value=None)),
+            patch("handlers.photo_add._edit_card_database_message", new=AsyncMock(return_value=storage)),
+            patch("handlers.photo_add.upsert_card", new=AsyncMock()),
+            patch("handlers.photo_add.sync_counter_at_least", new=AsyncMock()),
+            patch("handlers.photo_add.mention_user", return_value="@adder"),
+        ):
+            ok, result = await photo_add_module._save_card(
+                SimpleNamespace(), user, parsed, media,
+                update_only=True, expected_collection="photos",
+            )
+
+        self.assertTrue(ok, result)
+        self.assertIn("Card Update", result)
+        self.assertIsNotNone(photos.last_update)
+        self.assertEqual(photos.last_update["query"]["cardId"], "25")
+        self.assertEqual(photos.last_update["query"]["_id"], "mongo-target")
+        self.assertFalse(photos.last_update["upsert"])
+        saved = photos.last_update["update"]["$set"]
+        self.assertEqual(saved["addedBy"], 111)
+        self.assertEqual(saved["updatedBy"], 500)
+        self.assertIn("Updated By", saved["storageCaption"])
 
 
 class UpdateTargetBindingTest(unittest.TestCase):
