@@ -30,6 +30,38 @@ _ANIME_LIST_CACHE: tuple[float, list[str]] | None = None
 _ANIME_LIST_CACHE_TTL = 30
 
 
+def _strip_game_marker(anime: str) -> str:
+    return re.sub(r"\s*\[🎮\]\s*$", "", str(anime or "").strip(), flags=re.I).strip()
+
+
+async def _find_existing_card_anime(anime: str) -> str:
+    """Return an existing card Anime value, preserving its stored marker."""
+    value = " ".join(str(anime or "").strip().split())
+    if not value:
+        return ""
+
+    exact = re.escape(value)
+    for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
+        doc = await get_db()[collection_name].find_one(
+            {"anime": {"$regex": f"^{exact}$", "$options": "i"}},
+            {"anime": 1},
+        )
+        if doc and doc.get("anime"):
+            return str(doc["anime"]).strip()
+
+    base = _strip_game_marker(value)
+    if base:
+        pattern = rf"^{re.escape(base)}(?:\s*\[🎮\])?$"
+        for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
+            doc = await get_db()[collection_name].find_one(
+                {"anime": {"$regex": pattern, "$options": "i"}},
+                {"anime": 1},
+            )
+            if doc and doc.get("anime"):
+                return str(doc["anime"]).strip()
+    return ""
+
+
 def rarity_aliases() -> dict[str, str]:
     non_limited = [r for r in RARITY_ORDER if str(r).lower() != "limited"]
     aliases: dict[str, str] = {}
@@ -127,7 +159,15 @@ async def add_anime_to_catalog(anime: str, user_id: int = 0) -> str:
             {"$set": {"updatedAt": now, "updatedBy": int(user_id or 0)}},
         )
         _ANIME_LIST_CACHE = None
+        _ANIME_CACHE.pop(normalized, None)
         return canonical
+
+    # If Anime is already present on a card but not in the catalog, reuse its
+    # exact stored value instead of inventing/removing the [🎮] marker.
+    existing_card_anime = await _find_existing_card_anime(value)
+    if existing_card_anime:
+        value = existing_card_anime
+        normalized = normalized_search_name(value)
 
     try:
         await db[ANIMES_COLLECTION].update_one(
@@ -151,6 +191,7 @@ async def add_anime_to_catalog(anime: str, user_id: int = 0) -> str:
         {"name": 1},
     )
     _ANIME_LIST_CACHE = None
+    _ANIME_CACHE.pop(normalized, None)
     return str((doc or {}).get("name") or value).strip()
 
 async def anime_catalog_exists(anime: str) -> bool:
@@ -174,6 +215,8 @@ async def canonical_anime(raw: str) -> str:
         return cached[1]
 
     db = get_db()
+    # The Anime catalog is the canonical source when it has an entry. This
+    # prevents mixed legacy card values from overriding the configured name.
     catalog_doc = await db[ANIMES_COLLECTION].find_one(
         {"normalizedName": key},
         {"name": 1},
@@ -183,47 +226,62 @@ async def canonical_anime(raw: str) -> str:
         _ANIME_CACHE[key] = (now, result)
         return result
 
-    escaped = re.escape(value)
-    for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
-        doc = await db[collection_name].find_one(
-            {"anime": {"$regex": f"^{escaped}$", "$options": "i"}},
-            {"anime": 1},
-        )
-        if doc and doc.get("anime"):
-            result = str(doc["anime"]).strip()
-            _ANIME_CACHE[key] = (now, result)
-            return result
+    # Older cards may predate the Anime catalog. In that case reuse an exact
+    # stored card value (including [🎮]) rather than synthesizing a marker.
+    existing_card_anime = await _find_existing_card_anime(value)
+    if existing_card_anime:
+        _ANIME_CACHE[key] = (now, existing_card_anime)
+        return existing_card_anime
 
-    _ANIME_CACHE[key] = (now, value)
+    # This is a new Anime with no stored card/catalog value: never create
+    # the game marker from user input alone.
+    fallback = _strip_game_marker(value)
+    _ANIME_CACHE[key] = (now, fallback)
     if len(_ANIME_CACHE) > _ANIME_CACHE_MAX:
         oldest = sorted(_ANIME_CACHE.items(), key=lambda x: x[1][0])[: max(1, len(_ANIME_CACHE) - _ANIME_CACHE_MAX)]
         for old_key, _ in oldest:
             _ANIME_CACHE.pop(old_key, None)
-    return value
+    return fallback
 
 
 async def find_duplicate_media(file_unique_id: str, exclude_card_id: str = "") -> dict | None:
     uid = str(file_unique_id or "").strip()
     if not uid:
         return None
+    exclude_id = str(exclude_card_id or "").strip()
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
+        query = {"fileUniqueId": uid}
+        # Exclude the selected card in MongoDB itself. Fetching one arbitrary
+        # match and excluding it afterwards can hide a second duplicate.
+        if exclude_id:
+            query["cardId"] = {"$ne": exclude_id}
         doc = await get_db()[collection_name].find_one(
-            {"fileUniqueId": uid},
+            query,
             {"cardId": 1, "name": 1, "anime": 1, "rarity": 1},
         )
-        if doc and str(doc.get("cardId", "")) != str(exclude_card_id):
+        if doc:
             return {**doc, "collection": collection_name}
     return None
 
 
 async def find_possible_duplicate(name: str, anime: str, exclude_card_id: str = "") -> dict | None:
-    query = {"normalizedName": normalized_search_name(name), "anime": anime}
+    anime_base = _strip_game_marker(anime)
+    anime_pattern = rf"^{re.escape(anime_base)}(?:\s*\[🎮\])?$"
+    query = {
+        "normalizedName": normalized_search_name(name),
+        "anime": {"$regex": anime_pattern, "$options": "i"},
+    }
+    exclude_id = str(exclude_card_id or "").strip()
+    # As with media duplicates, filter the selected card before find_one so
+    # another matching card cannot be missed when the target is also a match.
+    if exclude_id:
+        query["cardId"] = {"$ne": exclude_id}
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
         doc = await get_db()[collection_name].find_one(
             query,
             {"cardId": 1, "name": 1, "anime": 1, "rarity": 1},
         )
-        if doc and str(doc.get("cardId", "")) != str(exclude_card_id):
+        if doc:
             return {**doc, "collection": collection_name}
     return None
 

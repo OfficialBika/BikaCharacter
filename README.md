@@ -355,7 +355,7 @@ The configured Adding Group is the only place where `/add` media can be added. D
 - `Anime Search` — success, Telegram inline Anime search
 - `Close` — danger
 
-Anime Search uses the database Anime catalog. For example, type `G` to show Anime names starting with G, then select `Genshin Impact [🎮]`; the inline selection message is removed and the original `/addmode` panel is updated.
+Anime Search uses the database Anime catalog. For example, type `G` to show Anime names starting with G. The inline result displays the stored canonical Anime name exactly as saved in the database, with `[🎮]` only when that marker is already part of the stored name.
 
 The shortcut remains supported:
 
@@ -368,3 +368,7 @@ When an Anime default exists but Rarity is not set, `/add Name` pauses with a Ra
 `/addanime` shows Anime entries known by the database, with pagination and `Back`, `Next`, `Add New`, and `Close` controls.
 
 `Add New` opens the same style of Telegram inline Anime search. Selecting an existing Anime changes the current add-mode default; choosing the add-new result writes the Anime to the MongoDB `animes` catalog and sets it as the default.
+
+### `/update ID`
+
+Use `/update 25` in the Adding Group to select an existing card. The bot shows that card's current fields. Upload the replacement media with a caption such as `/update Acheron | Lg | Honkai Star Rail`. Name, Rarity, and Anime are required. The explicit update only targets the selected ID, does not create a new ID, and refuses the update if the target disappears, a duplicate is detected, or the archive update fails. The update session expires after 10 minutes. The normal `/add` flow remains separate and unchanged.

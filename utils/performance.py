@@ -157,7 +157,9 @@ class BoundedTTLCache:
         self._bytes += size
         self._items.move_to_end(key)
         while self._items and (len(self._items) > self.max_items or self._bytes > self.max_bytes):
-            _, _, removed_size = self._items.popitem(last=False)
+            # OrderedDict.popitem() returns (key, value); the value is our
+            # (payload, expiry, estimated_size) tuple.
+            _, (_, _, removed_size) = self._items.popitem(last=False)
             self._bytes -= removed_size
 
     def delete(self, key: str) -> None:

@@ -47,7 +47,7 @@ from utils.card_adding import (
 )
 from utils.hot_lookup import upsert_card
 from utils.buttons import action_button, rarity_button
-from utils.parser import parse_add_caption
+from utils.parser import parse_add_caption, parse_update_caption
 from utils.permissions import is_owner
 from utils.text import escape_html, mention_user, utcnow
 
@@ -61,6 +61,7 @@ SUPPORTED_DOCUMENT_MIME_PREFIXES = ("image/", "video/")
 
 _PENDING: dict[str, dict] = {}
 _PENDING_RARITY: dict[str, dict] = {}
+_PENDING_UPDATES: dict[tuple[int, int], dict] = {}
 _PENDING_TTL = 600
 _PENDING_MAX = 2000
 
@@ -76,6 +77,7 @@ def _prune_pending() -> None:
     for mapping, ttl in (
         (_PENDING, _PENDING_TTL),
         (_PENDING_RARITY, _PENDING_TTL),
+        (_PENDING_UPDATES, _PENDING_TTL),
         (_ADDMODE_PANELS, _ANIME_PICKER_TTL),
         (_ANIME_PICKERS, _ANIME_PICKER_TTL),
     ):
@@ -86,6 +88,7 @@ def _prune_pending() -> None:
     for mapping, maximum in (
         (_PENDING, _PENDING_MAX),
         (_PENDING_RARITY, _PENDING_MAX),
+        (_PENDING_UPDATES, _PENDING_MAX),
         (_ADDMODE_PANELS, _ANIME_PICKER_MAX),
         (_ANIME_PICKERS, _ANIME_PICKER_MAX),
     ):
@@ -113,10 +116,10 @@ def _store_addmode_panel(token: str, user_id: int, chat_id: int, message_id: int
 
 
 def _anime_display(anime: str) -> str:
+    # The database's canonical Anime name is authoritative; do not synthesize
+    # the optional [🎮] marker for display.
     value = str(anime or "").strip()
-    if not value:
-        return "Not set"
-    return value if value.endswith("[🎮]") else f"{value} [🎮]"
+    return value or "Not set"
 
 
 def _addmode_text(anime: str, rarity: str) -> str:
@@ -391,6 +394,101 @@ async def is_allowed_adder(user) -> bool:
     return int(user_id) in [int(x) for x in (settings or {}).get("adderIds", [])]
 
 
+def _update_session_key(user_id: int, chat_id: int) -> tuple[int, int]:
+    return int(user_id), int(chat_id)
+
+
+async def update_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Begin an explicit update session for one existing card ID."""
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
+    key = _update_session_key(user.id, message.chat_id)
+
+    if not is_allowed_add_chat(update):
+        _PENDING_UPDATES.pop(key, None)
+        await message.reply_text("❌ /update can only be used in the configured Adding Group.")
+        return
+    if not await is_allowed_adder(user):
+        _PENDING_UPDATES.pop(key, None)
+        await message.reply_text("❌ You are not allowed to update cards. Ask the owner to grant Adding permission.")
+        return
+
+    # A new /update attempt always replaces or clears the previous target for
+    # this user/chat, so a failed ID lookup cannot leave a stale target active.
+    _PENDING_UPDATES.pop(key, None)
+    _prune_pending()
+    args = list(context.args or [])
+    if len(args) != 1:
+        await message.reply_text("Usage: <code>/update ID</code>\nExample: <code>/update 25</code>", parse_mode="HTML")
+        return
+
+    card_id = str(args[0] or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", card_id):
+        await message.reply_text("❌ Invalid Card ID. Use <code>/update ID</code>.", parse_mode="HTML")
+        return
+
+    db = get_db()
+    normal_doc = await db["photos"].find_one({"cardId": card_id})
+    limited_doc = await db[LIMITED_CARDS_COLLECTION].find_one({"cardId": card_id})
+    if normal_doc and limited_doc:
+        await message.reply_text(
+            f"❌ Card ID <code>{escape_html(card_id)}</code> exists in both card collections. "
+            "Please ask the owner to resolve the duplicate ID before updating.",
+            parse_mode="HTML",
+        )
+        return
+
+    target = normal_doc or limited_doc
+    if not target:
+        await message.reply_text(
+            f"❌ Card ID <code>{escape_html(card_id)}</code> was not found. No card was changed.",
+            parse_mode="HTML",
+        )
+        return
+
+    collection_name = LIMITED_CARDS_COLLECTION if limited_doc else "photos"
+    if collection_name == LIMITED_CARDS_COLLECTION and not is_owner(user):
+        await message.reply_text("❌ Limited cards can only be updated by the owner.")
+        return
+
+    _PENDING_UPDATES[key] = {
+        "created": time.time(),
+        "user_id": int(user.id),
+        "chat_id": int(message.chat_id),
+        "card_id": card_id,
+        "collection_name": collection_name,
+    }
+
+    # Best-effort preview of the exact card/archive message that will be replaced.
+    if target.get("storageChatId") and target.get("storageMessageId"):
+        try:
+            await context.bot.copy_message(
+                chat_id=int(message.chat_id),
+                from_chat_id=int(target["storageChatId"]),
+                message_id=int(target["storageMessageId"]),
+            )
+        except Exception as exc:
+            print(f"CARD UPDATE PREVIEW WARNING: {exc!r}", flush=True)
+
+    media_type = str(target.get("mediaType") or "unknown").strip().title()
+    await message.reply_text(
+        "♻️ <b>CARD UPDATE</b>\n\n"
+        f"🆔 <b>ID:</b> <code>{escape_html(card_id)}</code>\n"
+        f"🎴 <b>Name:</b> {escape_html(target.get('name', ''))}\n"
+        f"🏷 <b>Rarity:</b> {escape_html(target.get('rarity', ''))}\n"
+        f"🌴 <b>Anime:</b> {escape_html(target.get('anime', ''))}\n"
+        f"🎞 <b>Media:</b> {escape_html(media_type)}\n\n"
+        "ဒီ Card ကို update လုပ်ရန် Media အသစ်ကို Caption နဲ့အတူ ပို့ပါ —\n"
+        "<code>/update New Name | Lg | Anime Name</code>\n\n"
+        "Name, Rarity နဲ့ Anime သုံးခုလုံးကို ပေးရပါမယ်။\n"
+        "ဒီ session က 10 မိနစ်အတွင်းသာ အကျုံးဝင်ပြီး Target ID ကို မပြောင်းပါ။",
+        parse_mode="HTML",
+    )
+
+
 def _extract_message_media(msg) -> dict | None:
     if msg.photo:
         media = msg.photo[-1]
@@ -410,16 +508,18 @@ def _extract_message_media(msg) -> dict | None:
     return None
 
 
-def _database_caption(action: str, parsed: dict, adder) -> str:
+def _database_caption(action: str, parsed: dict, adder, updated_by: bool = False) -> str:
     icon = "✅" if action == "Saved" else "♻️"
+    person_label = "Updated By" if updated_by else "Added By"
+    person_id_label = "Updater ID" if updated_by else "Adder ID"
     return (
         f"{icon} <b>{escape_html(action)}</b>\n\n"
         f"👤 <b>Name:</b> {escape_html(parsed['name'])}\n"
         f"🆔 <b>ID:</b> {escape_html(parsed['cardId'])}\n"
         f"🏷 <b>Rarity:</b> {escape_html(parsed['rarity'])}\n"
         f"🌴 <b>Anime:</b> {escape_html(parsed['anime'])}\n\n"
-        f"➕ <b>Added By:</b> {mention_user(adder)}\n"
-        f"🆔 <b>Adder ID:</b> {adder.id}"
+        f"➕ <b>{person_label}:</b> {mention_user(adder)}\n"
+        f"🆔 <b>{person_id_label}:</b> {adder.id}"
     )
 
 
@@ -735,18 +835,22 @@ def _pending_keyboard(user_id: int, token: str) -> InlineKeyboardMarkup:
     ]])
 
 
-async def _save_card(context, user, parsed: dict, media_info: dict, force_new: bool = False) -> tuple[bool, str]:
+async def _save_card(
+    context,
+    user,
+    parsed: dict,
+    media_info: dict,
+    force_new: bool = False,
+    update_only: bool = False,
+    expected_collection: str | None = None,
+) -> tuple[bool, str]:
     card_id_provided = bool(parsed.pop("_cardIdProvided", False))
     parsed.pop("_animeProvided", None)
     parsed.pop("_rarityProvided", None)
     parsed["cardId"] = str(parsed.get("cardId", "")).strip()
 
-    # Anime is stored/displayed with the requested 🎮 marker. Keep this
-    # normalization at the save boundary so the rest of the add flow is unchanged.
-    anime = str(parsed.get("anime", "") or "").strip()
-    if anime and not anime.endswith("[🎮]"):
-        parsed["anime"] = f"{anime} [🎮]"
-
+    # Preserve the canonical Anime value selected from the database. In
+    # particular, do not manufacture a [🎮] suffix during card saving.
     limited_card = is_limited_card(parsed, card_id_provided)
     if limited_card and not is_owner(user):
         return False, "❌ Limited cards can only be added/updated by the owner."
@@ -763,8 +867,15 @@ async def _save_card(context, user, parsed: dict, media_info: dict, force_new: b
     other_collection_name = "photos" if limited_card else LIMITED_CARDS_COLLECTION
     db = get_db()
 
+    if update_only and expected_collection and collection_name != expected_collection:
+        return False, "❌ The selected card type cannot be changed with /update. The target card was not modified."
+
     existing = await db[collection_name].find_one({"cardId": parsed["cardId"]})
+    if update_only and not existing:
+        return False, f"❌ Target Card ID {escape_html(parsed['cardId'])} no longer exists. Run /update {escape_html(parsed['cardId'])} again."
     duplicate_other = await db[other_collection_name].find_one({"cardId": parsed["cardId"]}, {"_id": 1})
+    if update_only and duplicate_other:
+        return False, f"❌ Card ID {escape_html(parsed['cardId'])} exists in both card collections. The target was not modified."
     if duplicate_other and not existing:
         return False, f"❌ Card ID {parsed['cardId']} already exists in {other_collection_name}."
 
@@ -772,14 +883,25 @@ async def _save_card(context, user, parsed: dict, media_info: dict, force_new: b
     name_dup = None if force_new else await find_possible_duplicate(parsed["name"], parsed["anime"], parsed["cardId"])
     if media_dup or name_dup:
         target = media_dup or name_dup
+        duplicate_message = (
+            f"Name: {escape_html(target.get('name', ''))}\n"
+            f"ID: {escape_html(target.get('cardId', ''))}\n"
+            f"Anime: {escape_html(target.get('anime', ''))}\n"
+            f"Rarity: {escape_html(target.get('rarity', ''))}"
+        )
+        if update_only:
+            return False, (
+                "⚠️ <b>UPDATE NOT APPLIED — DUPLICATE DETECTED</b>\n\n"
+                f"{duplicate_message}\n\n"
+                "ဒီ Card ကို Update မလုပ်ထားပါ။ Target ID ကို အတိအကျ ထိန်းထားပါတယ်။"
+            )
         return False, (
             f"⚠️ POSSIBLE DUPLICATE\n\n"
-            f"Name: {target.get('name', '')}\nID: {target.get('cardId', '')}\n"
-            f"Anime: {target.get('anime', '')}\nRarity: {target.get('rarity', '')}"
+            f"{duplicate_message}"
         )
 
     action = "Update" if existing else "Saved"
-    caption = _database_caption(action, parsed, user)
+    caption = _database_caption(action, parsed, user, updated_by=update_only)
 
     storage = None
     archive_edited_existing = False
@@ -821,13 +943,31 @@ async def _save_card(context, user, parsed: dict, media_info: dict, force_new: b
         "addedBy": user.id,
         "updatedAt": now,
     }
+    if update_only:
+        # Explicit /update edits card fields/media, not the original adder
+        # attribution. Track the editor separately for auditability.
+        doc["addedBy"] = existing.get("addedBy", user.id)
+        doc["updatedBy"] = user.id
 
     try:
-        await db[collection_name].update_one(
-            {"cardId": parsed["cardId"]},
+        update_filter = {"cardId": parsed["cardId"]}
+        if update_only:
+            # Bind the write to the exact document inspected above. If someone
+            # deletes/recreates the same card ID during the Telegram archive
+            # edit, this update must not overwrite the replacement document.
+            document_id = existing.get("_id")
+            if document_id is not None:
+                update_filter["_id"] = document_id
+        write_result = await db[collection_name].update_one(
+            update_filter,
             {"$set": doc, "$setOnInsert": {"createdAt": now}},
-            upsert=True,
+            upsert=not update_only,
         )
+        if update_only and int(getattr(write_result, "matched_count", 0) or 0) != 1:
+            raise RuntimeError(
+                f"Target Card ID {parsed['cardId']} disappeared during update; "
+                "the archive will be restored and no new card will be created."
+            )
     except Exception:
         # Archive and MongoDB are not a single ACID transaction. Compensate the
         # Telegram archive mutation so a failed MongoDB write does not leave a
@@ -1073,7 +1213,7 @@ def _anime_article_result(token: str, anime: str, purpose: str, apply_command: s
     safe_name = " ".join(str(anime or "").strip().split())
     return InlineQueryResultArticle(
         id=f"{purpose}:{md5(safe_name.encode('utf-8')).hexdigest()[:24]}",
-        title=f"{safe_name} [🎮]",
+        title=safe_name,
         description="Select this Anime.",
         input_message_content=InputTextMessageContent(
             f"/{apply_command} {token} {safe_name}"
@@ -1318,6 +1458,12 @@ async def _handle_media_add(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         return
 
     parsed["anime"] = await canonical_anime(parsed["anime"])
+    if not parsed["anime"]:
+        await update.effective_message.reply_text(
+            "❌ Anime အမည်ကို DB ထဲမှာ မတွေ့ပါ။ DB ထဲက Anime အမည်ကို အတိအကျ သုံးပါ။",
+            parse_mode="HTML",
+        )
+        return
 
     if not parsed.get("rarity"):
         await _prompt_for_rarity(update, parsed, media_info)
@@ -1433,6 +1579,119 @@ async def add_duplicate_callback(update: Update, context: ContextTypes.DEFAULT_T
         await q.edit_message_text(f"❌ Card add failed: {escape_html(str(exc))}", parse_mode="HTML")
 
 
+async def _handle_media_update(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    caption: str,
+    media_info: dict,
+) -> None:
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
+    key = _update_session_key(user.id, message.chat_id)
+    _prune_pending()
+    item = _PENDING_UPDATES.get(key)
+    if not item or time.time() - float(item.get("created", 0)) > _PENDING_TTL:
+        _PENDING_UPDATES.pop(key, None)
+        await message.reply_text(
+            "❌ Update session မရှိတော့ပါ။ အရင် <code>/update ID</code> ပို့ပြီးမှ Media အသစ်ကို ပို့ပါ။",
+            parse_mode="HTML",
+        )
+        return
+
+    parsed = parse_update_caption(caption)
+    if not parsed:
+        await message.reply_text(
+            "❌ Invalid update format. Media Caption ကို —\n"
+            "<code>/update New Name | Lg | Anime Name</code>\n"
+            "ပုံစံအတိုင်း ပို့ပါ။",
+            parse_mode="HTML",
+        )
+        return
+    if not parsed.get("rarity"):
+        await message.reply_text(
+            "❌ Invalid rarity. Use a supported rarity name or short code such as <code>Lg</code>.",
+            parse_mode="HTML",
+        )
+        return
+    if len(parsed["name"]) > 120 or len(parsed["anime"]) > 120:
+        await message.reply_text("❌ Name နဲ့ Anime တို့ကို စာလုံး 120 ထက် မကျော်ပါစေနဲ့။")
+        return
+
+    target_id = str(item.get("card_id") or "").strip()
+    collection_name = str(item.get("collection_name") or "")
+    if collection_name not in {"photos", LIMITED_CARDS_COLLECTION} or not target_id:
+        _PENDING_UPDATES.pop(key, None)
+        await message.reply_text("❌ Update session မမှန်ကန်တော့ပါ။ <code>/update ID</code> နဲ့ ပြန်စပါ။", parse_mode="HTML")
+        return
+
+    is_limited_target = collection_name == LIMITED_CARDS_COLLECTION
+    if is_limited_target and not is_owner(user):
+        _PENDING_UPDATES.pop(key, None)
+        await message.reply_text("❌ Limited cards can only be updated by the owner.")
+        return
+    if is_limited_target and str(parsed["rarity"]).lower() != str(LIMITED_RARITY_NAME).lower():
+        await message.reply_text(
+            "❌ Limited Card ရဲ့ Rarity ကို Limited အတိုင်းထားရပါမယ်။ Target Card မပြောင်းထားပါ။"
+        )
+        return
+    if not is_limited_target and str(parsed["rarity"]).lower() == str(LIMITED_RARITY_NAME).lower():
+        await message.reply_text(
+            "❌ Normal Card ကို /update နဲ့ Limited Card အဖြစ် မပြောင်းနိုင်ပါ။ Target Card မပြောင်းထားပါ။"
+        )
+        return
+
+    db = get_db()
+    current = await db[collection_name].find_one({"cardId": target_id})
+    if not current:
+        _PENDING_UPDATES.pop(key, None)
+        await message.reply_text(
+            f"❌ Target Card ID <code>{escape_html(target_id)}</code> မရှိတော့ပါ။ <code>/update {escape_html(target_id)}</code> နဲ့ ပြန်စပါ။",
+            parse_mode="HTML",
+        )
+        return
+
+    parsed["cardId"] = target_id
+    parsed["_cardIdProvided"] = True
+    parsed["_animeProvided"] = True
+    parsed["_rarityProvided"] = True
+    parsed["anime"] = await canonical_anime(parsed["anime"])
+    if not parsed["anime"]:
+        await message.reply_text(
+            "❌ Anime အမည်ကို DB ထဲမှာ မတွေ့ပါ။ Target Card မပြောင်းထားပါ။",
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        ok, result = await _save_card(
+            context,
+            user,
+            parsed,
+            media_info,
+            update_only=True,
+            expected_collection=collection_name,
+        )
+    except TelegramError as exc:
+        await message.reply_text(
+            f"❌ Telegram/archive error: {escape_html(str(exc))}",
+            parse_mode="HTML",
+        )
+        return
+    except Exception as exc:
+        await message.reply_text(
+            f"❌ Card update failed: {escape_html(str(exc))}",
+            parse_mode="HTML",
+        )
+        return
+
+    if ok:
+        _PENDING_UPDATES.pop(key, None)
+    await message.reply_text(result, parse_mode="HTML")
+
+
 async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_allowed_add_chat(update) or not update.effective_user:
         return
@@ -1444,14 +1703,21 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     caption = (msg.caption or "").strip()
     looks_like_add = bool(re.match(r"^/add(?:@[^\s]+)?(?:\s|$)", caption, flags=re.I))
+    looks_like_update = bool(re.match(r"^/update(?:@[^\s]+)?(?:\s|$)", caption, flags=re.I))
     if is_forwarded_message(msg):
         if looks_like_add:
             await msg.reply_text("❌ Forward add is disabled. Please upload the media directly with /add.")
+        elif looks_like_update:
+            await msg.reply_text("❌ Forward update is disabled. Please upload the media directly with /update.")
         return
-    if not looks_like_add:
+    if not looks_like_add and not looks_like_update:
         return
     if not await is_allowed_adder(update.effective_user):
         await msg.reply_text("❌ You are not allowed to add/update cards. Ask the owner to use /addadder for your account.")
+        return
+
+    if looks_like_update:
+        await _handle_media_update(update, context, caption, media_info)
         return
 
     parsed = parse_add_caption(caption)
@@ -1470,6 +1736,7 @@ async def photo_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 def register_photo_add_handlers(app: Application) -> None:
+    app.add_handler(CommandHandler("update", update_start_cmd))
     app.add_handler(CommandHandler("addmode", addmode_cmd))
     app.add_handler(CommandHandler("addanime", addanime_cmd))
     app.add_handler(CommandHandler("addmodeanimeapply", addmode_anime_apply_handler))
