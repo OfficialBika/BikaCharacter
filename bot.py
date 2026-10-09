@@ -56,6 +56,8 @@ async def register_commands(app: Application) -> None:
             BotCommand("addmode", "Set fast card adding defaults"),
             BotCommand("addanime", "Set default adding anime"),
             BotCommand("update", "Update an existing card by ID"),
+            BotCommand("delete", "Preview and delete a card"),
+            BotCommand("deleteanime", "Preview and delete an Anime with its cards"),
             BotCommand("addhelp", "Card adding help"),
             BotCommand("settings", "Open bot settings"),
             BotCommand("topgroup", "Top groups by catches"),

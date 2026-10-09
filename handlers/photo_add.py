@@ -46,6 +46,7 @@ from utils.card_adding import (
     sync_counter_at_least,
 )
 from utils.hot_lookup import upsert_card
+from utils.card_logs import send_card_action_log
 from utils.buttons import action_button, rarity_button
 from utils.parser import parse_add_caption, parse_update_caption
 from utils.permissions import is_owner
@@ -1660,11 +1661,16 @@ async def _handle_media_update(
     parsed["anime"] = await canonical_anime(parsed["anime"])
     if not parsed["anime"]:
         await message.reply_text(
-            "❌ Anime အမည်ကို DB ထဲမှာ မတွေ့ပါ။ Target Card မပြောင်းထားပါ။",
+            "❌ Anime အမည် မမှန်ကန်ပါ။ Target Card မပြောင်းထားပါ။",
             parse_mode="HTML",
         )
         return
 
+    # Unknown Anime names are valid for an explicit update. Register the
+    # name only after the card update succeeds, so a rejected duplicate or
+    # failed archive edit does not create an orphan catalog entry.
+    anime_was_in_catalog = await anime_catalog_exists(parsed["anime"])
+    old_anime = str(current.get("anime") or "")
     try:
         ok, result = await _save_card(
             context,
@@ -1689,6 +1695,44 @@ async def _handle_media_update(
 
     if ok:
         _PENDING_UPDATES.pop(key, None)
+        catalog_status = "already present"
+        try:
+            registered_anime = await add_anime_to_catalog(parsed["anime"], user.id)
+            catalog_status = "created" if not anime_was_in_catalog else "already present"
+            # canonical_anime and add_anime_to_catalog use the same normalized
+            # catalog key. Keep this guard so an unexpected catalog spelling
+            # mismatch is visible rather than silently ignored.
+            if registered_anime != parsed["anime"]:
+                print(
+                    f"CARD UPDATE ANIME CANONICAL MISMATCH: card_id={target_id} "
+                    f"saved={parsed['anime']!r} catalog={registered_anime!r}",
+                    flush=True,
+                )
+        except Exception as exc:
+            catalog_status = f"registration failed: {exc!r}"
+            result += (
+                "\n\n⚠️ <b>Card ပြောင်းပြီးပါပြီ၊ Anime catalog ထဲသို့ သိမ်းခြင်း မအောင်မြင်ပါ။</b>"
+            )
+            print(
+                f"CARD UPDATE ANIME CATALOG FAILED: card_id={target_id} error={exc!r}",
+                flush=True,
+            )
+
+        await send_card_action_log(
+            context.bot,
+            "Card Updated",
+            int(user.id),
+            {
+                "Card ID": target_id,
+                "Name": parsed.get("name", ""),
+                "Rarity": parsed.get("rarity", ""),
+                "Old Anime": old_anime,
+                "New Anime": parsed.get("anime", ""),
+                "Anime Catalog": catalog_status,
+                "Updated By": getattr(user, "username", "") or user.id,
+                "Media Type": media_info.get("mediaType", ""),
+            },
+        )
     await message.reply_text(result, parse_mode="HTML")
 
 

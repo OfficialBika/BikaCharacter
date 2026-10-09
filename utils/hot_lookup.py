@@ -141,6 +141,33 @@ def invalidate_card(card_id: str) -> None:
     CATALOG_CACHE.clear()
 
 
+async def delete_card(card_id: str, source: str | None = None) -> int:
+    """Remove a deleted MongoDB card from SQLite and invalidate dependent caches."""
+    await init_hot_lookup()
+    card_id = str(card_id)
+
+    def remove_row() -> int:
+        with _conn() as conn:
+            if source:
+                cursor = conn.execute(
+                    "DELETE FROM cards WHERE card_id=? AND source_collection=?",
+                    (card_id, str(source)),
+                )
+            else:
+                cursor = conn.execute("DELETE FROM cards WHERE card_id=?", (card_id,))
+            conn.commit()
+            return int(cursor.rowcount or 0)
+
+    removed = await asyncio.to_thread(remove_row)
+    # Search result caches can contain the deleted card even when the query
+    # key isn't the card ID. Flush them to avoid serving a stale preview.
+    invalidate_card(card_id)
+    SEARCH_CACHE.clear()
+    CATALOG_CACHE.clear()
+    RANK_CACHE.clear()
+    return removed
+
+
 def invalidate_user_rank(user_id: int) -> None:
     # Any unique-card change can change every user global rank.
     RANK_CACHE.clear()

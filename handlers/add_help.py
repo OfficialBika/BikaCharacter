@@ -136,6 +136,18 @@ Name, Rarity နဲ့ Anime သုံးခုလုံးကို တိတ�
 
 <code>/add</code> ရဲ့ ပုံမှန် Add flow က အရင်အတိုင်းပဲ ဆက်အလုပ်လုပ်ပါမယ်။
 
+<b>9️⃣ /delete — Card ကို Preview ကြည့်ပြီးမှ ဖျက်ရန်</b>
+
+<code>/delete 25</code>
+
+Bot က Card media preview၊ ID၊ Name၊ Rarity၊ Anime တို့ကို ပြပြီး <b>Confirm Delete</b> နဲ့ <b>Cancel</b> ကို မေးပါမယ်။ Confirm မနှိပ်ရသေးသရွေ့ Card ကို မဖျက်ပါ။
+
+<b>🔟 /deleteanime — Anime နဲ့ ၎င်းရဲ့ Card အားလုံးကို အတည်ပြုပြီးမှ ဖျက်ရန်</b>
+
+<code>/deleteanime Genshin Impact</code>
+
+သက်ဆိုင်ရာ Anime အောက်က Card ID၊ Name၊ Rarity၊ Media အချက်အလက်တွေကို စာမျက်နှာခွဲပြပါမယ်။ <b>Confirm Delete</b> ကိုနှိပ်မှသာ အဲဒီ Anime နဲ့ဆက်စပ်တဲ့ Card တွေ၊ Harem/Favourite/Active Drop reference တွေနဲ့ Anime catalog entry ကို ဖယ်ရှားပါမယ်။ <b>Cancel</b> နှိပ်ရင် ဘာမှမဖျက်ပါ။ ဖျက်မီ data ပြောင်းသွားခဲ့ရင်လည်း လုံခြုံရေးအတွက် အလိုအလျောက်ရပ်ပြီး Preview အသစ် ပြန်တောင်းပါမယ်။
+
 <b>8️⃣ Duplicate ကာကွယ်မှု</b>
 
 တူညီတဲ့ media သို့မဟုတ် Name + Anime duplicate ဖြစ်နိုင်ရင် Bot က ချက်ချင်း overwrite မလုပ်ပါ။

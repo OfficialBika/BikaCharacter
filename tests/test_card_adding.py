@@ -147,7 +147,7 @@ class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
             "collection_name": "photos",
         }
         db = _FakeAnimeDB({
-            "photos": _FakeAnimeCollection([{"cardId": "25", "name": "Old Name"}]),
+            "photos": _FakeAnimeCollection([{"cardId": "25", "name": "Old Name", "anime": "Old Anime"}]),
             "limited_cards": _FakeAnimeCollection(),
         })
         user = SimpleNamespace(id=500)
@@ -158,13 +158,16 @@ class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
         try:
             with (
                 patch("handlers.photo_add.get_db", return_value=db),
-                patch("handlers.photo_add.canonical_anime", new=AsyncMock(return_value="Genshin Impact")),
+                patch("handlers.photo_add.canonical_anime", new=AsyncMock(return_value="New Anime")),
+                patch("handlers.photo_add.anime_catalog_exists", new=AsyncMock(return_value=False)),
+                patch("handlers.photo_add.add_anime_to_catalog", new=AsyncMock(return_value="New Anime")) as add_anime,
+                patch("handlers.photo_add.send_card_action_log", new=AsyncMock(return_value=True)) as action_log,
                 patch("handlers.photo_add._save_card", new=save),
             ):
                 await _handle_media_update(
                     update,
-                    SimpleNamespace(),
-                    "/update Acheron | Lg | Genshin Impact",
+                    SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock())),
+                    "/update Acheron | Lg | New Anime",
                     {"mediaType": "photo", "fileId": "new-file", "fileUniqueId": "new-unique"},
                 )
 
@@ -177,6 +180,12 @@ class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(kwargs["expected_collection"], "photos")
             self.assertNotIn(key, photo_add_module._PENDING_UPDATES)
             message.reply_text.assert_awaited_once()
+            add_anime.assert_awaited_once_with("New Anime", 500)
+            action_log.assert_awaited_once()
+            log_args, log_kwargs = action_log.await_args
+            self.assertEqual(log_args[1], "Card Updated")
+            self.assertEqual(log_args[3]["Old Anime"], "Old Anime")
+            self.assertEqual(log_args[3]["New Anime"], "New Anime")
         finally:
             photo_add_module._PENDING_UPDATES.clear()
             photo_add_module._PENDING_UPDATES.update(original_pending)
