@@ -227,6 +227,49 @@ class ConfirmedCardDeletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(photos.documents), 1)
         self.assertEqual(photos.documents[0]["name"], "Changed after preview")
 
+    async def test_confirm_deletes_only_after_owner_clicks_confirm(self):
+        target = _card()
+        photos = _Collection([target])
+        db = _Database(photos=photos, limited_cards=_Collection(), users=_Collection(), groups=_Collection())
+        with (
+            patch("handlers.admin.get_db", return_value=db),
+            patch("handlers.admin.is_owner", return_value=True),
+        ):
+            await admin.delete_card_cmd(
+                self.update,
+                SimpleNamespace(args=["25"]),
+            )
+
+        markup = self.message.reply_text.await_args.kwargs["reply_markup"]
+        confirm = next(
+            button.callback_data
+            for button in self._buttons(markup)
+            if button.callback_data.startswith("carddel:confirm:")
+        )
+        query = SimpleNamespace(
+            data=confirm,
+            from_user=self.owner,
+            message=SimpleNamespace(chat_id=self.message.chat_id),
+            answer=AsyncMock(),
+            edit_message_caption=AsyncMock(),
+            edit_message_text=AsyncMock(),
+        )
+        with (
+            patch("handlers.admin.get_db", return_value=db),
+            patch("handlers.admin.is_owner", return_value=True),
+            patch("handlers.admin.delete_hot_lookup_card", new=AsyncMock(return_value=1)),
+            patch("handlers.admin.send_card_action_log", new=AsyncMock(return_value=True)) as action_log,
+        ):
+            await admin.delete_confirmation_callback(
+                SimpleNamespace(callback_query=query),
+                SimpleNamespace(),
+            )
+
+        self.assertEqual(len(photos.documents), 0)
+        self.assertEqual(len(photos.delete_calls), 1)
+        action_log.assert_awaited_once()
+        self.assertEqual(action_log.await_args.args[1], "Card Deleted")
+
 
 class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -282,6 +325,62 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(value.startswith("animedel:confirm:") for value in callbacks))
         self.assertTrue(any(value.startswith("animedel:cancel:") for value in callbacks))
         self.assertEqual(len(admin._PENDING_CARD_DELETIONS), 1)
+
+
+    async def test_confirm_deletes_related_cards_and_catalog_entry(self):
+        cards = [_card(str(number), f"Character {number}", "Genshin Impact") for number in range(1, 4)]
+        photos = _Collection(cards)
+        animes = _Collection([{
+            "_id": "genshin-impact",
+            "name": "Genshin Impact",
+            "normalizedName": "genshin impact",
+        }])
+        db = _Database(
+            photos=photos,
+            limited_cards=_Collection(),
+            animes=animes,
+            users=_Collection(),
+            groups=_Collection(),
+        )
+        with (
+            patch("handlers.admin.get_db", return_value=db),
+            patch("handlers.admin.is_owner", return_value=True),
+        ):
+            await admin.delete_anime_cmd(
+                self.update,
+                SimpleNamespace(args=["Genshin", "Impact"]),
+            )
+
+        markup = self.message.reply_text.await_args.kwargs["reply_markup"]
+        confirm = next(
+            button.callback_data
+            for button in self._buttons(markup)
+            if button.callback_data.startswith("animedel:confirm:")
+        )
+        query = SimpleNamespace(
+            data=confirm,
+            from_user=self.owner,
+            message=SimpleNamespace(chat_id=self.message.chat_id),
+            answer=AsyncMock(),
+            edit_message_caption=AsyncMock(),
+            edit_message_text=AsyncMock(),
+        )
+        with (
+            patch("handlers.admin.get_db", return_value=db),
+            patch("handlers.admin.is_owner", return_value=True),
+            patch("handlers.admin.delete_hot_lookup_card", new=AsyncMock(return_value=1)),
+            patch("handlers.admin.send_card_action_log", new=AsyncMock(return_value=True)) as action_log,
+        ):
+            await admin.delete_confirmation_callback(
+                SimpleNamespace(callback_query=query),
+                SimpleNamespace(),
+            )
+
+        self.assertEqual(len(photos.documents), 0)
+        self.assertEqual(len(animes.documents), 0)
+        self.assertEqual(len(photos.delete_calls), 3)
+        action_log.assert_awaited_once()
+        self.assertEqual(action_log.await_args.args[1], "Anime Deleted")
 
 
 if __name__ == "__main__":
