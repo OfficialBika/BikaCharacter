@@ -267,12 +267,17 @@ async def find_possible_duplicate(name: str, anime: str, exclude_card_id: str = 
         "normalizedName": normalized_search_name(name),
         "anime": {"$regex": anime_pattern, "$options": "i"},
     }
+    exclude_id = str(exclude_card_id or "").strip()
+    # As with media duplicates, filter the selected card before find_one so
+    # another matching card cannot be missed when the target is also a match.
+    if exclude_id:
+        query["cardId"] = {"$ne": exclude_id}
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
         doc = await get_db()[collection_name].find_one(
             query,
             {"cardId": 1, "name": 1, "anime": 1, "rarity": 1},
         )
-        if doc and str(doc.get("cardId", "")) != str(exclude_card_id):
+        if doc:
             return {**doc, "collection": collection_name}
     return None
 
