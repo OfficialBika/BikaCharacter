@@ -3,8 +3,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from config import RARITY_ORDER
-from utils.rarity import normalize_rarity
+from utils.rarity import normalize_add_rarity
 
 
 def normalize_name(text: str = "") -> str:
@@ -53,17 +52,6 @@ def is_character_name_match(guess_text: str = "", target_name: str = "", min_len
     if len(guess_words) > 1 and all(word in target_words for word in guess_words):
         return True
     return False
-
-
-_SHORT_CODES = ("su", "cv", "ca", "dv", "my", "lg", "ra", "un", "co")
-
-
-def normalize_add_rarity(raw: str = "") -> str | None:
-    text = str(raw or "").strip().lower()
-    non_limited = [r for r in RARITY_ORDER if str(r).lower() != "limited"]
-    aliases = {str(r).lower(): r for r in RARITY_ORDER}
-    aliases.update({code: rarity for code, rarity in zip(_SHORT_CODES, reversed(non_limited))})
-    return aliases.get(text) or normalize_rarity(raw)
 
 
 def parse_add_caption(caption: str = "") -> Optional[dict]:
