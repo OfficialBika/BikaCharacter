@@ -550,7 +550,7 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(photos.delete_calls), 2)
         action_log.assert_awaited_once()
         self.assertEqual(action_log.await_args.args[1], "Anime Deleted")
-        result_text = query.edit_message_caption.await_args.args[0]
+        result_text = query.edit_message_caption.await_args.kwargs["caption"]
         self.assertIn("Alternate marker cards left untouched: <code>1</code>", result_text)
         self.assertIn("left untouched", result_text)
 
