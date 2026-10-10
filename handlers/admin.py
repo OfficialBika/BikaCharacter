@@ -763,14 +763,14 @@ async def delete_anime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await _send_anime_delete_preview(msg, token, item, 0)
 
 
-async def _edit_delete_prompt(query, text: str, reply_markup=None) -> None:
+async def _edit_delete_prompt(query, text: str, reply_markup=None) -> bool:
     try:
         await query.edit_message_caption(
             caption=text,
             parse_mode="HTML",
             reply_markup=reply_markup,
         )
-        return
+        return True
     except Exception:
         pass
     try:
@@ -780,8 +780,10 @@ async def _edit_delete_prompt(query, text: str, reply_markup=None) -> None:
             reply_markup=reply_markup,
             disable_web_page_preview=True,
         )
+        return True
     except Exception as exc:
         print(f"DELETE CONFIRMATION MESSAGE EDIT FAILED: {exc!r}", flush=True)
+        return False
 
 
 async def _delete_archive_message(context: ContextTypes.DEFAULT_TYPE, card: dict) -> str:
@@ -1129,17 +1131,18 @@ async def delete_confirmation_callback(update: Update, context: ContextTypes.DEF
         cards = list(item.get("cards", []))
         total_pages = max(1, (len(cards) + _DELETE_ANIME_PAGE_SIZE - 1) // _DELETE_ANIME_PAGE_SIZE)
         page = max(0, min(int(page_value or 0), total_pages - 1))
-        item["page"] = page
-        viewed_pages = set(item.get("viewed_pages") or {0})
-        viewed_pages.add(page)
-        item["viewed_pages"] = viewed_pages
-        item["created"] = time.time()
         await query.answer()
-        await _edit_delete_prompt(
+        page_updated = await _edit_delete_prompt(
             query,
             _anime_delete_page_text(item, page),
             _delete_confirm_keyboard(token, "anime", page, total_pages, len(cards)),
         )
+        if page_updated:
+            item["page"] = page
+            viewed_pages = set(item.get("viewed_pages") or {0})
+            viewed_pages.add(page)
+            item["viewed_pages"] = viewed_pages
+            item["created"] = time.time()
         return
 
     if decision == "cancel":
