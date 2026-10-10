@@ -197,21 +197,22 @@ class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
         message = SimpleNamespace(chat_id=-100123, reply_text=AsyncMock())
         update = SimpleNamespace(effective_user=user, effective_message=message)
         save = AsyncMock(return_value=(True, "Updated"))
+        canonicalizer = AsyncMock(return_value="Wuthering Waves")
 
         try:
             with (
                 patch("handlers.photo_add.get_db", return_value=db),
-                patch("handlers.photo_add.canonical_anime", new=AsyncMock(return_value="New Anime")),
+                patch("handlers.photo_add.canonical_anime", new=canonicalizer),
                 patch("handlers.photo_add.anime_catalog_exists", new=AsyncMock(return_value=False)),
-                patch("handlers.photo_add.add_anime_to_catalog", new=AsyncMock(return_value="New Anime")) as add_anime,
+                patch("handlers.photo_add.add_anime_to_catalog", new=AsyncMock(return_value="Wuthering Waves")) as add_anime,
                 patch("handlers.photo_add.send_card_action_log", new=AsyncMock(return_value=True)) as action_log,
                 patch("handlers.photo_add._save_card", new=save),
             ):
                 await _handle_media_update(
                     update,
                     SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock())),
-                    "/update Acheron | Lg | New Anime",
-                    {"mediaType": "photo", "fileId": "new-file", "fileUniqueId": "new-unique"},
+                    "/update Luno | Ca | Wuthering Waves [🎮]",
+                    {"mediaType": "video", "fileId": "new-file", "fileUniqueId": "new-unique"},
                 )
 
             self.assertEqual(save.await_count, 1)
@@ -221,14 +222,18 @@ class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(parsed["_cardIdProvided"])
             self.assertTrue(kwargs["update_only"])
             self.assertEqual(kwargs["expected_collection"], "photos")
+            self.assertEqual(parsed["name"], "Luno")
+            self.assertEqual(parsed["rarity"], "Rare")
+            self.assertEqual(parsed["anime"], "Wuthering Waves [🎮]")
+            canonicalizer.assert_not_awaited()
             self.assertNotIn(key, photo_add_module._PENDING_UPDATES)
             message.reply_text.assert_awaited_once()
-            add_anime.assert_awaited_once_with("New Anime", 500)
+            add_anime.assert_awaited_once_with("Wuthering Waves [🎮]", 500)
             action_log.assert_awaited_once()
             log_args, log_kwargs = action_log.await_args
             self.assertEqual(log_args[1], "Card Updated")
             self.assertEqual(log_args[3]["Old Anime"], "Old Anime")
-            self.assertEqual(log_args[3]["New Anime"], "New Anime")
+            self.assertEqual(log_args[3]["New Anime"], "Wuthering Waves [🎮]")
         finally:
             photo_add_module._PENDING_UPDATES.clear()
             photo_add_module._PENDING_UPDATES.update(original_pending)
@@ -261,10 +266,10 @@ class SaveCardUpdateTest(unittest.IsolatedAsyncioTestCase):
         user = SimpleNamespace(id=500)
         parsed = {
             "cardId": "25",
-            "name": "Acheron",
-            "normalizedName": "acheron",
-            "rarity": "Legendary",
-            "anime": "Genshin Impact",
+            "name": "Luno",
+            "normalizedName": "luno",
+            "rarity": "Rare",
+            "anime": "Wuthering Waves [🎮]",
             "_cardIdProvided": True,
             "_animeProvided": True,
             "_rarityProvided": True,
@@ -322,6 +327,10 @@ class SaveCardUpdateTest(unittest.IsolatedAsyncioTestCase):
         saved = photos.last_update["update"]["$set"]
         self.assertEqual(saved["addedBy"], 111)
         self.assertEqual(saved["updatedBy"], 500)
+        self.assertEqual(saved["name"], "Luno")
+        self.assertEqual(saved["rarity"], "Rare")
+        self.assertEqual(saved["anime"], "Wuthering Waves [🎮]")
+        self.assertIn("Anime:</b> Wuthering Waves [🎮]", saved["storageCaption"])
         self.assertIn("Updated By", saved["storageCaption"])
 
 
