@@ -331,8 +331,46 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(admin._PENDING_CARD_DELETIONS), 1)
 
 
+    async def test_preview_shows_stored_anime_values_with_and_without_game_marker(self):
+        cards = [
+            _card("103", "Hiyuki", "Wuthering Waves [🎮]"),
+            _card("1078", "Changli x Traditional", "Wuthering Waves [🎮]"),
+            _card("1080", "Unmarked card", "Wuthering Waves"),
+            _card("2000", "Other anime", "Wuthering Waves Rebirth"),
+        ]
+        photos = _Collection(cards)
+        animes = _Collection([{
+            "_id": "wuthering-waves",
+            "name": "Wuthering Waves",
+            "normalizedName": "wuthering waves",
+        }])
+        db = _Database(
+            photos=photos,
+            limited_cards=_Collection(),
+            animes=animes,
+        )
+        with (
+            patch("handlers.admin.get_db", return_value=db),
+            patch("handlers.admin.is_owner", return_value=True),
+        ):
+            await admin.delete_anime_cmd(
+                self.update,
+                SimpleNamespace(args=["Wuthering", "Waves"]),
+            )
+
+        text = self.message.reply_text.await_args.args[0]
+        self.assertIn("Related cards:</b> <code>3</code>", text)
+        self.assertIn("Stored Anime value(s):</b> Wuthering Waves, Wuthering Waves [🎮]", text)
+        self.assertNotIn("Other anime", text)
+        self.assertEqual(len(photos.documents), 4)
+        self.assertEqual(photos.delete_calls, [])
+
     async def test_confirm_deletes_related_cards_and_catalog_entry(self):
-        cards = [_card(str(number), f"Character {number}", "Genshin Impact") for number in range(1, 4)]
+        cards = [
+            _card("1", "Character 1", "Genshin Impact"),
+            _card("2", "Character 2", "Genshin Impact [🎮]"),
+            _card("3", "Character 3", "Genshin Impact"),
+        ]
         photos = _Collection(cards)
         animes = _Collection([{
             "_id": "genshin-impact",
