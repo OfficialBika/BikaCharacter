@@ -576,6 +576,20 @@ def _anime_delete_page_text(item: dict, page: int) -> str:
     start = page * _DELETE_ANIME_PAGE_SIZE
     selected = cards[start:start + _DELETE_ANIME_PAGE_SIZE]
 
+    stored_anime_values = sorted(
+        {
+            str((entry.get("snapshot") or {}).get("anime") or "").strip()
+            for entry in cards
+            if str((entry.get("snapshot") or {}).get("anime") or "").strip()
+        },
+        key=lambda value: (value.casefold(), value),
+    )
+    stored_anime_text = ", ".join(
+        escape_html(value) for value in stored_anime_values[:3]
+    )
+    if len(stored_anime_values) > 3:
+        stored_anime_text += f" (+{len(stored_anime_values) - 3} more)"
+
     lines = [
         "⚠️ <b>DELETE ANIME CONFIRMATION</b>",
         "",
@@ -584,6 +598,8 @@ def _anime_delete_page_text(item: dict, page: int) -> str:
         f"📄 <b>Page:</b> <code>{page + 1}/{total_pages}</code>",
         "",
     ]
+    if stored_anime_text:
+        lines.insert(3, f"🧾 <b>Stored Anime value(s):</b> {stored_anime_text}")
     if selected:
         for card_item in selected:
             card = card_item["snapshot"]
