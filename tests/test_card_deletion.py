@@ -331,7 +331,7 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(admin._PENDING_CARD_DELETIONS), 1)
 
 
-    async def test_preview_shows_stored_anime_values_with_and_without_game_marker(self):
+    async def test_deleteanime_matches_the_exact_game_marker_variant(self):
         cards = [
             _card("103", "Hiyuki", "Wuthering Waves [🎮]"),
             _card("1078", "Changli x Traditional", "Wuthering Waves [🎮]"),
@@ -359,10 +359,33 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         text = self.message.reply_text.await_args.args[0]
-        self.assertIn("Related cards:</b> <code>3</code>", text)
-        self.assertIn("Stored Anime value(s):</b> Wuthering Waves, Wuthering Waves [🎮]", text)
+        self.assertIn("Anime:</b> Wuthering Waves", text)
+        self.assertNotIn("Anime:</b> Wuthering Waves [🎮]", text)
+        self.assertIn("Related cards:</b> <code>1</code>", text)
+        self.assertIn("Stored Anime value(s):</b> Wuthering Waves", text)
+        self.assertNotIn("Wuthering Waves [🎮]", text)
         self.assertNotIn("Other anime", text)
         self.assertEqual(len(photos.documents), 4)
+        self.assertEqual(photos.delete_calls, [])
+
+        # The marked command must select only the marked cards, without
+        # treating the unmarked catalog row as a catalog-change conflict.
+        admin._PENDING_CARD_DELETIONS.clear()
+        self.message.reply_text.reset_mock()
+        with (
+            patch("handlers.admin.get_db", return_value=db),
+            patch("handlers.admin.is_owner", return_value=True),
+        ):
+            await admin.delete_anime_cmd(
+                self.update,
+                SimpleNamespace(args=["Wuthering", "Waves", "[🎮]"]),
+            )
+
+        marked_text = self.message.reply_text.await_args.args[0]
+        self.assertIn("Anime:</b> Wuthering Waves [🎮]", marked_text)
+        self.assertIn("Related cards:</b> <code>2</code>", marked_text)
+        self.assertIn("Stored Anime value(s):</b> Wuthering Waves [🎮]", marked_text)
+        self.assertNotIn("Stored Anime value(s):</b> Wuthering Waves,", marked_text)
         self.assertEqual(photos.delete_calls, [])
 
     async def test_confirm_deletes_related_cards_and_catalog_entry(self):
@@ -418,9 +441,10 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
                 SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock())),
             )
 
-        self.assertEqual(len(photos.documents), 0)
+        self.assertEqual(len(photos.documents), 1)
+        self.assertEqual(photos.documents[0]["cardId"], "2")
         self.assertEqual(len(animes.documents), 0)
-        self.assertEqual(len(photos.delete_calls), 3)
+        self.assertEqual(len(photos.delete_calls), 2)
         action_log.assert_awaited_once()
         self.assertEqual(action_log.await_args.args[1], "Anime Deleted")
 
