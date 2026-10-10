@@ -697,16 +697,18 @@ async def delete_anime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not normalized:
         await msg.reply_text("❌ Invalid Anime name.")
         return
+    # Anime names that differ by the trailing [🎮] marker are distinct
+    # delete targets. Do not use normalizedName here because normalization
+    # intentionally removes bracketed markers.
+    exact_anime_query = {
+        "name": {"$regex": f"^{re.escape(raw_name)}$", "$options": "i"}
+    }
     catalog = await db[ANIMES_COLLECTION].find_one(
-        {"normalizedName": normalized},
+        exact_anime_query,
         {"_id": 1, "name": 1, "normalizedName": 1},
     )
-    anime_name = str((catalog or {}).get("name") or raw_name).strip()
-    base_name = re.sub(r"\s*\[🎮\]\s*$", "", anime_name).strip()
-    if not base_name:
-        await msg.reply_text("❌ Invalid Anime name.")
-        return
-    anime_pattern = rf"^{re.escape(base_name)}(?:\s*\[🎮\])?$"
+    anime_name = raw_name
+    anime_pattern = rf"^{re.escape(raw_name)}$"
     cards = []
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
         docs = await db[collection_name].find(
@@ -923,8 +925,9 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
         ):
             return "⚠️ Anime catalog changed since preview. Nothing was deleted; run /deleteanime again."
     else:
+        exact_name = str(item.get("anime_name") or "")
         current_catalog = await db[ANIMES_COLLECTION].find_one(
-            {"normalizedName": item.get("anime_normalized")}
+            {"name": {"$regex": f"^{re.escape(exact_name)}$", "$options": "i"}}
         )
         if current_catalog:
             return "⚠️ Anime catalog changed since preview. Nothing was deleted; run /deleteanime again."
@@ -1015,10 +1018,11 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
             print(f"ANIME CATALOG DELETE FAILED: {exc!r}", flush=True)
         invalidate_anime_cache(str(item.get("anime_name", "")))
     elif not remaining_cards and catalog_id is None:
-        # A catalog row may have appeared after the preview. Do not silently
-        # remove a row that was not part of the confirmation snapshot.
+        # Check only the exact entered Anime variant; the other [🎮] form is
+        # a separate target and must not count as a new catalog row here.
+        exact_name = str(item.get("anime_name") or "")
         catalog_after = await db[ANIMES_COLLECTION].find_one(
-            {"normalizedName": item.get("anime_normalized")}
+            {"name": {"$regex": f"^{re.escape(exact_name)}$", "$options": "i"}}
         )
         catalog_delete_failed = bool(catalog_after)
 
