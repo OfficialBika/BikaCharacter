@@ -224,7 +224,7 @@ class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(kwargs["update_only"])
             self.assertEqual(kwargs["expected_collection"], "photos")
             self.assertEqual(parsed["name"], "Luno")
-            self.assertEqual(parsed["rarity"], "Rare")
+            self.assertEqual(parsed["rarity"], config.RARITY_CATAPHRACT_NAME)
             self.assertEqual(parsed["anime"], "Wuthering Waves [🎮]")
             canonicalizer.assert_not_awaited()
             self.assertNotIn(key, photo_add_module._PENDING_UPDATES)
