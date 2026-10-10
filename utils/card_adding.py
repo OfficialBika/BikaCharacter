@@ -8,17 +8,15 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from database.mongodb import get_db
-from config import ANIMES_COLLECTION, LIMITED_CARDS_COLLECTION, RARITY_ORDER
+from config import ANIMES_COLLECTION, LIMITED_CARDS_COLLECTION
 from utils.parser import normalized_search_name
+from utils.rarity import normalize_add_rarity, rarity_aliases
 from utils.text import utcnow
 
 CARD_COUNTER_ID = "photo_card_id"
 ADD_MODE_PREFIX = "adder:"
 ADD_MODE_TTL = 86400
 ADD_MODE_MAX = 10000
-
-# Historical short codes: Su Cv Ca Dv My Lg Ra Un Co.
-_SHORT_CODES = ("su", "cv", "ca", "dv", "my", "lg", "ra", "un", "co")
 
 _MODE_CACHE: dict[int, tuple[float, str, str]] = {}
 _MODE_LOCK = asyncio.Lock()
@@ -69,19 +67,6 @@ async def _find_existing_card_anime(anime: str) -> str:
             if doc and doc.get("anime"):
                 return str(doc["anime"]).strip()
     return ""
-
-
-def rarity_aliases() -> dict[str, str]:
-    non_limited = [r for r in RARITY_ORDER if str(r).lower() != "limited"]
-    aliases: dict[str, str] = {}
-    for code, rarity in zip(_SHORT_CODES, reversed(non_limited)):
-        aliases[code] = rarity
-    aliases.update({str(r).lower(): r for r in RARITY_ORDER})
-    return aliases
-
-
-def normalize_add_rarity(raw: str) -> str | None:
-    return rarity_aliases().get(str(raw or "").strip().lower())
 
 
 async def _max_numeric_card_id() -> int:
