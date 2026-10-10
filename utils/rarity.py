@@ -133,6 +133,32 @@ def normalize_rarity(raw: str | None) -> str | None:
     return None
 
 
+# Stable short codes: never derive these from RARITY_ORDER position because
+# the order is configured for display/rank and can change independently.
+_SHORT_CODE_RARITIES = {
+    "su": RARITY_SUPREME_NAME,
+    "cv": RARITY_CROSSVERSE_NAME,
+    "ca": RARITY_CATAPHRACT_NAME,
+    "dv": RARITY_DIVINE_NAME,
+    "my": RARITY_MYSTICAL_NAME,
+    "lg": RARITY_LEGENDARY_NAME,
+    "ra": RARITY_RARE_NAME,
+    "un": RARITY_UNCOMMON_NAME,
+    "co": RARITY_COMMON_NAME,
+}
+
+
+def rarity_aliases() -> dict[str, str]:
+    aliases = {str(rarity).lower(): rarity for rarity in RARITY_ORDER}
+    aliases.update(_SHORT_CODE_RARITIES)
+    return aliases
+
+
+def normalize_add_rarity(raw: str | None = "") -> str | None:
+    text = str(raw or "").strip().lower()
+    return rarity_aliases().get(text) or normalize_rarity(raw)
+
+
 def get_scheduled_drop_rarity(drop_number: int) -> str:
     """Return the rarity that should spawn for a group drop number.
 

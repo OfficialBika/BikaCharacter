@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import config
 import utils.card_adding as card_adding
 from utils.card_adding import (
     add_anime_to_catalog,
@@ -223,7 +224,7 @@ class ExplicitUpdateHandlerTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(kwargs["update_only"])
             self.assertEqual(kwargs["expected_collection"], "photos")
             self.assertEqual(parsed["name"], "Luno")
-            self.assertEqual(parsed["rarity"], "Rare")
+            self.assertEqual(parsed["rarity"], config.RARITY_CATAPHRACT_NAME)
             self.assertEqual(parsed["anime"], "Wuthering Waves [🎮]")
             canonicalizer.assert_not_awaited()
             self.assertNotIn(key, photo_add_module._PENDING_UPDATES)
@@ -448,11 +449,30 @@ class CanonicalAnimeTest(unittest.IsolatedAsyncioTestCase):
 
 
 class CardAddingParserTest(unittest.TestCase):
-    def test_short_rarity_codes(self):
+    def test_short_rarity_codes_have_explicit_stable_mappings(self):
+        expected = {
+            "Su": config.RARITY_SUPREME_NAME,
+            "Cv": config.RARITY_CROSSVERSE_NAME,
+            "Ca": config.RARITY_CATAPHRACT_NAME,
+            "Dv": config.RARITY_DIVINE_NAME,
+            "My": config.RARITY_MYSTICAL_NAME,
+            "Lg": config.RARITY_LEGENDARY_NAME,
+            "Ra": config.RARITY_RARE_NAME,
+            "Un": config.RARITY_UNCOMMON_NAME,
+            "Co": config.RARITY_COMMON_NAME,
+        }
         aliases = rarity_aliases()
-        self.assertEqual(normalize_add_rarity("Lg"), aliases["lg"])
-        self.assertEqual(normalize_add_rarity("Co"), aliases["co"])
-        self.assertEqual(normalize_add_rarity("Su"), aliases["su"])
+        for code, rarity in expected.items():
+            with self.subTest(code=code):
+                self.assertEqual(normalize_add_rarity(code), rarity)
+                self.assertEqual(aliases[code.lower()], rarity)
+
+    def test_update_caption_uses_cataphract_for_ca_and_preserves_anime_text(self):
+        parsed = parse_update_caption("/update Luno | Ca | Wuthering Waves [🎮]")
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["name"], "Luno")
+        self.assertEqual(parsed["rarity"], config.RARITY_CATAPHRACT_NAME)
+        self.assertEqual(parsed["anime"], "Wuthering Waves [🎮]")
 
     def test_full_rarity_names_remain_supported(self):
         parsed = parse_add_caption("/add Yelan | Legendary | Genshin Impact")
