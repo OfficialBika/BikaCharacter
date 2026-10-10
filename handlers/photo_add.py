@@ -48,7 +48,7 @@ from utils.card_adding import (
 from utils.hot_lookup import upsert_card
 from utils.card_logs import send_card_action_log
 from utils.buttons import action_button, rarity_button
-from utils.parser import parse_add_caption, parse_update_caption
+from utils.parser import normalized_search_name, parse_add_caption, parse_update_caption
 from utils.permissions import is_owner
 from utils.text import escape_html, mention_user, utcnow
 
@@ -1665,7 +1665,9 @@ async def _handle_media_update(
     parsed["_cardIdProvided"] = True
     parsed["_animeProvided"] = True
     parsed["_rarityProvided"] = True
-    parsed["anime"] = await canonical_anime(parsed["anime"])
+    # /update is an explicit edit: preserve the Anime string the adder typed,
+    # including suffixes such as [🎮]. canonical_anime() intentionally prefers
+    # catalog spelling, so it must not rewrite this field during an update.
     if not parsed["anime"]:
         await message.reply_text(
             "❌ Anime အမည် မမှန်ကန်ပါ။ Target Card မပြောင်းထားပါ။",
@@ -1709,7 +1711,7 @@ async def _handle_media_update(
             # canonical_anime and add_anime_to_catalog use the same normalized
             # catalog key. Keep this guard so an unexpected catalog spelling
             # mismatch is visible rather than silently ignored.
-            if registered_anime != parsed["anime"]:
+            if normalized_search_name(registered_anime) != normalized_search_name(parsed["anime"]):
                 print(
                     f"CARD UPDATE ANIME CANONICAL MISMATCH: card_id={target_id} "
                     f"saved={parsed['anime']!r} catalog={registered_anime!r}",
