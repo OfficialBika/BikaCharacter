@@ -1006,9 +1006,8 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
         docs = await db[collection_name].find({"anime": exact_anime_name}).to_list(None)
         remaining_cards.extend(docs)
 
-    # The catalog uses normalizedName, which strips [🎮], so one catalog row
-    # can be shared by cards whose stored Anime values differ by that marker.
-    # Keep that row while any card with the alternate marker form remains.
+    # Count the alternate [🎮] spelling for the result message, but never
+    # include those documents in the target deletion set.
     selected_has_marker = bool(re.search(r"\s*\[🎮\]\s*$", exact_anime_name))
     base_name = re.sub(r"\s*\[🎮\]\s*$", "", exact_anime_name).strip()
     if selected_has_marker:
@@ -1024,25 +1023,23 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
 
     catalog_deleted = 0
     catalog_delete_failed = False
-    catalog_preserved_for_sibling = False
     if not remaining_cards and catalog_id is not None:
-        if sibling_cards:
-            catalog_preserved_for_sibling = True
-        else:
-            catalog_query = {
-                "_id": catalog_id,
-                "name": catalog_snapshot.get("name"),
-                "normalizedName": catalog_snapshot.get("normalizedName"),
-            }
-            try:
-                catalog_result = await db[ANIMES_COLLECTION].delete_one(catalog_query)
-                catalog_deleted = int(getattr(catalog_result, "deleted_count", 0) or 0)
-                catalog_delete_failed = catalog_deleted != 1
-            except Exception as exc:
-                catalog_delete_failed = True
-                print(f"ANIME CATALOG DELETE FAILED: {exc!r}", flush=True)
-            if catalog_deleted:
-                invalidate_anime_cache(str(item.get("anime_name", "")))
+        # Delete only the catalog row whose literal name matched the command.
+        # Cards with the alternate [🎮] spelling remain untouched.
+        catalog_query = {
+            "_id": catalog_id,
+            "name": catalog_snapshot.get("name"),
+            "normalizedName": catalog_snapshot.get("normalizedName"),
+        }
+        try:
+            catalog_result = await db[ANIMES_COLLECTION].delete_one(catalog_query)
+            catalog_deleted = int(getattr(catalog_result, "deleted_count", 0) or 0)
+            catalog_delete_failed = catalog_deleted != 1
+        except Exception as exc:
+            catalog_delete_failed = True
+            print(f"ANIME CATALOG DELETE FAILED: {exc!r}", flush=True)
+        if catalog_deleted:
+            invalidate_anime_cache(str(item.get("anime_name", "")))
     elif not remaining_cards and catalog_id is None:
         # Do not treat a catalog row for the other marker variant as the
         # target row: check only the exact value entered by the owner.
@@ -1066,7 +1063,7 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
             "Remaining cards": len(remaining_cards),
             "Failed card IDs": ", ".join(failed_ids[:25]) or "-",
             "Anime catalog deleted": catalog_deleted,
-            "Catalog preserved for alternate marker cards": catalog_preserved_for_sibling,
+            "Alternate marker cards left untouched": len(sibling_cards),
             "Catalog delete failed": catalog_delete_failed,
             "Archive messages deleted": archive_deleted,
             "Archive deletes failed": archive_failed,
@@ -1081,8 +1078,8 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
         final_note = "Some exact-name cards remain. The Anime catalog entry was kept; run /deleteanime again to review the current list."
     elif partial:
         final_note = "Some cleanup steps failed. Check the card action log before retrying the command."
-    elif catalog_preserved_for_sibling:
-        final_note = "All exact-name cards were removed. The shared Anime catalog entry was kept because cards using the alternate [🎮] marker still exist."
+    elif sibling_cards:
+        final_note = f"The exact Anime value was removed. {len(sibling_cards)} cards with the alternate [🎮] spelling were left untouched."
     else:
         final_note = "The exact Anime value and all matching cards have been removed."
 
@@ -1092,7 +1089,7 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
         f"🎴 Exact-name cards deleted: <code>{len(deleted_cards)}/{len(item.get('cards', []))}</code>\n"
         f"📚 Remaining exact-name cards: <code>{len(remaining_cards)}</code>\n"
         f"🗂 Anime catalog entry deleted: <code>{'Yes' if catalog_deleted else 'No'}</code>\n"
-        f"🛡 Shared catalog kept for alternate marker cards: <code>{'Yes' if catalog_preserved_for_sibling else 'No'}</code>\n"
+        f"🛡 Alternate marker cards left untouched: <code>{len(sibling_cards)}</code>\n"
         f"🗄 Archive messages deleted: <code>{archive_deleted}</code>\n"
         f"⚠️ Archive delete failures: <code>{archive_failed}</code>\n"
         f"⚠️ Card delete failures: <code>{len(failed_ids)}</code>\n"
