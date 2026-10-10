@@ -331,7 +331,7 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(admin._PENDING_CARD_DELETIONS), 1)
 
 
-    async def test_multpage_delete_requires_owner_to_review_all_preview_pages(self):
+    async def test_multipage_delete_requires_owner_to_review_all_preview_pages(self):
         cards = [_card(str(number), f"Character {number}", "Genshin Impact") for number in range(1, 8)]
         photos = _Collection(cards)
         animes = _Collection([{
@@ -491,7 +491,7 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(animes.documents), 0)
         self.assertEqual(len(photos.delete_calls), 2)
 
-    async def test_confirm_deletes_only_exact_variant_and_preserves_shared_catalog(self):
+    async def test_confirm_deletes_exact_variant_and_leaves_alternate_marker_cards(self):
         cards = [
             _card("1", "Character 1", "Genshin Impact"),
             _card("2", "Character 2", "Genshin Impact [🎮]"),
@@ -546,11 +546,13 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(photos.documents), 1)
         self.assertEqual(photos.documents[0]["cardId"], "2")
-        self.assertEqual(len(animes.documents), 1)
-        self.assertEqual(animes.documents[0]["name"], "Genshin Impact")
+        self.assertEqual(len(animes.documents), 0)
         self.assertEqual(len(photos.delete_calls), 2)
         action_log.assert_awaited_once()
         self.assertEqual(action_log.await_args.args[1], "Anime Deleted")
+        result_text = query.edit_message_caption.await_args.args[0]
+        self.assertIn("Alternate marker cards left untouched: <code>1</code>", result_text)
+        self.assertIn("left untouched", result_text)
 
 
 if __name__ == "__main__":
