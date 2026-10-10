@@ -507,7 +507,13 @@ def _delete_snapshot_matches(card: dict, snapshot: dict) -> bool:
     return all(card.get(key) == snapshot.get(key) for key in _DELETE_SNAPSHOT_FIELDS)
 
 
-def _delete_confirm_keyboard(token: str, action: str, page: int = 0, total_pages: int = 1) -> InlineKeyboardMarkup:
+def _delete_confirm_keyboard(
+    token: str,
+    action: str,
+    page: int = 0,
+    total_pages: int = 1,
+    card_count: int | None = None,
+) -> InlineKeyboardMarkup:
     prefix = "carddel" if action == "card" else "animedel"
     rows = []
     if action == "anime" and total_pages > 1:
@@ -524,8 +530,16 @@ def _delete_confirm_keyboard(token: str, action: str, page: int = 0, total_pages
             ))
         if nav:
             rows.append(nav)
+    if action == "anime":
+        confirm_label = (
+            f"✅ Delete {int(card_count)} Exact-Match Cards"
+            if card_count
+            else "✅ Delete Anime Entry"
+        )
+    else:
+        confirm_label = "✅ Confirm Delete"
     rows.append([
-        action_button("✅ Confirm Delete", "danger", callback_data=f"{prefix}:confirm:{token}"),
+        action_button(confirm_label, "danger", callback_data=f"{prefix}:confirm:{token}"),
         action_button("✖️ Cancel", "primary", callback_data=f"{prefix}:cancel:{token}"),
     ])
     return InlineKeyboardMarkup(rows)
@@ -594,7 +608,7 @@ def _anime_delete_page_text(item: dict, page: int) -> str:
         "⚠️ <b>DELETE ANIME CONFIRMATION</b>",
         "",
         f"🌴 <b>Anime:</b> {escape_html(item.get('anime_name', ''))}",
-        f"🎴 <b>Related cards:</b> <code>{total}</code>",
+        f"🎴 <b>Exact-name cards to delete:</b> <code>{total}</code>",
         f"📄 <b>Page:</b> <code>{page + 1}/{total_pages}</code>",
         "",
     ]
@@ -613,8 +627,9 @@ def _anime_delete_page_text(item: dict, page: int) -> str:
         lines.append("ဒီ Anime အောက်မှာ Card မရှိပါ။ Anime catalog entry ကိုသာ ဖျက်ပါမယ်။")
     lines.extend([
         "",
-        "Confirm လုပ်လျှင် ဒီ Anime နဲ့သက်ဆိုင်တဲ့ Card အားလုံး၊ Harem/Favourite/Active Drop references နဲ့ Anime catalog entry ကို ဖယ်ရှားပါမယ်။",
-        "တန်းမဖျက်ပါ — <b>Confirm Delete</b> ကိုနှိပ်မှသာ ဆက်လုပ်ပါမယ်။",
+        f"Confirm လုပ်လျှင် Database ထဲတွင် <b>{escape_html(item.get('anime_name', ''))}</b> နဲ့ အမည်အတိအကျတူတဲ့ Card {total} ခုကိုသာ ဖျက်ပါမယ်။",
+        "[🎮] ပါ/မပါတဲ့ Anime name တွေကို မတူညီတဲ့တန်ဖိုးအဖြစ် သတ်မှတ်ထားပါတယ်။ အခြား variant ကို မဖျက်ပါ။",
+        "စာမျက်နှာအားလုံးကို ပြန်စစ်ပြီးမှ Delete အတည်ပြုနိုင်ပါမယ်။ Confirm မနှိပ်မချင်း Data မဖျက်ပါ။",
     ])
     return "\n".join(lines)
 
@@ -626,7 +641,7 @@ async def _send_anime_delete_preview(message, token: str, item: dict, page: int 
     await message.reply_text(
         _anime_delete_page_text(item, item["page"]),
         parse_mode="HTML",
-        reply_markup=_delete_confirm_keyboard(token, "anime", item["page"], total_pages),
+        reply_markup=_delete_confirm_keyboard(token, "anime", item["page"], total_pages, len(cards)),
         disable_web_page_preview=True,
     )
 
@@ -700,20 +715,16 @@ async def delete_anime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Anime names that differ by the trailing [🎮] marker are distinct
     # delete targets. Do not use normalizedName here because normalization
     # intentionally removes bracketed markers.
-    exact_anime_query = {
-        "name": {"$regex": f"^{re.escape(raw_name)}$", "$options": "i"}
-    }
+    # Use literal equality, not normalizedName or a regex: the trailing
+    # [🎮] marker (and the exact stored spelling) is part of this delete target.
     catalog = await db[ANIMES_COLLECTION].find_one(
-        exact_anime_query,
+        {"name": raw_name},
         {"_id": 1, "name": 1, "normalizedName": 1},
     )
     anime_name = raw_name
-    anime_pattern = rf"^{re.escape(raw_name)}$"
     cards = []
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
-        docs = await db[collection_name].find(
-            {"anime": {"$regex": anime_pattern, "$options": "i"}}
-        ).to_list(None)
+        docs = await db[collection_name].find({"anime": raw_name}).to_list(None)
         for card in docs:
             cards.append({
                 "collection_name": collection_name,
@@ -737,7 +748,7 @@ async def delete_anime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         "chat_id": int(msg.chat_id),
         "action": "anime",
         "anime_name": anime_name,
-        "anime_pattern": anime_pattern,
+        "anime_exact_name": raw_name,
         "anime_normalized": normalized,
         "catalog_document_id": (catalog or {}).get("_id"),
         "catalog_snapshot": {
@@ -746,19 +757,20 @@ async def delete_anime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         } if catalog else None,
         "cards": cards,
         "page": 0,
+        "viewed_pages": {0},
     }
     _PENDING_CARD_DELETIONS[token] = item
     await _send_anime_delete_preview(msg, token, item, 0)
 
 
-async def _edit_delete_prompt(query, text: str, reply_markup=None) -> None:
+async def _edit_delete_prompt(query, text: str, reply_markup=None) -> bool:
     try:
         await query.edit_message_caption(
             caption=text,
             parse_mode="HTML",
             reply_markup=reply_markup,
         )
-        return
+        return True
     except Exception:
         pass
     try:
@@ -768,8 +780,10 @@ async def _edit_delete_prompt(query, text: str, reply_markup=None) -> None:
             reply_markup=reply_markup,
             disable_web_page_preview=True,
         )
+        return True
     except Exception as exc:
         print(f"DELETE CONFIRMATION MESSAGE EDIT FAILED: {exc!r}", flush=True)
+        return False
 
 
 async def _delete_archive_message(context: ContextTypes.DEFAULT_TYPE, card: dict) -> str:
@@ -911,8 +925,8 @@ async def _confirm_delete_card(context: ContextTypes.DEFAULT_TYPE, item: dict) -
 
 async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) -> str:
     db = get_db()
-    anime_pattern = str(item.get("anime_pattern") or "")
-    if not anime_pattern:
+    exact_anime_name = str(item.get("anime_exact_name") or item.get("anime_name") or "")
+    if not exact_anime_name:
         return "❌ Invalid Anime deletion session. Nothing was deleted."
 
     catalog_id = item.get("catalog_document_id")
@@ -925,18 +939,13 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
         ):
             return "⚠️ Anime catalog changed since preview. Nothing was deleted; run /deleteanime again."
     else:
-        exact_name = str(item.get("anime_name") or "")
-        current_catalog = await db[ANIMES_COLLECTION].find_one(
-            {"name": {"$regex": f"^{re.escape(exact_name)}$", "$options": "i"}}
-        )
+        current_catalog = await db[ANIMES_COLLECTION].find_one({"name": exact_anime_name})
         if current_catalog:
             return "⚠️ Anime catalog changed since preview. Nothing was deleted; run /deleteanime again."
 
     current_items = []
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
-        docs = await db[collection_name].find(
-            {"anime": {"$regex": anime_pattern, "$options": "i"}}
-        ).to_list(None)
+        docs = await db[collection_name].find({"anime": exact_anime_name}).to_list(None)
         current_items.extend((collection_name, card) for card in docs)
 
     expected = {
@@ -996,14 +1005,29 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
 
     remaining_cards = []
     for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
-        docs = await db[collection_name].find(
-            {"anime": {"$regex": anime_pattern, "$options": "i"}}
-        ).to_list(None)
+        docs = await db[collection_name].find({"anime": exact_anime_name}).to_list(None)
         remaining_cards.extend(docs)
+
+    # Count the alternate [🎮] spelling for the result message, but never
+    # include those documents in the target deletion set.
+    selected_has_marker = bool(re.search(r"\s*\[🎮\]\s*$", exact_anime_name))
+    base_name = re.sub(r"\s*\[🎮\]\s*$", "", exact_anime_name).strip()
+    if selected_has_marker:
+        sibling_pattern = rf"^{re.escape(base_name)}$"
+    else:
+        sibling_pattern = rf"^{re.escape(base_name)}\s*\[🎮\]$"
+    sibling_cards = []
+    for collection_name in ("photos", LIMITED_CARDS_COLLECTION):
+        docs = await db[collection_name].find(
+            {"anime": {"$regex": sibling_pattern, "$options": "i"}}
+        ).to_list(None)
+        sibling_cards.extend(docs)
 
     catalog_deleted = 0
     catalog_delete_failed = False
     if not remaining_cards and catalog_id is not None:
+        # Delete only the catalog row whose literal name matched the command.
+        # Cards with the alternate [🎮] spelling remain untouched.
         catalog_query = {
             "_id": catalog_id,
             "name": catalog_snapshot.get("name"),
@@ -1016,14 +1040,12 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
         except Exception as exc:
             catalog_delete_failed = True
             print(f"ANIME CATALOG DELETE FAILED: {exc!r}", flush=True)
-        invalidate_anime_cache(str(item.get("anime_name", "")))
+        if catalog_deleted:
+            invalidate_anime_cache(str(item.get("anime_name", "")))
     elif not remaining_cards and catalog_id is None:
-        # Check only the exact entered Anime variant; the other [🎮] form is
-        # a separate target and must not count as a new catalog row here.
-        exact_name = str(item.get("anime_name") or "")
-        catalog_after = await db[ANIMES_COLLECTION].find_one(
-            {"name": {"$regex": f"^{re.escape(exact_name)}$", "$options": "i"}}
-        )
+        # Do not treat a catalog row for the other marker variant as the
+        # target row: check only the exact value entered by the owner.
+        catalog_after = await db[ANIMES_COLLECTION].find_one({"name": exact_anime_name})
         catalog_delete_failed = bool(catalog_after)
 
     partial = bool(
@@ -1043,6 +1065,7 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
             "Remaining cards": len(remaining_cards),
             "Failed card IDs": ", ".join(failed_ids[:25]) or "-",
             "Anime catalog deleted": catalog_deleted,
+            "Alternate marker cards left untouched": len(sibling_cards),
             "Catalog delete failed": catalog_delete_failed,
             "Archive messages deleted": archive_deleted,
             "Archive deletes failed": archive_failed,
@@ -1054,18 +1077,21 @@ async def _confirm_delete_anime(context: ContextTypes.DEFAULT_TYPE, item: dict) 
     )
 
     if remaining_cards:
-        final_note = "Some cards remain. Anime catalog entry was kept so those cards remain searchable."
+        final_note = "Some exact-name cards remain. The Anime catalog entry was kept; run /deleteanime again to review the current list."
     elif partial:
         final_note = "Some cleanup steps failed. Check the card action log before retrying the command."
+    elif sibling_cards:
+        final_note = f"The exact Anime value was removed. {len(sibling_cards)} cards with the alternate [🎮] spelling were left untouched."
     else:
-        final_note = "The requested Anime and all matching cards have been removed."
+        final_note = "The exact Anime value and all matching cards have been removed."
 
     return (
         f"{'⚠️' if partial else '✅'} <b>{'Anime Delete Partially Completed' if partial else 'Anime Deleted'}</b>\n\n"
         f"🌴 Anime: {escape_html(item.get('anime_name', ''))}\n"
-        f"🎴 Cards deleted: <code>{len(deleted_cards)}/{len(item.get('cards', []))}</code>\n"
-        f"📚 Remaining related cards: <code>{len(remaining_cards)}</code>\n"
+        f"🎴 Exact-name cards deleted: <code>{len(deleted_cards)}/{len(item.get('cards', []))}</code>\n"
+        f"📚 Remaining exact-name cards: <code>{len(remaining_cards)}</code>\n"
         f"🗂 Anime catalog entry deleted: <code>{'Yes' if catalog_deleted else 'No'}</code>\n"
+        f"🛡 Alternate marker cards left untouched: <code>{len(sibling_cards)}</code>\n"
         f"🗄 Archive messages deleted: <code>{archive_deleted}</code>\n"
         f"⚠️ Archive delete failures: <code>{archive_failed}</code>\n"
         f"⚠️ Card delete failures: <code>{len(failed_ids)}</code>\n"
@@ -1105,14 +1131,18 @@ async def delete_confirmation_callback(update: Update, context: ContextTypes.DEF
         cards = list(item.get("cards", []))
         total_pages = max(1, (len(cards) + _DELETE_ANIME_PAGE_SIZE - 1) // _DELETE_ANIME_PAGE_SIZE)
         page = max(0, min(int(page_value or 0), total_pages - 1))
-        item["page"] = page
-        item["created"] = time.time()
         await query.answer()
-        await _edit_delete_prompt(
+        page_updated = await _edit_delete_prompt(
             query,
             _anime_delete_page_text(item, page),
-            _delete_confirm_keyboard(token, "anime", page, total_pages),
+            _delete_confirm_keyboard(token, "anime", page, total_pages, len(cards)),
         )
+        if page_updated:
+            item["page"] = page
+            viewed_pages = set(item.get("viewed_pages") or {0})
+            viewed_pages.add(page)
+            item["viewed_pages"] = viewed_pages
+            item["created"] = time.time()
         return
 
     if decision == "cancel":
@@ -1124,6 +1154,19 @@ async def delete_confirmation_callback(update: Update, context: ContextTypes.DEF
             None,
         )
         return
+
+    if decision == "confirm" and expected_action == "anime":
+        cards = list(item.get("cards", []))
+        total_pages = max(1, (len(cards) + _DELETE_ANIME_PAGE_SIZE - 1) // _DELETE_ANIME_PAGE_SIZE)
+        viewed_pages = set(item.get("viewed_pages") or {int(item.get("page", 0) or 0)})
+        missing_pages = set(range(total_pages)) - viewed_pages
+        if missing_pages:
+            reviewed = len(set(range(total_pages)) - missing_pages)
+            await query.answer(
+                f"Review all preview pages before deleting ({reviewed}/{total_pages} pages reviewed).",
+                show_alert=True,
+            )
+            return
 
     await query.answer("Processing deletion…")
     item["created"] = time.time()

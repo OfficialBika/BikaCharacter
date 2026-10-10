@@ -320,7 +320,7 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
         self.message.reply_text.assert_awaited_once()
         text, kwargs = self.message.reply_text.await_args.args[0], self.message.reply_text.await_args.kwargs
         self.assertIn("DELETE ANIME CONFIRMATION", text)
-        self.assertIn("Related cards:</b> <code>7</code>", text)
+        self.assertIn("Exact-name cards to delete:</b> <code>7</code>", text)
         self.assertIn("Character 1", text)
         self.assertIn("Page:</b> <code>1/2</code>", text)
         buttons = [button for row in kwargs["reply_markup"].inline_keyboard for button in row]
@@ -330,6 +330,55 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(value.startswith("animedel:cancel:") for value in callbacks))
         self.assertEqual(len(admin._PENDING_CARD_DELETIONS), 1)
 
+
+    async def test_multipage_delete_requires_owner_to_review_all_preview_pages(self):
+        cards = [_card(str(number), f"Character {number}", "Genshin Impact") for number in range(1, 8)]
+        photos = _Collection(cards)
+        animes = _Collection([{
+            "_id": "genshin-impact",
+            "name": "Genshin Impact",
+            "normalizedName": "genshin impact",
+        }])
+        db = _Database(
+            photos=photos,
+            limited_cards=_Collection(),
+            animes=animes,
+            users=_Collection(),
+            groups=_Collection(),
+        )
+        with (
+            patch("handlers.admin.get_db", return_value=db),
+            patch("handlers.admin.is_owner", return_value=True),
+        ):
+            await admin.delete_anime_cmd(self.update, SimpleNamespace(args=["Genshin", "Impact"]))
+
+        markup = self.message.reply_text.await_args.kwargs["reply_markup"]
+        confirm = next(
+            button.callback_data for button in self._buttons(markup)
+            if button.callback_data.startswith("animedel:confirm:")
+        )
+        query = SimpleNamespace(
+            data=confirm,
+            from_user=self.owner,
+            message=SimpleNamespace(chat_id=self.message.chat_id),
+            answer=AsyncMock(),
+            edit_message_caption=AsyncMock(),
+            edit_message_text=AsyncMock(),
+        )
+        with (
+            patch("handlers.admin.get_db", return_value=db),
+            patch("handlers.admin.is_owner", return_value=True),
+        ):
+            await admin.delete_confirmation_callback(
+                SimpleNamespace(callback_query=query),
+                SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock())),
+            )
+
+        query.answer.assert_awaited_once()
+        self.assertTrue(query.answer.await_args.kwargs.get("show_alert"))
+        self.assertEqual(len(photos.documents), 7)
+        self.assertEqual(photos.delete_calls, [])
+        self.assertEqual(len(admin._PENDING_CARD_DELETIONS), 1)
 
     async def test_deleteanime_matches_the_exact_game_marker_variant(self):
         cards = [
@@ -361,7 +410,7 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
         text = self.message.reply_text.await_args.args[0]
         self.assertIn("Anime:</b> Wuthering Waves", text)
         self.assertNotIn("Anime:</b> Wuthering Waves [🎮]", text)
-        self.assertIn("Related cards:</b> <code>1</code>", text)
+        self.assertIn("Exact-name cards to delete:</b> <code>1</code>", text)
         self.assertIn("Stored Anime value(s):</b> Wuthering Waves", text)
         self.assertNotIn("Wuthering Waves [🎮]", text)
         self.assertNotIn("Other anime", text)
@@ -383,12 +432,66 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
 
         marked_text = self.message.reply_text.await_args.args[0]
         self.assertIn("Anime:</b> Wuthering Waves [🎮]", marked_text)
-        self.assertIn("Related cards:</b> <code>2</code>", marked_text)
+        self.assertIn("Exact-name cards to delete:</b> <code>2</code>", marked_text)
         self.assertIn("Stored Anime value(s):</b> Wuthering Waves [🎮]", marked_text)
         self.assertNotIn("Stored Anime value(s):</b> Wuthering Waves,", marked_text)
         self.assertEqual(photos.delete_calls, [])
 
-    async def test_confirm_deletes_related_cards_and_catalog_entry(self):
+    async def test_confirm_deletes_catalog_when_no_alternate_marker_cards_remain(self):
+        photos = _Collection([
+            _card("1", "Character 1", "Genshin Impact"),
+            _card("3", "Character 3", "Genshin Impact"),
+        ])
+        animes = _Collection([{
+            "_id": "genshin-impact",
+            "name": "Genshin Impact",
+            "normalizedName": "genshin impact",
+        }])
+        db = _Database(
+            photos=photos,
+            limited_cards=_Collection(),
+            animes=animes,
+            users=_Collection(),
+            groups=_Collection(),
+        )
+        with (
+            patch("handlers.admin.get_db", return_value=db),
+            patch("handlers.admin.is_owner", return_value=True),
+        ):
+            await admin.delete_anime_cmd(
+                self.update,
+                SimpleNamespace(args=["Genshin", "Impact"]),
+            )
+
+        markup = self.message.reply_text.await_args.kwargs["reply_markup"]
+        confirm = next(
+            button.callback_data for button in self._buttons(markup)
+            if button.callback_data.startswith("animedel:confirm:")
+        )
+        query = SimpleNamespace(
+            data=confirm,
+            from_user=self.owner,
+            message=SimpleNamespace(chat_id=self.message.chat_id),
+            answer=AsyncMock(),
+            edit_message_caption=AsyncMock(),
+            edit_message_text=AsyncMock(),
+        )
+        with (
+            patch("handlers.admin.get_db", return_value=db),
+            patch("handlers.admin.is_owner", return_value=True),
+            patch("handlers.admin.delete_hot_lookup_card", new=AsyncMock(return_value=1)),
+            patch("handlers.admin.send_card_action_log", new=AsyncMock(return_value=True)),
+        ):
+            await admin.delete_confirmation_callback(
+                SimpleNamespace(callback_query=query),
+                SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock())),
+            )
+
+        self.assertEqual(len(photos.documents), 0)
+        self.assertEqual(len(animes.documents), 0)
+        self.assertEqual(len(photos.delete_calls), 2)
+
+    async def test_confirm_deletes_exact_variant_and_leaves_alternate_marker_cards(self):
         cards = [
             _card("1", "Character 1", "Genshin Impact"),
             _card("2", "Character 2", "Genshin Impact [🎮]"),
@@ -447,6 +550,9 @@ class ConfirmedAnimeDeletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(photos.delete_calls), 2)
         action_log.assert_awaited_once()
         self.assertEqual(action_log.await_args.args[1], "Anime Deleted")
+        result_text = query.edit_message_caption.await_args.kwargs["caption"]
+        self.assertIn("Alternate marker cards left untouched: <code>1</code>", result_text)
+        self.assertIn("left untouched", result_text)
 
 
 if __name__ == "__main__":
