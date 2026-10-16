@@ -116,6 +116,8 @@ if not WEBHOOK_PATH.startswith("/"):
     WEBHOOK_PATH = "/" + WEBHOOK_PATH
 WEBHOOK_SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN", "").strip()
 WEBHOOK_DROP_PENDING_UPDATES = env_bool("WEBHOOK_DROP_PENDING_UPDATES", "true")
+# Polling on a VPS discards queued updates at startup so offline messages are not replayed.
+POLLING_DROP_PENDING_UPDATES = env_bool("POLLING_DROP_PENDING_UPDATES", "true")
 
 # Bandwidth / traffic controls.
 # In polling mode on VPS/PM2, a health HTTP server is usually unnecessary.
