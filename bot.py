@@ -7,7 +7,7 @@ import traceback
 
 from aiohttp import web
 from telegram import BotCommand, Update
-from telegram.error import RetryAfter
+from telegram.error import RetryAfter, TelegramError
 from telegram.ext import Application, ApplicationBuilder, ContextTypes
 from utils.hot_lookup import init_hot_lookup, hot_lookup_count, rebuild_hot_lookup
 from utils.performance import monitor_event_loop_lag, monitor_memory_ceiling, metrics_snapshot, runtime_snapshot
@@ -24,6 +24,7 @@ from config import (
     RESET_GROUP_MESSAGE_COUNT_ON_STARTUP,
     CLEAR_ACTIVE_DROP_ON_STARTUP,
     WEBHOOK_DROP_PENDING_UPDATES,
+    POLLING_DROP_PENDING_UPDATES,
     WEBHOOK_PATH,
     WEBHOOK_SECRET_TOKEN,
     WEBHOOK_URL,
@@ -82,6 +83,13 @@ async def register_commands(app: Application) -> None:
             f"skipping registration for this startup (retry_after={retry_after}s)",
             flush=True,
         )
+    except TelegramError as exc:
+        # A command-menu API error must not prevent core bot handlers from starting.
+        # Authentication is validated earlier by Application.initialize().
+        print(
+            f"BOT COMMANDS: registration failed; continuing startup ({exc!r})",
+            flush=True,
+        )
 
 
 def _normalize_webhook_path(path: str) -> str:
@@ -119,7 +127,12 @@ async def start_web_server(app_bot: Application | None = None) -> web.AppRunner:
     runner = web.AppRunner(health_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
+    try:
+        await site.start()
+    except Exception:
+        # Release runner resources if the port is busy or binding fails.
+        await runner.cleanup()
+        raise
     print(f"Web server running on :{PORT}")
     return runner
 
@@ -152,9 +165,11 @@ async def run_polling(app: Application) -> web.AppRunner | None:
     if ENABLE_HEALTH_SERVER:
         health_runner = await start_web_server(None)
 
-    await app.bot.delete_webhook(drop_pending_updates=WEBHOOK_DROP_PENDING_UPDATES)
+    # VPS polling deployments should discard updates queued while the bot was offline.
+    # Keep this separate from the webhook setting used by hosted deployments.
+    await app.bot.delete_webhook(drop_pending_updates=POLLING_DROP_PENDING_UPDATES)
     await app.updater.start_polling(
-        drop_pending_updates=WEBHOOK_DROP_PENDING_UPDATES,
+        drop_pending_updates=POLLING_DROP_PENDING_UPDATES,
         allowed_updates=allowed_updates_for_bot(),
     )
     print("BIKA Character Bot launched in polling mode")
@@ -259,11 +274,15 @@ async def main() -> None:
         asyncio.create_task(monitor_memory_ceiling(stop_event=stop_event), name="memory-ceiling-monitor"),
     ]
 
-    await app.initialize()
-    await register_commands(app)
-    await app.start()
-
+    app_initialized = False
+    app_started = False
     try:
+        await app.initialize()
+        app_initialized = True
+        await register_commands(app)
+        await app.start()
+        app_started = True
+
         if using_polling:
             health_runner = await run_polling(app)
         else:
@@ -271,11 +290,13 @@ async def main() -> None:
 
         await stop_event.wait()
     finally:
-        print("Shutting down...")
-        if using_polling and app.updater:
+        print("Shutting down...", flush=True)
+        # Startup failures can happen before polling has started (for example,
+        # a health-port bind failure). Only stop components that actually started.
+        if using_polling and app.updater and app.updater.running:
             await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
+        if app_started and app.running:
+            await app.stop()
         stop_event.set()
         for task in monitor_tasks:
             task.cancel()
@@ -287,6 +308,8 @@ async def main() -> None:
             print(f"RUNTIME METRICS ERROR: {exc!r}", flush=True)
         if health_runner is not None:
             await health_runner.cleanup()
+        if app_initialized:
+            await app.shutdown()
         await close_db()
 
 
