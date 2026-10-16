@@ -150,12 +150,16 @@ async def run_webhook(app: Application) -> tuple[web.AppRunner, str]:
     full_webhook_url = WEBHOOK_URL.rstrip("/") + webhook_path
 
     health_runner = await start_web_server(app)
-    await app.bot.set_webhook(
-        url=full_webhook_url,
-        allowed_updates=allowed_updates_for_bot(),
-        secret_token=WEBHOOK_SECRET_TOKEN or None,
-        drop_pending_updates=WEBHOOK_DROP_PENDING_UPDATES,
-    )
+    try:
+        await app.bot.set_webhook(
+            url=full_webhook_url,
+            allowed_updates=allowed_updates_for_bot(),
+            secret_token=WEBHOOK_SECRET_TOKEN or None,
+            drop_pending_updates=WEBHOOK_DROP_PENDING_UPDATES,
+        )
+    except Exception:
+        await health_runner.cleanup()
+        raise
     print(f"BIKA Character Bot launched in webhook mode: {full_webhook_url}")
     return health_runner, full_webhook_url
 
@@ -165,13 +169,19 @@ async def run_polling(app: Application) -> web.AppRunner | None:
     if ENABLE_HEALTH_SERVER:
         health_runner = await start_web_server(None)
 
-    # VPS polling deployments should discard updates queued while the bot was offline.
-    # Keep this separate from the webhook setting used by hosted deployments.
-    await app.bot.delete_webhook(drop_pending_updates=POLLING_DROP_PENDING_UPDATES)
-    await app.updater.start_polling(
-        drop_pending_updates=POLLING_DROP_PENDING_UPDATES,
-        allowed_updates=allowed_updates_for_bot(),
-    )
+    try:
+        # VPS polling deployments should discard updates queued while the bot was offline.
+        # Keep this separate from the webhook setting used by hosted deployments.
+        await app.bot.delete_webhook(drop_pending_updates=POLLING_DROP_PENDING_UPDATES)
+        await app.updater.start_polling(
+            drop_pending_updates=POLLING_DROP_PENDING_UPDATES,
+            allowed_updates=allowed_updates_for_bot(),
+        )
+    except Exception:
+        if health_runner is not None:
+            await health_runner.cleanup()
+        raise
+
     print("BIKA Character Bot launched in polling mode")
     return health_runner
 
