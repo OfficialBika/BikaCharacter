@@ -7,6 +7,7 @@ import traceback
 
 from aiohttp import web
 from telegram import BotCommand, Update
+from telegram.error import RetryAfter
 from telegram.ext import Application, ApplicationBuilder, ContextTypes
 from utils.hot_lookup import init_hot_lookup, hot_lookup_count, rebuild_hot_lookup
 from utils.performance import monitor_event_loop_lag, monitor_memory_ceiling, metrics_snapshot, runtime_snapshot
@@ -43,32 +44,44 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def register_commands(app: Application) -> None:
-    await app.bot.set_my_commands(
-        [
-            BotCommand("start", "Start the bot"),
-            BotCommand("harem", "Display your harem"),
-            BotCommand("search", "Search characters"),
-            BotCommand("profile", "See your profile"),
-            BotCommand("fav", "Set or show favourite character"),
-            BotCommand("check", "Check character by ID"),
-            BotCommand(CLAIM_COMMAND, "Claim spawned character"),
-            BotCommand("hmode", "Change harem view"),
-            BotCommand("addmode", "Set fast card adding defaults"),
-            BotCommand("addanime", "Set default adding anime"),
-            BotCommand("update", "Update an existing card by ID"),
-            BotCommand("delete", "Preview and delete a card"),
-            BotCommand("deleteanime", "Preview and delete an Anime with its cards"),
-            BotCommand("addhelp", "Card adding help"),
-            BotCommand("settings", "Open bot settings"),
-            BotCommand("topgroup", "Top groups by catches"),
-            BotCommand("gtop", "Global top harem users"),
-            BotCommand("todaygtop", "Today top catchers"),
-            BotCommand("mtop", "Monthly top 10 collectors"),
-            BotCommand("wtop", "Weekly top 10 collectors"),
-            BotCommand("mylimit", "Check daily catch limit"),
-            BotCommand("gift", "Gift to other user")
-        ]
-    )
+    try:
+        await app.bot.set_my_commands(
+            [
+                BotCommand("start", "Start the bot"),
+                BotCommand("harem", "Display your harem"),
+                BotCommand("search", "Search characters"),
+                BotCommand("profile", "See your profile"),
+                BotCommand("fav", "Set or show favourite character"),
+                BotCommand("check", "Check character by ID"),
+                BotCommand(CLAIM_COMMAND, "Claim spawned character"),
+                BotCommand("hmode", "Change harem view"),
+                BotCommand("addmode", "Set fast card adding defaults"),
+                BotCommand("addanime", "Set default adding anime"),
+                BotCommand("update", "Update an existing card by ID"),
+                BotCommand("delete", "Preview and delete a card"),
+                BotCommand("deleteanime", "Preview and delete an Anime with its cards"),
+                BotCommand("addhelp", "Card adding help"),
+                BotCommand("settings", "Open bot settings"),
+                BotCommand("topgroup", "Top groups by catches"),
+                BotCommand("gtop", "Global top harem users"),
+                BotCommand("todaygtop", "Today top catchers"),
+                BotCommand("mtop", "Monthly top 10 collectors"),
+                BotCommand("wtop", "Weekly top 10 collectors"),
+                BotCommand("mylimit", "Check daily catch limit"),
+                BotCommand("gift", "Gift to other user")
+            ]
+        )
+        print("BOT COMMANDS: registered", flush=True)
+    except RetryAfter as exc:
+        # Telegram can rate-limit setMyCommands during rapid restarts/deployments.
+        # Command registration is optional for bot startup, so do not terminate
+        # the entire application when Telegram asks us to retry later.
+        retry_after = getattr(exc, "retry_after", None)
+        print(
+            "BOT COMMANDS: Telegram flood control; "
+            f"skipping registration for this startup (retry_after={retry_after}s)",
+            flush=True,
+        )
 
 
 def _normalize_webhook_path(path: str) -> str:
