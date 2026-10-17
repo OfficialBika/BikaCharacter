@@ -157,5 +157,11 @@ class StartupSafetyTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(time.monotonic() - started_at, 0.05)
 
 
+    async def test_free_broadcast_rate_has_a_hard_safety_ceiling(self):
+        import handlers.broadcast as broadcast
+
+        self.assertLessEqual(broadcast._FREE_RATE_LIMITER.rate, 28)
+
+
 if __name__ == "__main__":
     unittest.main()
