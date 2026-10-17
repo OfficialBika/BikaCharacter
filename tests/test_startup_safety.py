@@ -82,6 +82,33 @@ class StartupSafetyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(groups.calls, [({}, {"groupId": 1})])
         self.assertEqual(users.calls, [({}, {"userId": 1})])
 
+    async def test_bounded_queue_producer_feeds_more_targets_than_capacity(self):
+        import asyncio
+        import handlers.broadcast as broadcast
+
+        queue = asyncio.Queue(maxsize=4)
+        targets = list(range(25))
+        seen = []
+
+        async def consumer():
+            while True:
+                target = await queue.get()
+                try:
+                    if target is None:
+                        return
+                    seen.append(target)
+                finally:
+                    queue.task_done()
+
+        consumer_tasks = [asyncio.create_task(consumer()) for _ in range(3)]
+        producer = asyncio.create_task(
+            broadcast._enqueue_broadcast_targets(queue, targets, len(consumer_tasks))
+        )
+        await asyncio.wait_for(producer, timeout=2)
+        await asyncio.wait_for(queue.join(), timeout=2)
+        await asyncio.gather(*consumer_tasks)
+        self.assertEqual(sorted(seen), targets)
+
 
 if __name__ == "__main__":
     unittest.main()
