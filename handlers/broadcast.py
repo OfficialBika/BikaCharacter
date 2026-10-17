@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections import deque
 from io import BytesIO
 
 from telegram import Update
@@ -29,28 +28,70 @@ _BROADCAST_SEMAPHORE = asyncio.Semaphore(BROADCAST_WORKERS)
 
 
 class _BroadcastRateLimiter:
-    """Small asyncio token-window limiter for Telegram's global broadcast cap."""
+    """Smoothly pace Telegram sends and adapt downward when Telegram throttles."""
+
+    _BACKOFF_FACTOR = 0.70
+    _RECOVERY_WAIT = 10.0
+    _RECOVERY_INTERVAL = 5.0
 
     def __init__(self, rate: int):
         self.rate = max(1, int(rate))
-        self._timestamps: deque[float] = deque()
+        self._current_rate = self.rate
+        self._next_send_at = 0.0
+        self._cooldown_until = 0.0
+        self._last_throttle_at = 0.0
+        self._last_recovery_at = time.monotonic()
         self._lock = asyncio.Lock()
 
+    @property
+    def current_rate(self) -> int:
+        """Current adaptive ceiling, never higher than the configured rate."""
+        return self._current_rate
+
     async def acquire(self) -> None:
+        """Reserve a smoothly paced send slot, honoring any global cooldown."""
         while True:
             async with self._lock:
                 now = time.monotonic()
-                cutoff = now - 1.0
-                while self._timestamps and self._timestamps[0] <= cutoff:
-                    self._timestamps.popleft()
-
-                if len(self._timestamps) < self.rate:
-                    self._timestamps.append(now)
+                ready_at = max(self._next_send_at, self._cooldown_until)
+                if ready_at <= now:
+                    self._next_send_at = now + (1.0 / self._current_rate)
                     return
-
-                wait_for = max(0.01, 1.0 - (now - self._timestamps[0]))
+                wait_for = ready_at - now
 
             await asyncio.sleep(wait_for)
+
+    async def report_retry_after(self, seconds: float) -> tuple[bool, int]:
+        """Pause all broadcast workers and lower the rate once per throttle window."""
+        delay = max(0.0, float(seconds))
+        async with self._lock:
+            now = time.monotonic()
+            new_throttle_window = now >= self._cooldown_until
+            if new_throttle_window:
+                self._current_rate = max(
+                    1,
+                    int(self._current_rate * self._BACKOFF_FACTOR),
+                )
+
+            self._last_throttle_at = now
+            self._last_recovery_at = now
+            self._cooldown_until = max(self._cooldown_until, now + delay)
+            self._next_send_at = max(self._next_send_at, self._cooldown_until)
+            return new_throttle_window, self._current_rate
+
+    async def report_success(self) -> int:
+        """Recover cautiously after a sustained error-free period."""
+        async with self._lock:
+            now = time.monotonic()
+            if (
+                self._current_rate < self.rate
+                and now >= self._cooldown_until
+                and now - self._last_throttle_at >= self._RECOVERY_WAIT
+                and now - self._last_recovery_at >= self._RECOVERY_INTERVAL
+            ):
+                self._current_rate = min(self.rate, self._current_rate + 1)
+                self._last_recovery_at = now
+            return self._current_rate
 
 
 _FREE_RATE_LIMITER = _BroadcastRateLimiter(BROADCAST_RATE)
@@ -188,17 +229,34 @@ async def _broadcast_worker(
                             copy_mode=copy_mode,
                             paid_mode=paid_mode,
                         )
+                        await (
+                            _PAID_RATE_LIMITER if paid_mode else _FREE_RATE_LIMITER
+                        ).report_success()
                         delivered = True
                         break
 
                     except RetryAfter as exc:
                         failure_reason = f"{type(exc).__name__}: {exc}"
-                        if attempt >= BROADCAST_MAX_RETRY or _BROADCAST_STOP.is_set():
-                            break
                         retry_after = max(
                             1.0,
                             float(getattr(exc, "retry_after", 1) or 1),
                         )
+                        rate_limiter = (
+                            _PAID_RATE_LIMITER if paid_mode else _FREE_RATE_LIMITER
+                        )
+                        throttle_started, current_rate = await rate_limiter.report_retry_after(
+                            retry_after + 0.25
+                        )
+                        if throttle_started:
+                            print(
+                                "BROADCAST RATE LIMIT: "
+                                f"mode={'paid' if paid_mode else 'free'} "
+                                f"retry_after={retry_after:.1f}s "
+                                f"adaptive_rate={current_rate}/s",
+                                flush=True,
+                            )
+                        if attempt >= BROADCAST_MAX_RETRY or _BROADCAST_STOP.is_set():
+                            break
                         if await _sleep_until_or_stop(retry_after + 0.25):
                             break
 
