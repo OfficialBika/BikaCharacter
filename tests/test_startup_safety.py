@@ -110,5 +110,52 @@ class StartupSafetyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(seen), targets)
 
 
+    async def test_broadcast_rate_limiter_smoothly_spaces_concurrent_requests(self):
+        import asyncio
+        import time
+        import handlers.broadcast as broadcast
+
+        limiter = broadcast._BroadcastRateLimiter(10)
+
+        async def acquire_and_record():
+            await limiter.acquire()
+            return time.monotonic()
+
+        started_at = time.monotonic()
+        timestamps = sorted(await asyncio.gather(
+            acquire_and_record(),
+            acquire_and_record(),
+            acquire_and_record(),
+        ))
+
+        self.assertGreaterEqual(timestamps[1] - timestamps[0], 0.07)
+        self.assertGreaterEqual(timestamps[2] - timestamps[1], 0.07)
+        self.assertGreaterEqual(timestamps[-1] - started_at, 0.15)
+
+    async def test_broadcast_rate_limiter_adapts_and_honors_global_cooldown(self):
+        import time
+        import handlers.broadcast as broadcast
+
+        limiter = broadcast._BroadcastRateLimiter(20)
+        started_at = time.monotonic()
+
+        throttled, reduced_rate = await limiter.report_retry_after(0.06)
+        self.assertTrue(throttled)
+        self.assertEqual(reduced_rate, 14)
+        self.assertEqual(limiter.current_rate, 14)
+
+        # Other workers receiving the same RetryAfter must not repeatedly
+        # multiply the rate down during the already-active cooldown window.
+        throttled_again, repeated_rate = await limiter.report_retry_after(0.06)
+        self.assertFalse(throttled_again)
+        self.assertEqual(repeated_rate, 14)
+
+        await limiter.report_success()
+        self.assertEqual(limiter.current_rate, 14)
+
+        await limiter.acquire()
+        self.assertGreaterEqual(time.monotonic() - started_at, 0.05)
+
+
 if __name__ == "__main__":
     unittest.main()
