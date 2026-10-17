@@ -41,6 +41,47 @@ class StartupSafetyTests(unittest.IsolatedAsyncioTestCase):
         start_polling.assert_awaited_once()
         self.assertTrue(start_polling.await_args.kwargs["drop_pending_updates"])
 
+    async def test_collect_targets_deduplicates_and_uses_expected_projection(self):
+        import handlers.broadcast as broadcast
+
+        class FakeCursor:
+            def __init__(self, docs):
+                self.docs = docs
+            def __aiter__(self):
+                self._index = 0
+                return self
+            async def __anext__(self):
+                if self._index >= len(self.docs):
+                    raise StopAsyncIteration
+                value = self.docs[self._index]
+                self._index += 1
+                return value
+
+        class FakeCollection:
+            def __init__(self, docs):
+                self.docs = docs
+                self.calls = []
+            def find(self, query, projection):
+                self.calls.append((query, projection))
+                return FakeCursor(self.docs)
+
+        groups = FakeCollection([{"groupId": "-1001"}, {"groupId": -1002}, {"groupId": "bad"}])
+        users = FakeCollection([{"userId": 2001}, {"userId": "-1001"}, {"userId": "bad"}])
+        fake_db = SimpleNamespace(groups=groups, users=users)
+
+        with patch.object(broadcast, "get_db", return_value=fake_db):
+            targets, group_ids, user_ids = await broadcast._collect_targets(
+                include_groups=True,
+                include_users=True,
+                harem_only=False,
+            )
+
+        self.assertEqual(group_ids, {-1001, -1002})
+        self.assertEqual(user_ids, {2001, -1001})
+        self.assertEqual(targets, [-1002, -1001, 2001])
+        self.assertEqual(groups.calls, [({}, {"groupId": 1})])
+        self.assertEqual(users.calls, [({}, {"userId": 1})])
+
 
 if __name__ == "__main__":
     unittest.main()
