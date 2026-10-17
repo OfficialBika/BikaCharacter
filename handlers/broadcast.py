@@ -440,18 +440,20 @@ async def broadcast_cmd(
                 _enqueue_broadcast_targets(queue, targets, len(workers)),
                 name="bika-broadcast-producer",
             )
-            print(
-                f"BROADCAST WORKERS STARTED: workers={len(workers)} "
-                f"queued_targets={queue.qsize()}",
-                flush=True,
-            )
 
             last_ui_update = 0.0
             last_processed = -1
 
             while worker_results["processed"] < len(targets):
-                if producer.done() and any(task.done() and task.exception() for task in workers):
-                    raise RuntimeError("A broadcast worker exited unexpectedly")
+                failed_worker = next(
+                    (task for task in workers if task.done() and not task.cancelled() and task.exception()),
+                    None,
+                )
+                if failed_worker is not None:
+                    raise RuntimeError(
+                        f"Broadcast worker {failed_worker.get_name()} exited: "
+                        f"{failed_worker.exception()!r}"
+                    )
                 await asyncio.sleep(0.25)
                 processed = worker_results["processed"]
                 now = time.monotonic()
