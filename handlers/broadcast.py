@@ -138,6 +138,18 @@ async def _deliver(
         )
 
 
+async def _enqueue_broadcast_targets(
+    queue: asyncio.Queue,
+    targets: list[int],
+    worker_count: int,
+) -> None:
+    """Feed targets while workers consume the bounded queue."""
+    for target_id in targets:
+        await queue.put(target_id)
+    for _ in range(worker_count):
+        await queue.put(None)
+
+
 async def _broadcast_worker(
     *,
     context,
@@ -399,10 +411,9 @@ async def broadcast_cmd(
                 parse_mode="HTML",
             )
 
+            # Fill the bounded queue concurrently with workers; enqueueing every
+            # target before creating consumers can deadlock when targets > maxsize.
             queue: asyncio.Queue = asyncio.Queue(maxsize=max(100, BROADCAST_WORKERS * 4))
-            for target_id in targets:
-                await queue.put(target_id)
-
             counter_lock = asyncio.Lock()
             workers = [
                 asyncio.create_task(
@@ -422,6 +433,15 @@ async def broadcast_cmd(
             ]
             print(
                 f"BROADCAST WORKERS STARTED: workers={len(workers)} "
+                f"targets={len(targets)} queue_capacity={queue.maxsize}",
+                flush=True,
+            )
+            producer = asyncio.create_task(
+                _enqueue_broadcast_targets(queue, targets, len(workers)),
+                name="bika-broadcast-producer",
+            )
+            print(
+                f"BROADCAST WORKERS STARTED: workers={len(workers)} "
                 f"queued_targets={queue.qsize()}",
                 flush=True,
             )
@@ -430,6 +450,8 @@ async def broadcast_cmd(
             last_processed = -1
 
             while worker_results["processed"] < len(targets):
+                if producer.done() and any(task.done() and task.exception() for task in workers):
+                    raise RuntimeError("A broadcast worker exited unexpectedly")
                 await asyncio.sleep(0.25)
                 processed = worker_results["processed"]
                 now = time.monotonic()
@@ -463,11 +485,9 @@ async def broadcast_cmd(
                     except Exception:
                         pass
 
+            await producer
             await queue.join()
-
-            for _ in workers:
-                await queue.put(None)
-            await asyncio.gather(*workers, return_exceptions=True)
+            await asyncio.gather(*workers)
 
             final_status = "Stopped" if _BROADCAST_STOP.is_set() else "Completed"
 
@@ -532,6 +552,16 @@ async def broadcast_cmd(
             except Exception:
                 pass
         finally:
+            active_tasks = locals().get("workers", [])
+            if active_tasks:
+                for task in active_tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*active_tasks, return_exceptions=True)
+            producer_task = locals().get("producer")
+            if producer_task is not None and not producer_task.done():
+                producer_task.cancel()
+                await asyncio.gather(producer_task, return_exceptions=True)
             _BROADCAST_ACTIVE = False
             _BROADCAST_STOP.clear()
 
