@@ -94,7 +94,9 @@ class _BroadcastRateLimiter:
             return self._current_rate
 
 
-_FREE_RATE_LIMITER = _BroadcastRateLimiter(BROADCAST_RATE)
+# Keep a safety margin below Telegram's approximately 30 msg/s free cap,
+# even if an environment override is accidentally set too high.
+_FREE_RATE_LIMITER = _BroadcastRateLimiter(min(BROADCAST_RATE, 28))
 _PAID_RATE_LIMITER = _BroadcastRateLimiter(BROADCAST_PAID_RATE)
 
 
