@@ -335,10 +335,27 @@ async def broadcast_cmd(
 
     status_msg = await msg.reply_html("⏳ <b>Preparing broadcast targets...</b>")
 
-    targets, group_ids, user_ids = await _collect_targets(
-        include_groups=include_groups,
-        include_users=include_users,
-        harem_only=harem_only,
+    try:
+        targets, group_ids, user_ids = await _collect_targets(
+            include_groups=include_groups,
+            include_users=include_users,
+            harem_only=harem_only,
+        )
+    except Exception as exc:
+        print(f"BROADCAST TARGET COLLECTION ERROR: {type(exc).__name__}: {exc}", flush=True)
+        await status_msg.edit_text(
+            "❌ Broadcast could not load targets from the database.\n"
+            "No messages were sent. Check the bot logs for details."
+        )
+        return
+
+    print(
+        "BROADCAST TARGETS: "
+        f"groups={len(group_ids)} users={len(user_ids)} "
+        f"unique_targets={len(targets)} include_groups={include_groups} "
+        f"include_users={include_users} harem_only={harem_only} "
+        f"copy_mode={copy_mode}",
+        flush=True,
     )
 
     if not targets:
@@ -401,8 +418,13 @@ async def broadcast_cmd(
                     ),
                     name=f"bika-broadcast-{index + 1}",
                 )
-                for index in range(BROADCAST_WORKERS)
+                for index in range(min(BROADCAST_WORKERS, len(targets)))
             ]
+            print(
+                f"BROADCAST WORKERS STARTED: workers={len(workers)} "
+                f"queued_targets={queue.qsize()}",
+                flush=True,
+            )
 
             last_ui_update = 0.0
             last_processed = -1
@@ -445,7 +467,7 @@ async def broadcast_cmd(
 
             for _ in workers:
                 await queue.put(None)
-            await asyncio.gather(*workers)
+            await asyncio.gather(*workers, return_exceptions=True)
 
             final_status = "Stopped" if _BROADCAST_STOP.is_set() else "Completed"
 
@@ -500,6 +522,15 @@ async def broadcast_cmd(
                     parse_mode="HTML",
                 )
 
+        except Exception as exc:
+            print(f"BROADCAST RUN ERROR: {type(exc).__name__}: {exc}", flush=True)
+            try:
+                await status_msg.edit_text(
+                    "❌ Broadcast stopped because of an internal error.\n"
+                    "Check the bot logs for details; some targets may already have received the message."
+                )
+            except Exception:
+                pass
         finally:
             _BROADCAST_ACTIVE = False
             _BROADCAST_STOP.clear()
